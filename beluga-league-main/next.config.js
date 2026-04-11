@@ -15,22 +15,19 @@ const nextConfig = {
       fullUrl: false,
     },
   },
-  // Configuration specific to Vercel builds
-  ...(process.env.VERCEL ? {
-    async headers() {
-      return [
-        {
-          source: '/api/(.*)',
-          headers: [
-            {
-              key: 'Cache-Control',
-              value: 'public, max-age=3600, s-maxage=7200', // Cache for 1 hour client-side, 2 hours server-side
-            },
-          ],
-        },
-      ]
-    },
-  } : {}),
+  async headers() {
+    return [
+      {
+        source: '/api/(.*)',
+        headers: [
+          {
+            key: 'Cache-Control',
+            value: 'public, max-age=3600, s-maxage=7200', // Cache for 1 hour client-side, 2 hours server-side
+          },
+        ],
+      },
+    ]
+  },
   // Configuration specific to Cloudflare builds
   ...(process.env.CLOUDFLARE_DEPLOY === 'true' ? { 
     output: 'export',

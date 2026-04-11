@@ -2,14 +2,16 @@
   "name": "my-website",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=20.9.0"
+  },
   "scripts": {
     "dev": "next dev",
-    "build": "node scripts/vercel-build-check.js && next build",
+    "build": "next build",
     "start": "next start",
     "export": "next build && next export",
     "build:cloudflare": "CLOUDFLARE_DEPLOY=true next build",
-    "lint": "next lint",
-    "debug-vercel-env": "node scripts/vercel-build-check.js"
+    "lint": "next lint"
   },
   "dependencies": {
     "dompurify": "^3.2.6",

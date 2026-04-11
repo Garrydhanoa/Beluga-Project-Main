@@ -59,12 +59,11 @@ The original TypeScript files are kept in the `typescript_backup/` directory for
 - `tsconfig.json`: Maintained for compatibility with Next.js types
 - `next.config.js`: Next.js configuration
 - `postcss.config.mjs`: PostCSS configuration for TailwindCSS
-- `vercel.json`: Vercel deployment configuration
 - `wrangler.toml`: Cloudflare Workers configuration
 
 ## Deployment
 
-The site can be deployed to Vercel or Cloudflare Pages.
+The site is configured for Railway deployment.
 
 ### Environment Variables for Deployment
 
@@ -72,19 +71,21 @@ Make sure to set the following environment variables in your deployment platform
 
 - `GOOGLE_CLIENT_EMAIL` - Your Google service account email
 - `GOOGLE_PRIVATE_KEY` - Your Google service account private key
+- `SHEET_ID_PLAYERS` - Your Google Sheet ID for players/rosters
 - `POWER_RANKINGS_SHEET_ID` - Your Google Sheet ID for power rankings
-- `STANDINGS_SHEET_ID` - Your Google Sheet ID for standings
+- `DISCORD_CLIENT_ID` - Discord OAuth app client ID (for admin login)
+- `DISCORD_CLIENT_SECRET` - Discord OAuth app client secret (for admin login)
+- `DISCORD_GUILD_ID` - Discord server ID used for access checks
+- `DISCORD_DIRECTOR_ROLE_ID` - Discord role ID allowed into admin pages
+- `NEXTAUTH_SECRET` - Random secret used by NextAuth session encryption
+- `NEXTAUTH_URL` - Public website URL (for example, your Railway domain)
 
-### Vercel Deployment
+### Railway Deployment (Separate Service)
 
-```bash
-npm run build
-vercel deploy
-```
+If your bot already runs on Railway, deploy this website as a second Railway service from the same repo:
 
-### Cloudflare Deployment
-
-```bash
-npm run build:cloudflare
-wrangler publish
-```
+1. Create a new service in the same Railway project.
+2. Select this repo and set Root Directory to `beluga-league-main`.
+3. Railway will automatically use `railway.toml` in this folder.
+4. Add the environment variables listed above.
+5. Deploy. Railway will build with Nixpacks and run `next start`.

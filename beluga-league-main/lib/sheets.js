@@ -21,7 +21,7 @@ const CANONICAL_TEAM_NAMES = [
 // Get credentials and configuration
 function getConfig() {
   try {
-    // In production (Vercel), ALWAYS use environment variables for security
+    // In production, ALWAYS use environment variables for security
     if (process.env.NODE_ENV === 'production') {
       console.log('Production environment detected, using environment variables for credentials');
       return {
