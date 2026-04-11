@@ -1,0 +1,39 @@
+# Quick Setup: Add PostgreSQL to Railway
+
+## Step 1: Add PostgreSQL Database
+
+1. Open your Railway project: https://railway.app
+2. Click **"+ New"** in your project
+3. Select **"Database"**  
+4. Choose **"Add PostgreSQL"**
+5. Done! Railway creates a free database and connects it automatically
+
+## Step 2: Deploy Your Bot
+
+```powershell
+railway up
+```
+
+That's it! The bot will:
+- ✅ Automatically connect to PostgreSQL using `DATABASE_URL`
+- ✅ Create the necessary tables
+- ✅ Load existing tickets from the database
+- ✅ Persist tickets across all future deployments
+
+## Verify It's Working
+
+After deployment, check Railway logs for:
+```
+✅ Database tables initialized successfully
+✅ Loaded X active tickets from database
+```
+
+## Testing
+
+1. Create a ticket with `/openticket`
+2. Run `railway up` to redeploy
+3. Ticket should still exist after redeployment ✅
+
+---
+
+**Note**: Railway's free tier includes PostgreSQL. No credit card required for testing.

@@ -1,0 +1,9 @@
+# Nixpacks configuration for Railway deployment
+[phases.setup]
+providers = ["nodejs"]
+
+[phases.install]
+cmd = "npm install --production"
+
+[variables]
+NODE_ENV = "production"

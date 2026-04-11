@@ -1,0 +1,553 @@
+@import "./mobile-responsive.css";
+@import "./mobile-headers.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --foreground: #000;
+  --background: #fff;
+  --color-white: #fff;
+  --color-black: #000;
+  --default-transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  --default-transition-duration: 150ms;
+  --spacing: 0.25rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --foreground: #fff;
+    --background: #000;
+  }
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  margin: 0;
+  padding: 0;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(59, 130, 246, 0.7);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(59, 130, 246, 0.9);
+}
+
+/* Custom animations */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.animate-pulse-slow {
+  animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Add these animations to the end of your globals.css file */
+
+@keyframes confettiFall {
+  0% {
+    transform: translateY(-100vh) rotate(0deg);
+  }
+  100% {
+    transform: translateY(100vh) rotate(360deg);
+  }
+}
+
+.confetti {
+  position: absolute;
+  top: -20px;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  animation: confettiFall linear forwards;
+}
+
+.bg-grid {
+  background-size: 20px 20px;
+  background-image: 
+    linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+}
+
+/* Glowing effect for active elements */
+.glow-on-hover {
+  transition: all 0.3s;
+}
+
+.glow-on-hover:hover {
+  box-shadow: 0 0 15px rgba(59, 130, 246, 0.6);
+}
+
+/* Add these new animations to globals.css */
+@keyframes float {
+  0% {
+    transform: translateY(0) translateX(0);
+    opacity: 0;
+  }
+  50% {
+    opacity: 0.8;
+  }
+  100% {
+    transform: translateY(-20px) translateX(10px);
+    opacity: 0;
+  }
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+.animation-delay-300 {
+  animation-delay: 300ms;
+}
+
+.animation-delay-700 {
+  animation-delay: 700ms;
+}
+
+.animation-delay-1000 {
+  animation-delay: 1000ms;
+}
+
+/* Mobile optimizations */
+@media (max-width: 640px) {
+  h1 {
+    font-size: 1.75rem !important;
+  }
+  
+  h2 {
+    font-size: 1.5rem !important;
+  }
+  
+  h3 {
+    font-size: 1.25rem !important;
+  }
+  
+  p {
+    font-size: 0.9375rem !important;
+  }
+  
+  .container {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+  
+  /* Improve touch targets */
+  button, a {
+    min-height: 42px;
+    min-width: 42px;
+  }
+  
+  /* Reduce animation intensity on mobile for better performance */
+  .animate-pulse-slow {
+    animation-duration: 4s;
+  }
+  
+  /* Improve table responsiveness on mobile */
+  .overflow-x-auto {
+    -webkit-overflow-scrolling: touch;
+  }
+  
+  /* Optimize team grids for mobile */
+  .grid-cols-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+  
+  /* Improve spacing on mobile */
+  .px-6 {
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+  }
+  
+  .py-12 {
+    padding-top: 2rem !important;
+    padding-bottom: 2rem !important;
+  }
+  
+  /* Make images responsive */
+  img {
+    max-width: 100%;
+    height: auto;
+  }
+  
+  /* Improve form elements on mobile */
+  input, select, textarea {
+    font-size: 16px !important; /* Prevents iOS zoom on focus */
+  }
+  
+  /* Make videos responsive */
+  video, iframe {
+    max-width: 100% !important;
+  }
+}
+
+/* Responsive container class */
+.container {
+  width: 100%;
+  margin-right: auto;
+  margin-left: auto;
+}
+
+@media (min-width: 640px) {
+  .container {
+    max-width: 640px;
+  }
+}
+
+@media (min-width: 768px) {
+  .container {
+    max-width: 768px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .container {
+    max-width: 1024px;
+  }
+}
+
+@media (min-width: 1280px) {
+  .container {
+    max-width: 1280px;
+  }
+}
+
+/* Make touch scrolling smooth on iOS */
+* {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Better handling of overflow on mobile */
+html, body {
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+
+/* Remove these styles as we're using inline Tailwind classes instead */
+/* Fix for the tab indicator circles */
+.active-tab-indicator {
+  display: none; /* Hide this class completely */
+}
+
+/* Make sure mobile menu indicators are visible */
+@media (max-width: 768px) {
+  .active-tab-indicator-mobile {
+    display: none; /* Hide this class completely */
+  }
+}
+
+/* Remove any conflicting styles that might hide the indicator */
+nav a[aria-current="page"]::after,
+nav a.active::after {
+  display: none; /* Hide these pseudo-elements */
+}
+
+/* Add this to the end of your globals.css file */
+
+/* Target all indicator dots - much more comprehensive targeting */
+.absolute.bottom-0.left-1\/2.-translate-x-1\/2.w-2.h-2.rounded-full.bg-blue-400,
+.absolute.-bottom-2.left-1\/2.-translate-x-1\/2.w-2.h-2.rounded-full.bg-blue-400,
+nav span.absolute[class*="rounded-full"][class*="bg-blue"],
+nav a span.absolute[class*="rounded-full"],
+.absolute.left-0.top-1\/2.-translate-y-1\/2.w-1.h-1\/2.bg-blue-400,
+span.w-1\.5.h-1\.5.rounded-full.bg-blue-400,
+span.w-2.h-2.rounded-full.bg-blue-400,
+.absolute:is([class*="bottom"]):is([class*="left-1/2"]):is([class*="rounded-full"]):is([class*="bg-blue"]) {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+/* Specifically target any small rounded blue elements */
+[class*="rounded-full"][class*="bg-blue"]:not(.w-8):not(.w-10):not(.w-12):not(.h-8):not(.h-10):not(.h-12) {
+  display: none !important;
+}
+
+/* Target small rounded elements with specific positioning */
+.absolute.left-1\/2.-translate-x-1\/2:is([class*="bottom"]) {
+  display: none !important;
+}
+
+/* Add these global text and section styles after your existing CSS */
+
+/* Global heading styles with gradient text */
+h1, h2, h3, h4, h5, h6 {
+  margin-bottom: 1rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+/* Fancy heading styles with gradients */
+.gradient-heading,
+h1:not([class*="text-"]),
+h2:not([class*="text-"]) {
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  background-image: linear-gradient(to right, #60a5fa, #93c5fd, #60a5fa);
+  display: inline-block;
+  position: relative;
+}
+
+/* Heading glow effect */
+.heading-glow {
+  position: relative;
+}
+
+.heading-glow::before {
+  content: '';
+  position: absolute;
+  inset: -0.5rem;
+  background: linear-gradient(to right, rgba(96, 165, 250, 0.3), rgba(147, 197, 253, 0.3));
+  border-radius: 0.75rem;
+  filter: blur(1rem);
+  opacity: 0.7;
+  z-index: -1;
+  animation: pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Section styling */
+.fancy-section {
+  position: relative;
+  padding: 2rem;
+  background-color: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+  border-radius: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.3s ease;
+  overflow: hidden;
+}
+
+.fancy-section:hover {
+  border-color: rgba(96, 165, 250, 0.4);
+  box-shadow: 0 0 30px rgba(96, 165, 250, 0.2);
+}
+
+/* Decorative corner for sections */
+.fancy-section::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 50px;
+  height: 50px;
+  border-top: 2px solid rgba(96, 165, 250, 0.5);
+  border-left: 2px solid rgba(96, 165, 250, 0.5);
+  border-top-left-radius: 0.5rem;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.fancy-section:hover::before {
+  opacity: 1;
+}
+
+/* Fancy button/link styling */
+.fancy-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.75rem 1.5rem;
+  background: linear-gradient(to right, #1e40af, #3b82f6);
+  color: white;
+  font-weight: 500;
+  border-radius: 9999px;
+  overflow: hidden;
+  transition: all 0.3s;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+.fancy-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+}
+
+.fancy-button::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    to right,
+    transparent,
+    rgba(255, 255, 255, 0.2),
+    transparent
+  );
+  transition: left 0.7s;
+}
+
+.fancy-button:hover::before {
+  left: 100%;
+}
+
+/* Paragraph text styles */
+p {
+  color: #93c5fd; /* Default light blue text */
+  line-height: 1.7;
+  margin-bottom: 1rem;
+}
+
+/* Enhanced list styling */
+ul, ol {
+  margin-left: 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
+li {
+  margin-bottom: 0.5rem;
+  position: relative;
+}
+
+ul > li::marker {
+  color: #60a5fa;
+}
+
+/* Animation for section entries */
+@keyframes fadeSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-entry {
+  animation: fadeSlideUp 0.6s ease-out forwards;
+}
+
+.animation-delay-100 {
+  animation-delay: 100ms;
+}
+
+.animation-delay-200 {
+  animation-delay: 200ms;
+}
+
+.animation-delay-500 {
+  animation-delay: 500ms;
+}
+
+/* Add this to the end of your globals.css file */
+/* filepath: c:\Users\gurno\Desktop\coding\Beluga\my-website\app\globals.css */
+
+/* Make sure mobile menu dropdown is visible */
+.md\:hidden.bg-black\/80 {
+  visibility: visible !important;
+  display: block !important;
+}
+
+/* Fix any issues with pointer events on mobile menu */
+nav button,
+nav a {
+  pointer-events: auto !important;
+}
+
+/* Ensure proper z-index for mobile menu */
+.z-50 {
+  z-index: 50 !important;
+}
+
+/* Override any styles that might be hiding mobile menu elements */
+.max-h-0 {
+  transition: max-height 0.3s ease-out;
+}
+
+.max-h-60 {
+  max-height: 15rem !important;
+  transition: max-height 0.3s ease-in;
+}
+
+/* Mobile Menu Fixes */
+@media (max-width: 768px) {
+  /* Ensure the mobile menu dropdown is always visible when active */
+  .mobile-nav-container {
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    height: auto !important;
+    overflow: visible !important; 
+    max-height: none !important;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+  }
+
+  /* Animation for fade in */
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .animate-fadeIn {
+    animation: fadeIn 0.3s ease forwards;
+  }
+}
+
+/* Footer and Navigation styling fixes */
+body > nav:not(:first-of-type),
+body > footer:not(:last-of-type) {
+  display: none !important;
+}
+
+footer {
+  background: linear-gradient(to right, rgba(0,0,0,0.9), rgba(0,0,0,0.8), rgba(0,0,0,0.9)) !important;
+  border-top: 1px solid rgba(255,255,255,0.05) !important;
+  padding: 1.5rem 0 !important;
+  margin-top: 2.5rem !important;
+}
+
+nav {
+  background-color: rgba(0, 0, 0, 0.3) !important;
+  backdrop-filter: blur(8px) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 50 !important;
+}
+
+/* Fix for the mobile menu specifically */
+.mobile-nav-container {
+  position: fixed;
+  top: 76px;
+  left: 0;
+  width: 100%;
+  background-color: rgba(0, 0, 0, 0.95);
+  backdrop-filter: blur(8px);
+  z-index: 990;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  display: block;
+  visibility: visible;
+  opacity: 1;
+}
+
+/* Fix for mobile menu animation */
+.animate-fadeIn {
+  animation: fadeIn 0.3s ease forwards;
+}

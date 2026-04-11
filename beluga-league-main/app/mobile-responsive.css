@@ -1,0 +1,97 @@
+/* Mobile Responsive Enhancements */
+
+/* General mobile optimizations */
+@media (max-width: 640px) {
+  /* Better tap targets for mobile */
+  button, 
+  a.fancy-button, 
+  .nav-link, 
+  input[type="button"],
+  input[type="submit"] {
+    min-height: 44px;
+    min-width: 44px;
+    padding: 0.625rem 1rem;
+  }
+  
+  /* Better spacing for mobile viewports */
+  .container {
+    padding-left: 0.875rem !important;
+    padding-right: 0.875rem !important;
+  }
+  
+  /* Improve readability on small screens */
+  p, li, span, div {
+    font-size: 1rem !important;
+    line-height: 1.5 !important;
+  }
+  
+  /* Hide less important decorative elements on mobile */
+  .mobile-hidden {
+    display: none !important;
+  }
+  
+  /* Ensure proper stacking on mobile */
+  .flex-col-mobile {
+    flex-direction: column !important;
+  }
+  
+  /* Full width elements on mobile */
+  .full-width-mobile {
+    width: 100% !important;
+  }
+  
+  /* Center items on mobile */
+  .center-mobile {
+    text-align: center !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+}
+
+/* Medium screens (tablets) */
+@media (min-width: 641px) and (max-width: 1024px) {
+  /* Adjusted spacing for tablets */
+  .md\:px-8 {
+    padding-left: 1.5rem !important;
+    padding-right: 1.5rem !important;
+  }
+  
+  /* Better grid columns for tablets */
+  .md\:grid-cols-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+
+/* Touch device optimizations */
+@media (hover: none) {
+  /* Disable hover effects that don't work well on touch devices */
+  .hover\:shadow-lg, 
+  .hover\:scale-105,
+  .hover\:bg-opacity-80 {
+    transition: none !important;
+    transform: none !important;
+    box-shadow: none !important;
+  }
+  
+  /* Enlarge important touch targets */
+  .touch-target {
+    min-height: 44px;
+    min-width: 44px;
+    margin: 0.25rem;
+  }
+}
+
+/* Orientation-specific adjustments */
+@media screen and (orientation: portrait) {
+  /* Adjustments for portrait mode */
+  .hero-section {
+    min-height: 70vh !important;
+  }
+}
+
+/* Safe area support for newer mobile browsers */
+@supports (padding: max(0px)) {
+  .safe-padding-bottom {
+    padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
+  }
+}

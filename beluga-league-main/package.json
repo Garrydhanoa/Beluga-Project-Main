@@ -1,0 +1,33 @@
+{
+  "name": "my-website",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "node scripts/vercel-build-check.js && next build",
+    "start": "next start",
+    "export": "next build && next export",
+    "build:cloudflare": "CLOUDFLARE_DEPLOY=true next build",
+    "lint": "next lint",
+    "debug-vercel-env": "node scripts/vercel-build-check.js"
+  },
+  "dependencies": {
+    "dompurify": "^3.2.6",
+    "framer-motion": "^12.23.12",
+    "google-auth-library": "^10.2.1",
+    "google-spreadsheet": "^5.0.2",
+    "next": "^16.1.1",
+    "next-auth": "^4.24.13",
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.2.1",
+    "@types/react": "19.1.9",
+    "autoprefixer": "^10.4.14",
+    "eslint": "9.33.0",
+    "eslint-config-next": "^16.1.1",
+    "postcss": "^8.4.24",
+    "tailwindcss": "^3.3.2"
+  }
+}

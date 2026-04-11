@@ -1,0 +1,76 @@
+/* Mobile header size enhancements */
+@media (max-width: 640px) {
+  /* Override the h1 styles for headers in standings and schedules pages - more professional look */
+  .super-large-mobile-header {
+    font-size: 3.2rem !important; /* Professional yet impactful size */
+    line-height: 1.1 !important;
+    letter-spacing: -0.5px !important;
+    word-break: normal !important;
+    margin-bottom: 2rem !important;
+    padding: 0 !important;
+    transform: none !important; /* Remove transform for cleaner look */
+    max-width: 100% !important;
+    display: block !important;
+    font-weight: 800 !important;
+    margin-top: 1.5rem !important;
+  }
+  
+  /* Professional header wrapper with subtle background */
+  .professional-header-wrapper {
+    position: relative !important;
+    display: inline-block !important;
+    padding: 0.75rem 1.5rem !important;
+    border-radius: 0.75rem !important;
+    background: rgba(13, 25, 45, 0.5) !important;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3) !important;
+    backdrop-filter: blur(8px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    margin: 0 auto !important;
+  }
+  
+  /* More professional shadow on text */
+  .shadow-text {
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5) !important;
+    background-size: 200% auto !important;
+    background-position: 0% center !important;
+    animation: gradientAnimation 8s ease infinite !important;
+  }
+  
+  /* Make the background shadow text complement the main text */
+  .absolute.left-1\/2.-translate-x-1\/2.-top-2.text-blue-500.opacity-10.blur-sm {
+    opacity: 0.15 !important;
+    filter: blur(4px) !important;
+    top: -0.25rem !important;
+  }
+}
+
+/* Special class for larger mobile screens - more spacious */
+@media (min-width: 400px) and (max-width: 640px) {
+  .super-large-mobile-header {
+    font-size: 4rem !important; /* Larger but still professional */
+    margin-top: 1.5rem !important;
+  }
+  
+  .professional-header-wrapper {
+    padding: 1rem 2rem !important;
+  }
+}
+
+/* Special class for smallest mobile screens - ensure readability */
+@media (max-width: 350px) {
+  .super-large-mobile-header {
+    font-size: 2.75rem !important; /* Appropriately sized for tiny screens */
+    line-height: 1.2 !important;
+  }
+  
+  .professional-header-wrapper {
+    padding: 0.5rem 1rem !important;
+  }
+}
+
+/* Add a subtle gradient animation for more professional look */
+@keyframes gradientAnimation {
+  0% { background-position: 0% center; }
+  50% { background-position: 100% center; }
+  100% { background-position: 0% center; }
+}

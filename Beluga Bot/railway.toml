@@ -1,0 +1,19 @@
+# Railway Deployment Configuration
+# This file tells Railway how to build and start your Discord bot
+
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "npm start"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+# Environment variables (these need to be set in Railway dashboard)
+# DISCORD_TOKEN
+# APPLICATION_ID 
+# GUILD_ID
+# GOOGLE_CREDENTIALS (JSON string)
+# SHEET_ID_AA
+# SHEET_ID_AAA
+# SHEET_ID_MAJORS

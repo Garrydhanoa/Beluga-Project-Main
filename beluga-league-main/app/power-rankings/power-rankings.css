@@ -1,0 +1,78 @@
+.power-rankings-container {
+  position: relative;
+}
+
+.crown {
+  position: absolute;
+  top: -12px;
+  right: 20px;
+  font-size: 24px;
+  filter: drop-shadow(0 0 8px rgba(255, 215, 0, 0.8));
+  animation: float 3s ease-in-out infinite;
+  z-index: 2;
+}
+
+.tilt-card {
+  transition: all 0.3s ease;
+}
+
+.tilt-card:hover {
+  transform: translateY(-2px);
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+.tilt-card:hover .card-content {
+  transform: scale(1.02);
+  transition: transform 0.3s ease;
+}
+
+.glow-text {
+  text-shadow: 0 0 10px rgba(66, 153, 225, 0.5);
+}
+
+.glow-border {
+  box-shadow: 0 0 15px rgba(255, 215, 0, 0.6);
+}
+
+.neon-border {
+  box-shadow: 0 0 15px rgba(66, 153, 225, 0.3);
+}
+
+.neon-button {
+  box-shadow: 0 0 15px rgba(66, 153, 225, 0.5);
+  transition: all 0.3s ease;
+}
+
+.neon-button:hover {
+  box-shadow: 0 0 20px rgba(66, 153, 225, 0.8);
+  transform: translateY(-2px);
+}
+
+/* Trend indicators */
+.trend-badge {
+  padding: 2px 6px;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.trend-badge.rising {
+  background-color: rgba(72, 187, 120, 0.2);
+  color: rgb(72, 187, 120);
+}
+
+.trend-badge.stable {
+  background-color: rgba(66, 153, 225, 0.2);
+  color: rgb(66, 153, 225);
+}
+
+.trend-badge.falling {
+  background-color: rgba(237, 100, 166, 0.2);
+  color: rgb(237, 100, 166);
+}
+
+@keyframes float {
+  0% { transform: translateY(0px) rotate(0deg); }
+  50% { transform: translateY(-6px) rotate(5deg); }
+  100% { transform: translateY(0px) rotate(0deg); }
+}

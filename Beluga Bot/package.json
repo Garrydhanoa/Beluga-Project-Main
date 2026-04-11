@@ -1,0 +1,42 @@
+{
+  "name": "beluga-league-bot",
+  "version": "2.0.0",
+  "description": "A Discord bot for Beluga League standings and information with improved architecture and features.",
+  "main": "src/bot.js",
+  "scripts": {
+    "start": "node src/bot.js",
+    "dev": "node --watch src/bot.js",
+    "register": "node registerCommands.js",
+    "register:list": "node registerCommands.js --list",
+    "register:clear": "node registerCommands.js --clear",
+    "test": "node -e \"console.log('✅ Bot files loaded successfully'); require('./src/config/config')\"",
+    "health": "node -e \"const {googleSheetsService} = require('./src/utils/googleSheets'); googleSheetsService.testConnection().then(r => console.log('Google Sheets:', r ? '✅' : '❌'))\"",
+    "diagnostics": "node -e \"const DevUtils = require('./src/utils/devUtils'); DevUtils.runDiagnostics()\"",
+    "test-image": "node -e \"const DevUtils = require('./src/utils/devUtils'); DevUtils.generateTestStandings('majors').catch(console.error)\""
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "league",
+    "standings",
+    "google-sheets",
+    "beluga"
+  ],
+  "dependencies": {
+    "@google-cloud/local-auth": "^3.0.1",
+    "better-sqlite3": "^11.10.0",
+    "canvas": "^3.2.0",
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "googleapis": "^144.0.0",
+    "node-fetch": "^3.3.2",
+    "pg": "^8.16.3"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
+  "author": "Beluga League",
+  "license": "MIT"
+}
