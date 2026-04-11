@@ -2,6 +2,10 @@ import NextAuth from 'next-auth'
 import DiscordProvider from 'next-auth/providers/discord'
 
 const handler = NextAuth({
+  trustHost: true,
+  session: {
+    strategy: 'jwt',
+  },
   providers: [
     DiscordProvider({
       clientId: process.env.DISCORD_CLIENT_ID,
@@ -56,6 +60,7 @@ const handler = NextAuth({
     error: '/admin',
   },
   secret: process.env.NEXTAUTH_SECRET,
+  debug: process.env.NODE_ENV !== 'production',
 })
 
 export { handler as GET, handler as POST }

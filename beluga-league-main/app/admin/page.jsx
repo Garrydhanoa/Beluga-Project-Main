@@ -1,13 +1,36 @@
 'use client'
 
 import { useState } from 'react'
-import { signIn } from 'next-auth/react'
+import { useEffect } from 'react'
+import { signIn, useSession } from 'next-auth/react'
+import { useRouter } from 'next/navigation'
 
 export default function AdminGateLogin() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const { data: session, status } = useSession()
+  const router = useRouter()
+
+  useEffect(() => {
+    const authError = new URLSearchParams(window.location.search).get('error')
+    if (authError) {
+      setError('Discord login failed. Please try again.')
+    }
+  }, [])
+
+  useEffect(() => {
+    if (status !== 'authenticated') {
+      return
+    }
+
+    if (session?.isDirector) {
+      router.replace('/admin/dashboard')
+    } else {
+      router.replace('/admin/denied')
+    }
+  }, [status, session, router])
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -25,7 +48,8 @@ export default function AdminGateLogin() {
 
       if (data.success) {
         // Gate passed — redirect to Discord OAuth
-        signIn('discord', { callbackUrl: '/admin/dashboard' })
+        const callbackUrl = `${window.location.origin}/admin/dashboard`
+        await signIn('discord', { callbackUrl, redirect: true })
       } else {
         setError('Invalid credentials')
         setLoading(false)
