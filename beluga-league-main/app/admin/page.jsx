@@ -61,7 +61,8 @@ export default function AdminGateLogin() {
   }
 
   return (
-    <div className="w-full max-w-md px-6">
+    <div className="min-h-screen flex items-center justify-center">
+      <div className="w-full max-w-md px-6">
       <div className="bg-gray-900/80 backdrop-blur-xl border border-blue-500/20 rounded-2xl p-8 shadow-2xl">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-white mb-2">Beluga League</h1>
@@ -117,6 +118,7 @@ export default function AdminGateLogin() {
         <p className="text-center text-gray-600 text-xs mt-6">
           Authorized personnel only
         </p>
+      </div>
       </div>
     </div>
   )

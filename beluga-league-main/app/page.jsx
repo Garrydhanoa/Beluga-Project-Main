@@ -1,488 +1,638 @@
 "use client"
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
+import { motion, useInView, animate } from 'framer-motion';
 import BackgroundDecoration from './components/BackgroundDecoration';
 
-export default function Home() {
-  const [showVideo, setShowVideo] = useState(false);
-  
-  // Team names
-  const teams = [
-    "6 Speed",
-    "Archangels",
-    "Aviators",
-    "Clovis Esports",
-    "Griffins",
-    "Immortals",
-    "InTraCate",
-    "Kingdom",
-    "Lotus",
-    "Malfeasance",
-    "MNML",
-    "Panthers",
-    "Sublunary",
-    "Surge"
-  ];
-  
-  const [animateItems, setAnimateItems] = useState(false);
-  
-  // Preload all team logos to prevent loading issues
-  useEffect(() => {
-    // Preload all team logos
-    teams.forEach(team => {
-      const img = new Image();
-      img.src = `/logos/${team}.png`;
-    });
+const TEAMS = [
+  { name: "6 Speed" },
+  { name: "Archangels" },
+  { name: "Aviators" },
+  { name: "Clovis Esports" },
+  { name: "Griffins" },
+  { name: "Immortals" },
+  { name: "InTraCate" },
+  { name: "Kingdom" },
+  { name: "Lotus" },
+  { name: "Malfeasance" },
+  { name: "MNML" },
+  { name: "Panthers" },
+  { name: "Sublunary" },
+  { name: "Surge" },
+];
 
-    // Animate items on page load
-    setTimeout(() => {
-      setAnimateItems(true);
-    }, 100);
-  }, []);
-  
+const LEFT_TEAMS = TEAMS.slice(0, 7);
+const RIGHT_TEAMS = TEAMS.slice(7, 14);
+
+const CHAMPIONS = [
+  { season: 1, team: "Aviators", gm: "TBD", year: "2022" },
+  { season: 2, team: "Griffins", gm: "TBD", year: "2022" },
+  { season: 3, team: "Aviators", gm: "TBD", year: "2023" },
+  { season: 4, team: "Sublunary", gm: "TBD", year: "2023" },
+  { season: 5, team: "Immortals", gm: "TBD", year: "2024" },
+  { season: 6, team: "Archangels", gm: "TBD", year: "2024" },
+  { season: 7, team: "Surge", gm: "TBD", year: "2025" },
+  { season: 8, team: "Malfeasance", gm: "TBD", year: "2025" },
+  { season: 9, team: null, gm: null, year: "2026", current: true },
+];
+
+// Map of team name → array of seasons they won (for crown badges on team cards)
+const CHAMPION_MAP = CHAMPIONS
+  .filter((c) => !c.current && c.team)
+  .reduce((acc, c) => {
+    if (!acc[c.team]) acc[c.team] = [];
+    acc[c.team].push(c.season);
+    return acc;
+  }, {});
+
+const PAST_CHAMPIONS = CHAMPIONS.filter((c) => !c.current);
+
+const STATS = [
+  { value: 14, label: "Teams", suffix: "" },
+  { value: 9, label: "Season", suffix: "" },
+  { value: 200, label: "Players", suffix: "+" },
+  { value: 6, label: "Divisions", suffix: "" },
+];
+
+function Counter({ to, suffix = "", duration = 2 }) {
+  const ref = useRef(null);
+  const inView = useInView(ref, { once: true, margin: "-50px" });
+  const [display, setDisplay] = useState(0);
+
+  useEffect(() => {
+    if (!inView) return;
+    const controls = animate(0, to, {
+      duration,
+      ease: "easeOut",
+      onUpdate: (v) => setDisplay(Math.floor(v)),
+    });
+    return () => controls.stop();
+  }, [inView, to, duration]);
+
+  return <span ref={ref}>{display}{suffix}</span>;
+}
+
+function FadeIn({ children, delay = 0, y = 30, className = "" }) {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-900 via-blue-800 to-blue-950 text-white">
-      {/* Background decorative elements */}
+    <motion.div
+      initial={{ opacity: 0, y }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, margin: "-80px" }}
+      transition={{ duration: 0.7, delay, ease: [0.16, 1, 0.3, 1] }}
+      className={className}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+export default function Home() {
+  useEffect(() => {
+    TEAMS.forEach((team) => {
+      const img = new Image();
+      img.src = `/logos/${team.name}.png`;
+    });
+  }, []);
+
+  return (
+    <div className="relative text-white overflow-hidden">
       <BackgroundDecoration />
-      
-      {/* Hero Section with gradient background */}
-      <div className="relative">
-        <div className="absolute inset-0 z-0 bg-gradient-to-b from-black/80 via-blue-900/30 to-black/50"></div>
-        <div className="container mx-auto px-4 py-20 relative z-10">
-          <div className="flex flex-col md:flex-row items-center justify-between">
-            <div className="md:w-1/2 text-white mb-10 md:mb-0">
-              <h1 className="text-6xl font-bold mb-8 relative">
-                <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-300 via-purple-400 to-blue-200 animate-pulse-slow">
-                  Welcome to Beluga League
-                </span>
-                <span className="absolute -left-2 -top-2 text-blue-500 opacity-20 blur-sm">
-                  Welcome to Beluga League
-                </span>
-                <span className="absolute -right-2 -bottom-2 text-purple-500 opacity-20 blur-sm">
-                  Welcome to Beluga League
-                </span>
-              </h1>
-              <p className="text-2xl mb-10 text-blue-100 leading-relaxed drop-shadow-md">
-                The premier Rocket League discord community for competitive play,
-                camaraderie, and celebration of the game we love.
-              </p>
-              <div className="flex flex-wrap space-x-0 space-y-4 sm:space-y-0 sm:space-x-4">
-                <a 
-                  href="https://discord.gg/4J4c79hawF"
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="px-8 py-4 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full font-medium text-white hover:from-blue-600 hover:to-purple-700 transition shadow-lg transform hover:scale-105 inline-block text-center w-full sm:w-auto"
-                >
-                  Join Discord
-                </a>
-                
-                <a 
-                  href="#applications"
-                  className="px-8 py-4 bg-black/30 backdrop-blur-sm border border-white/20 hover:border-blue-400 rounded-full font-medium text-white transition shadow-lg transform hover:scale-105 inline-block text-center w-full sm:w-auto"
-                >
-                  <span className="flex items-center justify-center gap-2">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                      <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
-                      <path fillRule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clipRule="evenodd" />
-                    </svg>
-                    Applications
-                  </span>
-                </a>
-              </div>
+
+      {/* ============ HERO ============ */}
+      <section className="relative min-h-[92vh] flex items-center justify-center overflow-hidden">
+        <div className="absolute inset-0 z-0">
+          <video
+            autoPlay
+            muted
+            loop
+            playsInline
+            className="w-full h-full object-cover opacity-40"
+            src="/videos/intro-video.mp4"
+          />
+          <div className="absolute inset-0 bg-gradient-to-b from-black/70 via-blue-950/60 to-black pointer-events-none" />
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_0%,rgba(0,0,0,0.85)_85%)] pointer-events-none" />
+        </div>
+
+        <div className="relative z-10 container mx-auto px-4 text-center">
+          <motion.div
+            initial={{ opacity: 0, y: 40 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1] }}
+          >
+            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-blue-500/10 border border-blue-400/30 backdrop-blur-sm mb-6">
+              <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+              <span className="text-xs sm:text-sm text-blue-200 font-medium tracking-[0.2em]">
+                SEASON 9 · NOW LIVE
+              </span>
             </div>
-            <div className="md:w-1/2 flex justify-center">
-              <div className="relative w-80 h-80 md:w-[400px] md:h-[400px] overflow-hidden flex items-center justify-center">
-                <img 
-                  src="/logos/league_logo.png" 
-                  alt="Beluga League" 
-                  className="w-full h-full object-contain drop-shadow-[0_0_25px_rgba(59,130,246,0.8)]"
-                  onError={(e) => {
-                    e.currentTarget.onerror = null;
-                    e.currentTarget.style.display = 'none';
-                    if (e.currentTarget.parentElement) {
-                      e.currentTarget.parentElement.classList.add('rounded-full', 'bg-gradient-to-br', 'from-blue-500/30', 'to-purple-600/30', 'border', 'border-white/10');
-                      e.currentTarget.parentElement.innerHTML += '<div class="absolute inset-5 rounded-full bg-gradient-to-r from-blue-500 to-purple-500 opacity-20 blur-xl animate-pulse-slow"></div><span class="text-9xl font-bold text-white opacity-90">BL</span>';
-                    }
-                  }}
-                />
-              </div>
+
+            <h1 className="text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-black tracking-tight mb-6 leading-[0.9]">
+              <span className="block text-white drop-shadow-[0_0_30px_rgba(59,130,246,0.3)]">
+                BELUGA
+              </span>
+              <span className="block text-transparent bg-clip-text bg-gradient-to-r from-blue-200 via-blue-300 to-blue-500">
+                LEAGUE
+              </span>
+            </h1>
+
+            <p className="text-lg sm:text-xl md:text-2xl text-blue-100/80 max-w-2xl mx-auto mb-10 leading-relaxed">
+              The premier Rocket League discord community for competitive play, camaraderie, and the game we love.
+            </p>
+
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+              <a
+                href="https://discord.gg/4J4c79hawF"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="group px-8 py-4 bg-blue-500 hover:bg-blue-400 rounded-full font-semibold text-white transition-all shadow-[0_0_30px_rgba(59,130,246,0.5)] hover:shadow-[0_0_50px_rgba(59,130,246,0.8)] hover:scale-105"
+              >
+                Join Discord
+              </a>
+              <a
+                href="#teams"
+                className="px-8 py-4 bg-white/5 hover:bg-white/10 backdrop-blur-sm border border-white/20 hover:border-white/40 rounded-full font-semibold text-white transition-all"
+              >
+                Meet the Teams →
+              </a>
             </div>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 30 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.9, delay: 0.4, ease: [0.16, 1, 0.3, 1] }}
+            className="mt-20 grid grid-cols-2 md:grid-cols-4 gap-6 max-w-3xl mx-auto"
+          >
+            {STATS.map((s) => (
+              <div key={s.label} className="text-center">
+                <div className="text-4xl md:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-b from-white to-blue-300">
+                  <Counter to={s.value} suffix={s.suffix} />
+                </div>
+                <div className="text-[10px] md:text-xs uppercase tracking-[0.25em] text-blue-300/70 mt-2">
+                  {s.label}
+                </div>
+              </div>
+            ))}
+          </motion.div>
+        </div>
+
+        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-10 hidden sm:block">
+          <div className="w-6 h-10 border-2 border-white/30 rounded-full flex items-start justify-center p-1.5">
+            <motion.div
+              animate={{ y: [0, 12, 0] }}
+              transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
+              className="w-1 h-2 bg-white/60 rounded-full"
+            />
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* About Section with Video */}
-      <div className="container mx-auto px-4 py-16">
-        <div className="bg-gradient-to-br from-black/40 to-black/60 backdrop-blur-sm p-8 rounded-xl border border-white/10 shadow-xl">
-          <div className="flex flex-col md:flex-row items-center gap-10">
-            <div className="md:w-1/2">
-              <div 
-                className="relative w-full aspect-video rounded-lg overflow-hidden shadow-2xl cursor-pointer group"
-                onClick={() => setShowVideo(true)}
-              >
-                {/* Video Thumbnail Preview */}
-                <div className="absolute inset-0 bg-gradient-to-br from-blue-600/50 to-purple-800/50">
-                  <video
-                    src="/videos/intro-video.mp4"
-                    className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
-                    preload="metadata"
-                    muted
-                    playsInline
-                  />
-                </div>
+      {/* ============ ABOUT SECTION ============ */}
+      <section className="container mx-auto px-4 py-24">
+        <div className="grid md:grid-cols-2 gap-12 items-center">
+          {/* LEFT — Quote + Differentiators */}
+          <FadeIn>
+            <div className="relative p-8 md:p-10 rounded-2xl bg-gradient-to-br from-blue-500/10 via-blue-900/10 to-blue-950/20 border border-blue-400/20 backdrop-blur-sm overflow-hidden">
+              <div className="absolute -top-20 -right-20 w-60 h-60 rounded-full bg-blue-500/15 blur-3xl pointer-events-none" />
+              <div className="absolute -bottom-20 -left-20 w-52 h-52 rounded-full bg-blue-400/10 blur-3xl pointer-events-none" />
 
-                {/* Play Button Overlay */}
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="w-20 h-20 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center transform group-hover:scale-110 transition-transform">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
+              {/* Quote */}
+              <div className="relative">
+                <div className="absolute -inset-4 bg-blue-500/5 blur-2xl rounded-full pointer-events-none" />
+                <svg
+                  className="relative h-14 w-14 text-blue-400/50 mb-3 drop-shadow-[0_0_20px_rgba(59,130,246,0.4)]"
+                  fill="currentColor"
+                  viewBox="0 0 32 32"
+                  aria-hidden="true"
+                >
+                  <path d="M9.333 8C5.467 8 2.667 11.067 2.667 14.933c0 3.867 2.8 6.667 6.666 6.667.667 0 1.2-.133 1.734-.267-.8 2.8-3.067 4.934-6 5.334l.666 1.866c4.534-.666 8.267-4.533 8.267-9.6V14.933C13.867 11.067 13.2 8 9.333 8zm13.334 0C18.8 8 16 11.067 16 14.933c0 3.867 2.8 6.667 6.667 6.667.666 0 1.2-.133 1.733-.267-.8 2.8-3.067 4.934-6 5.334l.667 1.866C23.6 27.867 27.333 24 27.333 18.933V14.933C27.2 11.067 26.533 8 22.667 8z" />
+                </svg>
+                <p className="relative text-2xl md:text-[1.75rem] font-semibold text-white leading-[1.3] tracking-tight">
+                  We didn&apos;t build Beluga to be another weekend tournament. We built it to be the place you come back to{' '}
+                  <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-200 to-blue-400">
+                    every season
+                  </span>
+                  {' '}— the league that feels like home.
+                </p>
+                <div className="relative mt-6 flex items-center gap-3">
+                  <div className="flex-shrink-0 w-11 h-11 rounded-full bg-gradient-to-br from-blue-400 to-blue-700 flex items-center justify-center text-white font-bold text-sm shadow-[0_0_20px_rgba(59,130,246,0.4)]">
+                    LD
+                  </div>
+                  <div>
+                    <div className="text-sm font-bold text-blue-100">League Director</div>
+                    <div className="text-[10px] text-blue-300/70 tracking-[0.2em] uppercase">Beluga League</div>
                   </div>
                 </div>
+              </div>
 
-                {/* Video Duration Badge */}
-                <div className="absolute bottom-3 right-3 bg-black/70 px-2 py-1 rounded text-white text-sm font-medium">
-                  0:45
-                </div>
+              {/* Divider */}
+              <div className="relative my-8 h-px bg-gradient-to-r from-transparent via-blue-400/30 to-transparent" />
+
+              {/* Differentiators */}
+              <div className="relative space-y-4">
+                {[
+                  {
+                    title: "Professional Broadcasts",
+                    desc: "Casted matches with live graphics every week.",
+                    icon: (
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                    ),
+                  },
+                  {
+                    title: "Custom Stats Tracking",
+                    desc: "Full player dashboards, match histories, power rankings.",
+                    icon: (
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                    ),
+                  },
+                  {
+                    title: "Drafted Rosters",
+                    desc: "Real teams, real GMs — no pickup squads.",
+                    icon: (
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                    ),
+                  },
+                  {
+                    title: "Dedicated Staff",
+                    desc: "Active moderation keeping the league healthy.",
+                    icon: (
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                    ),
+                  },
+                  {
+                    title: "Community Events",
+                    desc: "Tournaments, draft nights, and meetups between seasons.",
+                    icon: (
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    ),
+                  },
+                  {
+                    title: "Open to All Ranks",
+                    desc: "Six divisions — from Rookie to Grand Champion.",
+                    icon: (
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                    ),
+                  },
+                ].map((item, i) => (
+                  <motion.div
+                    key={item.title}
+                    initial={{ opacity: 0, x: -10 }}
+                    whileInView={{ opacity: 1, x: 0 }}
+                    viewport={{ once: true }}
+                    transition={{ delay: 0.3 + i * 0.06, duration: 0.4 }}
+                    className="group flex items-start gap-4"
+                  >
+                    <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-400/30 flex items-center justify-center group-hover:bg-blue-500/20 group-hover:border-blue-400/60 transition">
+                      <svg className="h-5 w-5 text-blue-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        {item.icon}
+                      </svg>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-bold text-white">{item.title}</div>
+                      <div className="text-xs text-blue-200/60 mt-0.5 leading-relaxed">{item.desc}</div>
+                    </div>
+                  </motion.div>
+                ))}
               </div>
             </div>
-            <div className="md:w-1/2 text-white">
-              <h2 className="text-4xl font-bold mb-6 relative">
-                <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400">
-                  About Our League
+          </FadeIn>
+
+          {/* RIGHT — Headline + Copy */}
+          <FadeIn delay={0.15}>
+            <div>
+              <div className="inline-block px-3 py-1 rounded-full bg-blue-500/10 border border-blue-400/30 text-[10px] font-medium text-blue-300 tracking-[0.2em] uppercase mb-4">
+                Why Beluga
+              </div>
+              <h2 className="text-4xl md:text-5xl font-black mb-6 leading-[1.05]">
+                A league built{' '}
+                <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-200 to-blue-400">
+                  by players
                 </span>
-                <span className="absolute -left-1 -top-1 text-blue-500 opacity-10 blur-sm">
-                  About Our League
-                </span>
+                , for players.
               </h2>
-              <p className="text-lg mb-4 text-blue-100">
-                Beluga League was founded with a singular vision: to create a competitive yet welcoming environment for Rocket League players of all skill levels.
-              </p>
-              <p className="text-lg mb-4 text-blue-100">
-                We host regular seasons with professionally managed tournaments, custom stats tracking, and community events that bring players together.
-              </p>
-              <p className="text-lg text-blue-100">
-                Whether you&apos;re a seasoned veteran or just starting out, there&apos;s a place for you in our community.
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Teams Section with enhanced styling - Updated to show 4 per row */}
-      <div className="container mx-auto px-4 py-16">
-        <h2 className="text-4xl font-bold mb-12 text-center relative">
-          <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-300 to-purple-400">
-            Our Teams For the Season
-          </span>
-          <span className="absolute left-1/2 -translate-x-1/2 -top-2 text-blue-500 opacity-10 blur-sm whitespace-nowrap">
-            Our Teams For the Season
-          </span>
-        </h2>
-        {/* Update the teams section to link to team pages */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-4 gap-6">
-          {teams.map((team) => (
-            <Link
-              href={`/teams/${encodeURIComponent(team)}`}
-              key={team}
-              className="group bg-gradient-to-b from-black/40 to-black/70 backdrop-blur-sm p-6 rounded-lg border border-white/10 hover:border-blue-400 transition-all transform hover:-translate-y-2 hover:shadow-[0_0_25px_rgba(59,130,246,0.5)] duration-300 relative overflow-hidden"
-            >
-              {/* Background glow effect */}
-              <div className="absolute inset-0 bg-gradient-to-br from-blue-500/0 to-purple-500/0 group-hover:from-blue-500/10 group-hover:to-purple-500/10 transition-all duration-500"></div>
-              
-              {/* Moving particle effect */}
-              <div className="absolute -inset-1 bg-grid opacity-0 group-hover:opacity-20 transition-opacity duration-500"></div>
-              
-              <div className="aspect-square relative mb-4 flex items-center justify-center overflow-hidden">
-                <div className="absolute inset-0 rounded-full bg-gradient-to-br from-blue-500/0 via-purple-500/0 to-blue-600/0 group-hover:from-blue-500/20 group-hover:via-purple-500/20 group-hover:to-blue-600/20 transition-all duration-500 transform scale-0 group-hover:scale-100 blur-xl"></div>
-                <img 
-                  src={`/logos/${team}.png`} 
-                  alt={`${team} Logo`} 
-                  className="w-4/5 h-4/5 object-contain drop-shadow-lg transform group-hover:scale-110 transition-transform duration-500 relative z-10"
-                  onError={(e) => {
-                    e.currentTarget.onerror = null;
-                    e.currentTarget.style.display = 'none';
-                    if (e.currentTarget.parentElement) {
-                      const teamName = team || "BL";
-                      const initials = teamName.split(' ').map(word => word[0]).join('');
-                      e.currentTarget.parentElement.classList.add('rounded-full', 'bg-gradient-to-br', 'from-blue-600/30', 'via-purple-600/30', 'to-blue-900/30', 'border', 'border-white/20', 'flex', 'items-center', 'justify-center');
-                      e.currentTarget.parentElement.innerHTML = `
-                        <div class="absolute inset-0 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 animate-pulse-slow"></div>
-                        <span class="relative z-10 text-4xl font-bold text-white opacity-90">${initials}</span>
-                      `;
-                    }
-                  }}
-                />
-              </div>
-              <h3 className="text-center text-white font-bold text-lg relative group-hover:text-blue-300 transition-colors duration-300">
-                <span className="relative z-10">{team}</span>
-                <span className="absolute left-0 right-0 bottom-0 h-1 bg-gradient-to-r from-blue-500/0 via-blue-500/50 to-blue-500/0 transform scale-x-0 group-hover:scale-x-100 transition-transform duration-500"></span>
-              </h3>
-            </Link>
-          ))}
-        </div>
-      </div>
-
-      {/* YouTube Showcase Section */}
-      <div className="container mx-auto px-4 py-16">
-        <div className="bg-gradient-to-br from-black/40 to-black/60 backdrop-blur-sm p-8 rounded-xl border border-white/10 shadow-xl">
-          <h2 className="text-4xl font-bold mb-8 text-center relative">
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-300 to-purple-400">
-              Season 6 Highlights
-            </span>
-            <span className="absolute left-1/2 -translate-x-1/2 -top-2 text-blue-500 opacity-10 blur-sm whitespace-nowrap">
-              Season 6 Highlights
-            </span>
-          </h2>
-
-          {/* Video Container */}
-          <div className="aspect-video w-full max-w-4xl mx-auto rounded-lg overflow-hidden shadow-[0_0_25px_rgba(59,130,246,0.3)] mb-10">
-            <iframe 
-              className="w-full h-full"
-              src="https://www.youtube.com/embed/e1TvkdWSJzs" 
-              title="Beluga League Season 6 Montage"
-              frameBorder="0" 
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
-              allowFullScreen
-            ></iframe>
-          </div>
-
-          {/* Call to action for clips */}
-          <div className="text-center mt-8">
-            <p className="text-xl text-blue-100 mb-6">
-              Got amazing Rocket League moments? We want to feature them in our next montage!
-            </p>
-            <a 
-              href="https://docs.google.com/forms/d/e/1FAIpQLScbzUr27qDf1mz0JEAtXfL5Xp1oBNklOJtrRI-CuvdFth1B8w/viewform?usp=header"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-8 py-4 bg-gradient-to-r from-purple-500 to-blue-600 rounded-full font-medium text-white hover:from-purple-600 hover:to-blue-700 transition shadow-lg transform hover:scale-105 inline-flex items-center space-x-2 hover:shadow-[0_0_20px_rgba(147,51,234,0.5)]"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
-              </svg>
-              <span>Send Clips Here</span>
-              
-              {/* Add a subtle animation for the button */}
-              <span className="absolute inset-0 rounded-full bg-white/10 transform scale-0 opacity-0 group-hover:scale-100 group-hover:opacity-100 transition-all duration-300"></span>
-            </a>
-          </div>
-        </div>
-      </div>
-
-      {/* Enhanced Call to Action with customized design */}
-      <div className="relative py-24 overflow-hidden">
-        {/* Animated background particles */}
-        <div className="absolute inset-0 bg-gradient-to-r from-purple-800/80 via-blue-800/50 to-black/70">
-          <div className="absolute top-20 left-1/4 w-20 h-20 rounded-full bg-blue-500/10 blur-xl animate-pulse-slow"></div>
-          <div className="absolute bottom-40 right-1/3 w-32 h-32 rounded-full bg-purple-500/10 blur-xl animate-pulse"></div>
-          <div className="absolute top-1/2 left-2/3 w-16 h-16 rounded-full bg-blue-400/10 blur-lg animate-pulse-slow"></div>
-        </div>
-        
-        {/* Glowing borders */}
-        <div className="container mx-auto px-4 relative z-10">
-          <div className="max-w-4xl mx-auto">
-            <div className="relative bg-black/30 backdrop-blur-md rounded-2xl p-10 border border-white/10 overflow-hidden shadow-[0_0_40px_rgba(59,130,246,0.3)]">
-              {/* Animated highlight corner */}
-              <div className="absolute -top-20 -right-20 w-40 h-40 bg-blue-500/20 rounded-full blur-xl animate-pulse-slow"></div>
-              <div className="absolute -bottom-20 -left-20 w-40 h-40 bg-purple-500/20 rounded-full blur-xl animate-pulse"></div>
-              
-              {/* Content with enhanced typography */}
-              <div className="text-center relative z-10">
-                <div className="inline-block relative mb-3">
-                  <span className="absolute -inset-1 rounded-lg bg-gradient-to-r from-blue-500/30 to-purple-500/30 blur-xl animate-pulse-slow"></span>
-                  <h2 className="relative text-5xl md:text-6xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-300 via-purple-400 to-blue-200 mb-8">
-                    Ready to Compete?
-                  </h2>
-                </div>
-                
-                <p className="text-2xl text-blue-100 mb-10 max-w-2xl mx-auto">
-                  Join the most exciting Rocket League community and show off your
-                  skills in our next season.
+              <div className="space-y-4 text-lg text-blue-100/80 leading-relaxed">
+                <p>
+                  Beluga isn&apos;t a bracket thrown together on a weekend. We run full seasons with drafted rosters, casted matches, custom stats, and a community that actually sticks around between games.
                 </p>
-                
-                {/* Enhanced buttons with hover effects */}
-                <div className="flex flex-col sm:flex-row justify-center gap-6">
-                  <a 
-                    href="https://docs.google.com/forms/d/e/1FAIpQLScR3pdfPVDn9H0u_FIo6KaNMG8HvHRvuai7GSnk3XuVH-raUA/viewform?usp=header" 
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="group relative px-10 py-5 bg-gradient-to-r from-blue-600 to-blue-800 rounded-xl font-bold text-white text-lg hover:from-blue-700 hover:to-blue-900 transition shadow-lg transform hover:scale-105 inline-block text-center overflow-hidden"
-                  >
-                    <span className="relative z-10 flex items-center justify-center gap-2">
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 transition-transform group-hover:rotate-12" viewBox="0 0 20 20" fill="currentColor">
-                        <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" />
-                      </svg>
-                      Apply For GM
-                    </span>
-                    <div className="absolute inset-0 w-1/2 h-full bg-gradient-to-r from-white/0 via-white/20 to-white/0 skew-x-20 transition-transform translate-x-[-180%] group-hover:translate-x-[180%] duration-700"></div>
-                  </a>
-                  
-                  <Link
-                    href="/rulebook" 
-                    className="group relative px-10 py-5 bg-black/40 backdrop-blur-sm rounded-xl font-bold text-white text-lg border border-white/20 hover:border-blue-400 transition transform hover:scale-105 inline-block text-center overflow-hidden"
-                  >
-                    <span className="relative z-10 flex items-center justify-center gap-2">
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 transition-transform group-hover:rotate-12" viewBox="0 0 20 20" fill="currentColor">
-                        <path d="M9 4.804A7.968 7.968 0 005.5 4c-1.255 0-2.443.29-3.5.804v10A7.969 7.969 0 005.5 14c1.669 0 3.218.51 4.5 1.385A7.962 7.962 0 0014.5 14c1.255 0 2.443.29 3.5.804v-10A7.968 7.968 0 0014.5 4c-1.255 0-2.443.29-3.5.804V12a1 1 0 11-2 0V4.804z" />
-                      </svg>
-                      Rulebook
-                    </span>
-                    <div className="absolute inset-0 w-full h-full bg-gradient-to-r from-blue-600/0 via-blue-600/20 to-blue-600/0 transform translate-y-full group-hover:translate-y-0 transition-transform duration-500"></div>
-                  </Link>
-                </div>
-                
-                {/* Decorative elements */}
-                <div className="absolute left-4 top-4 w-20 h-1 bg-gradient-to-r from-blue-500 to-transparent rounded-full"></div>
-                <div className="absolute right-4 bottom-4 w-20 h-1 bg-gradient-to-l from-purple-500 to-transparent rounded-full"></div>
+                <p>
+                  Whether you&apos;re grinding for Grand Champion or just looking for your people, you&apos;ll find a home here.
+                </p>
+              </div>
+              <div className="mt-8 flex flex-wrap gap-3">
+                <a
+                  href="https://discord.gg/4J4c79hawF"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 px-5 py-3 rounded-full bg-blue-500 hover:bg-blue-400 font-semibold text-white transition shadow-[0_0_25px_rgba(59,130,246,0.4)] hover:shadow-[0_0_40px_rgba(59,130,246,0.7)]"
+                >
+                  Join the Community →
+                </a>
+                <Link
+                  href="/rulebook"
+                  className="inline-flex items-center gap-2 px-5 py-3 rounded-full bg-white/5 hover:bg-white/10 border border-white/20 hover:border-white/40 font-semibold transition"
+                >
+                  Rulebook
+                </Link>
               </div>
             </div>
-          </div>
+          </FadeIn>
         </div>
-      </div>
+      </section>
 
-      {/* Video Modal - Updated to use intro-video */}
-      {showVideo && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4" onClick={() => setShowVideo(false)}>
-          <div className="relative w-full max-w-4xl aspect-video bg-black rounded-lg overflow-hidden">
-            {/* Updated to use intro-video */}
-            <video 
-              className="w-full h-full object-cover" 
-              controls 
-              autoPlay
-              onClick={(e) => e.stopPropagation()}
-            >
-              <source src="/videos/intro-video.mp4" type="video/mp4" />
-              Your browser does not support the video tag.
-            </video>
-
-            <button 
-              className="absolute top-4 right-4 text-white bg-black/50 rounded-full p-2 hover:bg-black/80 transition"
-              onClick={(e) => {
-                e.stopPropagation();
-                setShowVideo(false);
-              }}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Applications Section */}
-      <div id="applications" className="container mx-auto px-4 py-16 scroll-mt-24">
-        <div className="text-center mb-12">
-          <div className="relative inline-block">
-            <h2 className="text-4xl font-bold mb-4 text-transparent bg-clip-text bg-gradient-to-r from-blue-300 via-purple-400 to-blue-200">
-              Join Our Team
+      {/* ============ TEAMS GRID ============ */}
+      <section id="teams" className="container mx-auto px-4 py-24 scroll-mt-24">
+        <FadeIn>
+          <div className="text-center mb-14">
+            <div className="inline-block px-3 py-1 rounded-full bg-blue-500/10 border border-blue-400/30 text-[10px] font-medium text-blue-300 tracking-[0.2em] uppercase mb-4">
+              Season 9 Rosters
+            </div>
+            <h2 className="text-4xl md:text-5xl font-black mb-4">
+              Meet the{' '}
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-200 to-blue-400">
+                teams
+              </span>
             </h2>
-            <div className="absolute -inset-4 bg-blue-500/10 rounded-full blur-xl animate-pulse-slow -z-10"></div>
+            <p className="text-lg text-blue-100/70">14 organizations competing this season.</p>
           </div>
-          <p className="text-xl text-blue-100 max-w-2xl mx-auto">
-            Apply for various positions in the Beluga League and help shape the future of our community!
-          </p>
+        </FadeIn>
+
+        {/* Desktop bracket */}
+        <div className="hidden md:block max-w-7xl mx-auto">
+          <div className="grid grid-cols-[1fr_auto_1fr] gap-10 lg:gap-16 items-center">
+            {/* LEFT COLUMN */}
+            <div className="flex flex-col gap-4">
+              {LEFT_TEAMS.map((team, i) => {
+                const wins = CHAMPION_MAP[team.name] || [];
+                return (
+                  <FadeIn key={team.name} delay={i * 0.05} y={0}>
+                    <Link
+                      href={`/teams/${encodeURIComponent(team.name)}`}
+                      className="group relative flex items-center gap-4 px-5 py-4 rounded-2xl bg-white/[0.03] border border-white/10 hover:border-blue-400/60 hover:bg-blue-500/10 transition-all duration-300 hover:-translate-x-1.5"
+                    >
+                      <div className="w-14 h-14 flex-shrink-0 flex items-center justify-center">
+                        <img
+                          src={`/logos/${team.name}.png`}
+                          alt={team.name}
+                          className="max-w-full max-h-full object-contain drop-shadow-lg group-hover:scale-110 transition-transform"
+                        />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-lg font-bold text-white/90 group-hover:text-blue-200 transition-colors truncate">
+                          {team.name}
+                        </div>
+                        {wins.length > 0 && (
+                          <div className="text-[10px] text-blue-300/60 tracking-wider uppercase mt-0.5 truncate font-semibold">
+                            {wins.map((s) => `S${s}`).join(' · ')} Champion
+                          </div>
+                        )}
+                      </div>
+                      {wins.length > 0 && (
+                        <div
+                          title={`${wins.length}× Champion`}
+                          className="flex-shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-blue-400/15 border border-blue-300/40 group-hover:bg-blue-400/25 group-hover:border-blue-300/70 transition-all"
+                        >
+                          <svg className="h-3.5 w-3.5 text-blue-200" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M5 16L3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5zm0 2h14v2H5v-2z" />
+                          </svg>
+                          <span className="text-xs font-black text-blue-100 leading-none">
+                            ×{wins.length}
+                          </span>
+                        </div>
+                      )}
+                      <div className="text-blue-400/50 group-hover:text-blue-300 group-hover:translate-x-1 transition-all flex-shrink-0 text-xl">
+                        →
+                      </div>
+                      {/* Bracket connector line */}
+                      <div className="absolute top-1/2 -right-10 lg:-right-16 w-10 lg:w-16 h-px bg-gradient-to-r from-blue-400/60 to-blue-400/10" />
+                    </Link>
+                  </FadeIn>
+                );
+              })}
+            </div>
+
+            {/* CENTER — CHAMPION */}
+            <FadeIn delay={0.2}>
+              <div className="relative flex flex-col items-center">
+                {/* Vertical spine lines */}
+                <div className="absolute top-1/2 -left-10 lg:-left-16 w-px h-[88%] -translate-y-1/2 bg-gradient-to-b from-blue-400/20 via-blue-400/60 to-blue-400/20" />
+                <div className="absolute top-1/2 -right-10 lg:-right-16 w-px h-[88%] -translate-y-1/2 bg-gradient-to-b from-blue-400/20 via-blue-400/60 to-blue-400/20" />
+
+                {/* Champion card */}
+                <div className="relative px-10 py-10 rounded-3xl bg-gradient-to-b from-blue-500/25 via-blue-700/15 to-blue-950/40 border-2 border-blue-400/50 backdrop-blur-sm shadow-[0_0_80px_rgba(59,130,246,0.4)] min-w-[260px]">
+                  <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 px-4 py-1.5 rounded-full bg-blue-500 shadow-lg">
+                    <span className="text-xs font-bold text-white tracking-[0.2em] uppercase whitespace-nowrap">
+                      Season 9
+                    </span>
+                  </div>
+                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.3),transparent_70%)] rounded-3xl pointer-events-none" />
+
+                  <svg
+                    className="h-20 w-20 mx-auto mb-4 text-blue-300 drop-shadow-[0_0_16px_rgba(59,130,246,0.8)]"
+                    fill="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path d="M19 5h-2V3H7v2H5c-1.1 0-2 .9-2 2v2c0 2.21 1.79 4 4 4h.19c.68 1.36 1.97 2.37 3.52 2.76V19H7v2h10v-2h-3.71v-2.24c1.55-.39 2.84-1.4 3.52-2.76H17c2.21 0 4-1.79 4-4V7c0-1.1-.9-2-2-2zM5 9V7h2v3.82C5.84 10.4 5 9.3 5 9zm14 0c0 .3-.84 1.4-2 1.82V7h2v2z" />
+                  </svg>
+                  <div className="text-center relative">
+                    <div className="text-[10px] tracking-[0.3em] uppercase text-blue-300/70 mb-1.5">
+                      Champion
+                    </div>
+                    <div className="text-4xl font-black text-white">TBD</div>
+                  </div>
+                </div>
+              </div>
+            </FadeIn>
+
+            {/* RIGHT COLUMN */}
+            <div className="flex flex-col gap-4">
+              {RIGHT_TEAMS.map((team, i) => {
+                const wins = CHAMPION_MAP[team.name] || [];
+                return (
+                  <FadeIn key={team.name} delay={i * 0.05} y={0}>
+                    <Link
+                      href={`/teams/${encodeURIComponent(team.name)}`}
+                      className="group relative flex items-center gap-4 px-5 py-4 rounded-2xl bg-white/[0.03] border border-white/10 hover:border-blue-400/60 hover:bg-blue-500/10 transition-all duration-300 hover:translate-x-1.5"
+                    >
+                      <div className="text-blue-400/50 group-hover:text-blue-300 group-hover:-translate-x-1 transition-all flex-shrink-0 text-xl">
+                        ←
+                      </div>
+                      {wins.length > 0 && (
+                        <div
+                          title={`${wins.length}× Champion`}
+                          className="flex-shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-blue-400/15 border border-blue-300/40 group-hover:bg-blue-400/25 group-hover:border-blue-300/70 transition-all"
+                        >
+                          <svg className="h-3.5 w-3.5 text-blue-200" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M5 16L3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5zm0 2h14v2H5v-2z" />
+                          </svg>
+                          <span className="text-xs font-black text-blue-100 leading-none">
+                            ×{wins.length}
+                          </span>
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0 text-right">
+                        <div className="text-lg font-bold text-white/90 group-hover:text-blue-200 transition-colors truncate">
+                          {team.name}
+                        </div>
+                        {wins.length > 0 && (
+                          <div className="text-[10px] text-blue-300/60 tracking-wider uppercase mt-0.5 truncate font-semibold">
+                            {wins.map((s) => `S${s}`).join(' · ')} Champion
+                          </div>
+                        )}
+                      </div>
+                      <div className="w-14 h-14 flex-shrink-0 flex items-center justify-center">
+                        <img
+                          src={`/logos/${team.name}.png`}
+                          alt={team.name}
+                          className="max-w-full max-h-full object-contain drop-shadow-lg group-hover:scale-110 transition-transform"
+                        />
+                      </div>
+                      {/* Bracket connector line */}
+                      <div className="absolute top-1/2 -left-10 lg:-left-16 w-10 lg:w-16 h-px bg-gradient-to-l from-blue-400/60 to-blue-400/10" />
+                    </Link>
+                  </FadeIn>
+                );
+              })}
+            </div>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-          {/* Mod/Admin Application Card */}
-          <div className="bg-gradient-to-br from-blue-900/30 to-purple-900/30 backdrop-blur-sm rounded-xl border border-white/10 overflow-hidden shadow-lg hover:shadow-blue-500/20 hover:border-blue-400/50 transition-all duration-300 transform hover:-translate-y-2 group">
-            <div className="h-24 bg-gradient-to-r from-blue-600/40 to-purple-600/40 flex items-center justify-center relative overflow-hidden">
-              <div className="absolute inset-0 bg-grid opacity-20"></div>
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-white group-hover:scale-110 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-              </svg>
-              <div className="absolute -right-4 -bottom-4 w-24 h-24 rounded-full bg-blue-500/10 blur-2xl"></div>
+        {/* Mobile fallback — stacked list */}
+        <div className="md:hidden space-y-3">
+          <div className="mb-6 mx-auto max-w-xs relative px-6 py-5 rounded-2xl bg-gradient-to-b from-blue-500/25 to-blue-950/40 border-2 border-blue-400/50 backdrop-blur-sm shadow-[0_0_40px_rgba(59,130,246,0.3)]">
+            <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-blue-500">
+              <span className="text-[10px] font-bold text-white tracking-[0.2em] uppercase">Season 9</span>
             </div>
-            <div className="p-6">
-              <h3 className="text-2xl font-bold mb-2 text-transparent bg-clip-text bg-gradient-to-r from-blue-300 to-purple-300">
-                Mod/Admin Application
-              </h3>
-              <p className="text-blue-100 mb-6">
-                Help moderate our community, enforce rules, and ensure everyone has a positive experience.
-              </p>
-              <a 
-                href="https://docs.google.com/forms/d/e/1FAIpQLSc9HYfC_4jsb2urOUgT3ZfL3-aQsuLPbTy3Ao9-5uMG9LR3nQ/viewform"
-                target="_blank" 
-                rel="noopener noreferrer" 
-                className="inline-flex items-center gap-2 px-5 py-3 rounded-lg bg-gradient-to-r from-blue-600 to-blue-800 text-white font-medium hover:from-blue-700 hover:to-blue-900 transition-all group-hover:shadow-lg"
-              >
-                <span>Apply as Mod/Admin</span>
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 transform group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                </svg>
-              </a>
+            <div className="text-center">
+              <div className="text-[9px] tracking-[0.3em] uppercase text-blue-300/70 mb-1">Champion</div>
+              <div className="text-xl font-black text-white">TBD</div>
             </div>
           </div>
-
-          {/* GM Application Card */}
-          <div className="bg-gradient-to-br from-purple-900/30 to-indigo-900/30 backdrop-blur-sm rounded-xl border border-white/10 overflow-hidden shadow-lg hover:shadow-purple-500/20 hover:border-purple-400/50 transition-all duration-300 transform hover:-translate-y-2 group">
-            <div className="h-24 bg-gradient-to-r from-purple-600/40 to-indigo-600/40 flex items-center justify-center relative overflow-hidden">
-              <div className="absolute inset-0 bg-grid opacity-20"></div>
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-white group-hover:scale-110 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-              </svg>
-              <div className="absolute -right-4 -bottom-4 w-24 h-24 rounded-full bg-purple-500/10 blur-2xl"></div>
-            </div>
-            <div className="p-6">
-              <h3 className="text-2xl font-bold mb-2 text-transparent bg-clip-text bg-gradient-to-r from-purple-300 to-indigo-300">
-                GM Application
-              </h3>
-              <p className="text-blue-100 mb-6">
-                Lead your own team, draft players, and compete for the championship in our league seasons.
-              </p>
-              <a 
-                href="https://docs.google.com/forms/d/e/1FAIpQLScR3pdfPVDn9H0u_FIo6KaNMG8HvHRvuai7GSnk3XuVH-raUA/viewform"
-                target="_blank" 
-                rel="noopener noreferrer" 
-                className="inline-flex items-center gap-2 px-5 py-3 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-800 text-white font-medium hover:from-purple-700 hover:to-indigo-900 transition-all group-hover:shadow-lg"
-              >
-                <span>Apply as GM</span>
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 transform group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                </svg>
-              </a>
-            </div>
-          </div>
-
-          {/* Beluga Helper Application Card */}
-          <div className="bg-gradient-to-br from-indigo-900/30 to-blue-900/30 backdrop-blur-sm rounded-xl border border-white/10 overflow-hidden shadow-lg hover:shadow-indigo-500/20 hover:border-indigo-400/50 transition-all duration-300 transform hover:-translate-y-2 group">
-            <div className="h-24 bg-gradient-to-r from-indigo-600/40 to-blue-600/40 flex items-center justify-center relative overflow-hidden">
-              <div className="absolute inset-0 bg-grid opacity-20"></div>
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-white group-hover:scale-110 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 11V9a2 2 0 00-2-2m2 4v4a2 2 0 104 0v-1m-4-3H9m2 0h4m6 1a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <div className="absolute -right-4 -bottom-4 w-24 h-24 rounded-full bg-indigo-500/10 blur-2xl"></div>
-            </div>
-            <div className="p-6">
-              <h3 className="text-2xl font-bold mb-2 text-transparent bg-clip-text bg-gradient-to-r from-indigo-300 to-blue-300">
-                Beluga Helper Application
-              </h3>
-              <p className="text-blue-100 mb-6">
-                For people who are interested in helping the community in other ways than being a moderator/admin
-              </p>
-              <a 
-                href="https://docs.google.com/forms/d/e/1FAIpQLSfCTiDxUZGTVXT77GIMtMU5uEJlPrMyAy9kfdnDGwyMy6rqvA/viewform"
-                target="_blank" 
-                rel="noopener noreferrer" 
-                className="inline-flex items-center gap-2 px-5 py-3 rounded-lg bg-gradient-to-r from-indigo-600 to-blue-800 text-white font-medium hover:from-indigo-700 hover:to-blue-900 transition-all group-hover:shadow-lg"
-              >
-                <span>Apply as Helper</span>
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 transform group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                </svg>
-              </a>
-            </div>
-          </div>
+          {TEAMS.map((team, i) => {
+            const wins = CHAMPION_MAP[team.name] || [];
+            return (
+              <FadeIn key={team.name} delay={i * 0.03} y={10}>
+                <Link
+                  href={`/teams/${encodeURIComponent(team.name)}`}
+                  className="group flex items-center gap-3 px-4 py-3 rounded-xl bg-white/[0.03] border border-white/10 hover:border-blue-400/60 transition-all"
+                >
+                  <div className="w-10 h-10 flex-shrink-0 flex items-center justify-center">
+                    <img
+                      src={`/logos/${team.name}.png`}
+                      alt={team.name}
+                      className="max-w-full max-h-full object-contain"
+                    />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-white/90 group-hover:text-blue-200 transition-colors truncate">
+                      {team.name}
+                    </div>
+                    {wins.length > 0 && (
+                      <div className="text-[9px] text-blue-300/60 tracking-wider uppercase mt-0.5">
+                        {wins.map((s) => `S${s}`).join(' · ')} Champion
+                      </div>
+                    )}
+                  </div>
+                  {wins.length > 0 && (
+                    <div className="flex-shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-400/15 border border-blue-300/40">
+                      <svg className="h-3 w-3 text-blue-200" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M5 16L3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5zm0 2h14v2H5v-2z" />
+                      </svg>
+                      <span className="text-[10px] font-black text-blue-100 leading-none">×{wins.length}</span>
+                    </div>
+                  )}
+                  <div className="text-blue-400/50 flex-shrink-0">→</div>
+                </Link>
+              </FadeIn>
+            );
+          })}
         </div>
-        
-        {/* Floating particles */}
-        <div className="absolute -left-10 top-1/3 w-20 h-20 rounded-full bg-blue-500/10 blur-xl"></div>
-        <div className="absolute -right-10 bottom-1/3 w-20 h-20 rounded-full bg-purple-500/10 blur-xl"></div>
-      </div>
+
+        {/* ===== LEGACY RAIL (past champions strip) ===== */}
+        <FadeIn delay={0.1}>
+          <div className="mt-24 max-w-7xl mx-auto">
+            <div className="text-center mb-10">
+              <div className="inline-flex items-center gap-4">
+                <div className="w-20 h-px bg-gradient-to-r from-transparent to-blue-400/60" />
+                <span className="text-xs font-bold tracking-[0.3em] uppercase text-blue-300/70">
+                  League Legacy
+                </span>
+                <div className="w-20 h-px bg-gradient-to-l from-transparent to-blue-400/60" />
+              </div>
+              <p className="text-base text-blue-200/60 mt-3">Eight seasons of champions.</p>
+            </div>
+            <div className="grid grid-cols-4 sm:grid-cols-8 gap-4">
+              {PAST_CHAMPIONS.map((champ, i) => (
+                <FadeIn key={champ.season} delay={0.15 + i * 0.03} y={10}>
+                  <div className="group relative flex flex-col items-center gap-3 p-4 rounded-2xl hover:bg-white/[0.03] transition-all">
+                    <div className="text-xs font-bold text-blue-300/60 tracking-[0.25em] uppercase">
+                      S{String(champ.season).padStart(2, '0')}
+                    </div>
+                    <div className="relative w-20 h-20 flex items-center justify-center">
+                      <div className="absolute inset-0 rounded-full bg-blue-500/0 group-hover:bg-blue-500/20 blur-xl transition-all" />
+                      <img
+                        src={`/logos/${champ.team}.png`}
+                        alt={champ.team}
+                        className="relative max-w-full max-h-full object-contain drop-shadow-lg grayscale group-hover:grayscale-0 group-hover:scale-110 transition-all duration-300 opacity-70 group-hover:opacity-100"
+                        onError={(e) => {
+                          e.currentTarget.onerror = null;
+                          e.currentTarget.style.display = 'none';
+                        }}
+                      />
+                    </div>
+                    <div className="text-sm font-bold text-white/70 group-hover:text-blue-200 transition-colors truncate max-w-full text-center">
+                      {champ.team}
+                    </div>
+                  </div>
+                </FadeIn>
+              ))}
+            </div>
+          </div>
+        </FadeIn>
+      </section>
+
+      {/* ============ FINAL CTA ============ */}
+      <section id="join" className="relative py-24 md:py-28 overflow-hidden scroll-mt-24">
+        {/* Vibrant blue background */}
+        <div className="absolute inset-0 bg-gradient-to-br from-blue-600 via-blue-500 to-blue-700" />
+        {/* Diagonal sheen overlay */}
+        <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/10 to-transparent" />
+        {/* Subtle radial highlight */}
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(255,255,255,0.15),transparent_60%)]" />
+
+        <div className="container mx-auto px-4 relative">
+          <FadeIn>
+            <div className="max-w-3xl mx-auto text-center">
+              <h2 className="text-4xl md:text-6xl font-black text-white mb-5 leading-tight tracking-tight drop-shadow-[0_2px_20px_rgba(0,0,0,0.25)]">
+                Ready to Join the League?
+              </h2>
+              <p className="text-base md:text-lg text-blue-50/90 mb-10 max-w-2xl mx-auto leading-relaxed">
+                Join hundreds of players already competing in drafted rosters, casted matches, and real championships in the premier Rocket League community.
+              </p>
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+                <a
+                  href="https://discord.gg/4J4c79hawF"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="group inline-flex items-center gap-2 px-8 py-4 rounded-xl bg-blue-950 hover:bg-black text-white font-bold text-base transition-all hover:scale-105 shadow-[0_8px_30px_rgba(0,0,0,0.3)]"
+                >
+                  <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418Z" />
+                  </svg>
+                  Join Discord - Free
+                </a>
+                <a
+                  href="#teams"
+                  className="inline-flex items-center gap-2 px-8 py-4 rounded-xl bg-transparent hover:bg-white/10 border-2 border-white/80 hover:border-white text-white font-bold text-base transition-all hover:scale-105"
+                >
+                  Meet the Teams
+                </a>
+              </div>
+            </div>
+          </FadeIn>
+        </div>
+      </section>
+
     </div>
   );
 }

@@ -4,7 +4,8 @@ import { signOut } from 'next-auth/react'
 
 export default function AccessDenied() {
   return (
-    <div className="w-full max-w-md px-6">
+    <div className="min-h-screen flex items-center justify-center">
+      <div className="w-full max-w-md px-6">
       <div className="bg-gray-900/80 backdrop-blur-xl border border-red-500/20 rounded-2xl p-8 shadow-2xl text-center">
         <div className="w-16 h-16 mx-auto mb-4 bg-red-500/10 rounded-full flex items-center justify-center">
           <svg className="w-8 h-8 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -23,6 +24,7 @@ export default function AccessDenied() {
         >
           Go Back
         </button>
+      </div>
       </div>
     </div>
   )
