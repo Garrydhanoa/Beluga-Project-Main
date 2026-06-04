@@ -1,9 +1,9 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import { motion } from "framer-motion"
-import { majorsSchedule, aaaSchedule, getTeamInitials } from '../../lib/scheduleData'
+import TeamLogo from "../components/TeamLogo"
 
 const DIVISIONS = [
   { key: 'aa', label: 'AA', tagline: 'Amateur Division', teams: 14 },
@@ -25,6 +25,15 @@ function FadeIn({ children, delay = 0, y = 30, className = "" }) {
   )
 }
 
+function getTeamInitials(name) {
+  return String(name || '')
+    .split(' ')
+    .filter(Boolean)
+    .map((part) => part[0]?.toUpperCase())
+    .slice(0, 3)
+    .join('')
+}
+
 function TeamSide({ name, side }) {
   // Ghost logo positioning — bleeds out of the card toward the outer corner
   const ghostPos =
@@ -41,18 +50,10 @@ function TeamSide({ name, side }) {
       className="flex-shrink-0 relative w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center hover:scale-110 transition-transform"
     >
       <div className="absolute inset-0 rounded-full bg-blue-500/0 group-hover:bg-blue-500/20 blur-md transition-all" />
-      <img
-        src={`/logos/${name}.png`}
-        alt={name}
-        className="relative w-full h-full object-contain drop-shadow-lg"
-        onError={(e) => {
-          e.currentTarget.onerror = null
-          e.currentTarget.style.display = 'none'
-          if (e.currentTarget.parentElement) {
-            const initials = getTeamInitials(name)
-            e.currentTarget.parentElement.innerHTML += `<span class="relative text-sm sm:text-lg font-bold text-white/90">${initials}</span>`
-          }
-        }}
+      <TeamLogo
+        name={name}
+        className="relative w-full h-full"
+        imgClassName="relative w-full h-full object-contain drop-shadow-lg"
       />
     </Link>
   )
@@ -75,14 +76,7 @@ function TeamSide({ name, side }) {
         className={`absolute ${ghostPos} w-44 h-44 opacity-[0.08] group-hover:opacity-[0.2] transition-opacity duration-700 pointer-events-none`}
         aria-hidden="true"
       >
-        <img
-          src={`/logos/${name}.png`}
-          alt=""
-          className="w-full h-full object-contain"
-          onError={(e) => {
-            e.currentTarget.style.display = 'none'
-          }}
-        />
+        <TeamLogo name={name} className="w-full h-full" imgClassName="w-full h-full object-contain" alt="" />
       </div>
       {/* Foreground content */}
       <div className={`relative flex items-center gap-3 ${alignment}`}>
@@ -104,9 +98,23 @@ function TeamSide({ name, side }) {
 
 export default function SchedulesPage() {
   const [activeTab, setActiveTab] = useState('aa')
+  const [regular, setRegular] = useState({ aa: {}, aaa: {}, majors: {} })
+  const [playoffs, setPlayoffs] = useState({ aa: [], aaa: [], majors: [] })
+  const [seasonLabel, setSeasonLabel] = useState('Season')
 
-  const currentSchedule =
-    activeTab === 'majors' ? majorsSchedule : aaaSchedule
+  useEffect(() => {
+    fetch('/api/schedule', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data?.regular) setRegular(data.regular)
+        if (data?.playoffs) setPlayoffs(data.playoffs)
+        if (data?.season?.seasonNumber) setSeasonLabel(`Season ${data.season.seasonNumber}`)
+      })
+      .catch(() => {})
+  }, [])
+
+  const currentSchedule = regular[activeTab] || {}
+  const currentPlayoffs = playoffs[activeTab] || []
   const currentDivision = DIVISIONS.find((d) => d.key === activeTab)
 
   return (
@@ -118,7 +126,7 @@ export default function SchedulesPage() {
             <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-blue-500/10 border border-blue-400/30 backdrop-blur-sm mb-6">
               <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
               <span className="text-xs text-blue-200 font-medium tracking-[0.2em] uppercase">
-                Season 9 · Schedule
+                {seasonLabel} · Schedule
               </span>
             </div>
             <h1 className="text-5xl sm:text-6xl md:text-7xl font-black tracking-tight mb-5 leading-[0.95]">
@@ -263,6 +271,50 @@ export default function SchedulesPage() {
         {Object.keys(currentSchedule).length === 0 && (
           <div className="text-center py-24 text-sm text-white/40 rounded-2xl bg-white/[0.02] border border-dashed border-white/10">
             No schedule published for this division yet.
+          </div>
+        )}
+      </section>
+
+      {/* Playoff schedule section */}
+      <section className="container mx-auto px-4 pb-20 max-w-7xl">
+        <FadeIn>
+          <div className="mb-6 flex items-center gap-3">
+            <div className="text-[10px] font-bold tracking-[0.25em] uppercase text-blue-300/60">Playoffs</div>
+            <div className="flex-1 h-px bg-gradient-to-r from-blue-400/40 via-blue-400/20 to-transparent" />
+          </div>
+        </FadeIn>
+
+        {currentPlayoffs.length === 0 ? (
+          <div className="text-center py-10 text-sm text-white/40 rounded-2xl bg-white/[0.02] border border-dashed border-white/10">
+            No playoff bracket published for this division yet.
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {currentPlayoffs.map((bracket, bracketIndex) => (
+              <FadeIn key={`${activeTab}-playoff-${bracket.id || bracketIndex}`} delay={bracketIndex * 0.06} y={20}>
+                <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                  <h3 className="text-xl font-black text-white mb-4">{bracket.name}</h3>
+                  <div className="space-y-4">
+                    {(bracket.rounds || []).map((round) => (
+                      <div key={round.id || round.roundNumber} className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                        <div className="text-xs font-bold tracking-[0.2em] uppercase text-blue-300/70 mb-3">
+                          {round.name}
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          {(round.matchups || []).map((matchup, matchupIndex) => (
+                            <div key={`${round.id || round.roundNumber}-${matchupIndex}`} className="rounded-lg border border-white/10 p-3 bg-black/20">
+                              <div className="text-sm text-white font-bold mb-1">{matchup[0]}</div>
+                              <div className="text-[10px] font-bold tracking-[0.2em] uppercase text-blue-300/60">vs</div>
+                              <div className="text-sm text-white font-bold mt-1">{matchup[1]}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </FadeIn>
+            ))}
           </div>
         )}
       </section>

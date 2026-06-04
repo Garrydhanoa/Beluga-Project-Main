@@ -3,25 +3,26 @@
 import { useEffect, useState } from 'react'
 
 export default function NotificationPage() {
-  const [config, setConfig] = useState(null)
+  const [nb, setNb] = useState(null)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
-    fetch('/api/admin/data?type=config')
+    fetch('/api/admin/notification', { cache: 'no-store' })
       .then((r) => r.json())
-      .then((res) => setConfig(res.data))
-      .catch(() => {})
+      .then((res) => setNb(res.notification || { enabled: false, message: '', href: '/players' }))
+      .catch(() => setNb({ enabled: false, message: '', href: '/players' }))
   }, [])
 
   async function save() {
     setSaving(true)
     setSaved(false)
     try {
-      const res = await fetch('/api/admin/data', {
-        method: 'POST',
+      const res = await fetch('/api/admin/notification', {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'config', data: config }),
+        cache: 'no-store',
+        body: JSON.stringify(nb),
       })
       if (res.ok) {
         setSaved(true)
@@ -32,11 +33,9 @@ export default function NotificationPage() {
     }
   }
 
-  if (!config) {
+  if (!nb) {
     return <div className="text-blue-200/60">Loading…</div>
   }
-
-  const nb = config.notificationBar
 
   return (
     <div className="max-w-3xl">
@@ -58,9 +57,7 @@ export default function NotificationPage() {
             <div className="text-xs text-blue-100/50">Toggle the bar on/off for all visitors</div>
           </div>
           <button
-            onClick={() =>
-              setConfig({ ...config, notificationBar: { ...nb, enabled: !nb.enabled } })
-            }
+            onClick={() => setNb({ ...nb, enabled: !nb.enabled })}
             className={`relative w-12 h-6 rounded-full transition-colors ${
               nb.enabled ? 'bg-blue-500' : 'bg-white/10'
             }`}
@@ -83,9 +80,7 @@ export default function NotificationPage() {
           </label>
           <textarea
             value={nb.message}
-            onChange={(e) =>
-              setConfig({ ...config, notificationBar: { ...nb, message: e.target.value } })
-            }
+            onChange={(e) => setNb({ ...nb, message: e.target.value })}
             rows={3}
             className="w-full px-4 py-3 bg-black/40 border border-white/10 focus:border-blue-400/60 rounded-lg text-white text-sm leading-relaxed focus:outline-none transition"
             placeholder="Enter notification message"
@@ -103,9 +98,7 @@ export default function NotificationPage() {
           <input
             type="text"
             value={nb.href || ''}
-            onChange={(e) =>
-              setConfig({ ...config, notificationBar: { ...nb, href: e.target.value } })
-            }
+            onChange={(e) => setNb({ ...nb, href: e.target.value })}
             className="w-full px-4 py-3 bg-black/40 border border-white/10 focus:border-blue-400/60 rounded-lg text-white text-sm focus:outline-none transition"
             placeholder="/players"
           />

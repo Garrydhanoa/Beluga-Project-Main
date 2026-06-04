@@ -718,6 +718,66 @@ async function performRoleSync(client) {
             return;
         }
 
+        // Set of all Discord IDs present in the sal sheet (used by the verification gate)
+        const sheetIdSet = new Set(players.map(p => p.discordId));
+
+        // ===== Verification gate (runs over ALL guild members) =====
+        // - Unverified takes priority: any member with the Unverified role has the
+        //   bot-controlled auto roles stripped and is skipped for the rest of sync.
+        // - Both Unverified + Verified  -> remove Verified (Unverified wins), strip, skip.
+        // - Neither role                -> add Unverified, strip, skip.
+        // - Verified only               -> allowed through to normal sync; if they
+        //                                   aren't in the sheet, give them Need Rank.
+        // Team / Captain / GM / NP roles are never touched here (transaction roles).
+        const blockedIds = new Set();
+        let strippedCount = 0;
+        let needRankNotInSheet = 0;
+
+        for (const member of guild.members.cache.values()) {
+            try {
+                if (member.user.bot) continue;
+
+                const hasUnverified = member.roles.cache.has(ROLES.UNVERIFIED);
+                const hasVerified = member.roles.cache.has(ROLES.VERIFIED);
+
+                // Verified-only members are the only ones allowed through to normal sync.
+                if (hasVerified && !hasUnverified) {
+                    if (!sheetIdSet.has(member.id) && !member.roles.cache.has(ROLES.NEED_RANK)) {
+                        await member.roles.add(ROLES.NEED_RANK);
+                        Logger.info(`Added Need Rank role to ${member.user.username} (verified, not in sheet)`);
+                        needRankNotInSheet++;
+                    }
+                    continue;
+                }
+
+                // Everyone else is blocked from normal sync this run.
+                blockedIds.add(member.id);
+
+                // Both roles present -> Unverified wins, strip the Verified role.
+                if (hasUnverified && hasVerified) {
+                    await member.roles.remove(ROLES.VERIFIED);
+                    Logger.info(`Removed Verified role from ${member.user.username} (had both; Unverified takes priority)`);
+                }
+
+                // Neither verification role present -> mark them Unverified.
+                if (!hasUnverified && !hasVerified) {
+                    await member.roles.add(ROLES.UNVERIFIED);
+                    Logger.info(`Added Unverified role to ${member.user.username} (had neither verification role)`);
+                }
+
+                // Strip the bot-controlled auto roles (keeps team/captain/GM/NP roles).
+                const removed = await stripBotAutoRoles(member);
+                if (removed.length > 0) {
+                    strippedCount++;
+                    Logger.info(`Stripped bot auto roles from ${member.user.username}: ${removed.join(', ')}`);
+                }
+            } catch (gateError) {
+                Logger.error(`Verification gate error for ${member.id}:`, gateError);
+            }
+        }
+
+        Logger.info(`Verification gate: ${blockedIds.size} member(s) blocked/stripped, ${needRankNotInSheet} verified member(s) not in sheet given Need Rank`);
+
         const today = new Date();
         const todayString = today.toLocaleDateString('en-US', { timeZone: 'America/New_York' }); // MM/DD/YYYY format in EST
 
@@ -732,6 +792,19 @@ async function performRoleSync(client) {
                 if (!member) {
                     skippedCount++;
                     continue; // User not in server, skip
+                }
+
+                // Skip members blocked by the verification gate (Unverified / unverified-equivalent).
+                // Their bot-controlled roles were already stripped above.
+                if (blockedIds.has(member.id)) {
+                    skippedCount++;
+                    continue;
+                }
+
+                // Always remove Need Rank for anyone found in the sheet.
+                if (member.roles.cache.has(ROLES.NEED_RANK)) {
+                    await member.roles.remove(ROLES.NEED_RANK);
+                    Logger.info(`Removed Need Rank role from ${member.user.username} (found in sheet)`);
                 }
 
                 // Update Discord nickname if different from sheet
@@ -889,12 +962,6 @@ async function performRoleSync(client) {
                     Logger.info(`Removed NO_SALARY role from ${member.user.username}`);
                 }
 
-                // Remove NEED_RANK role if present (they have salary)
-                if (member.roles.cache.has(ROLES.NEED_RANK)) {
-                    await member.roles.remove(ROLES.NEED_RANK);
-                    Logger.info(`Removed NEED_RANK role from ${member.user.username}`);
-                }
-
                 // Sync FA role
                 await syncFreeAgentRole(member, playerData);
 
@@ -1032,6 +1099,45 @@ async function syncEligibleRole(member, playerData) {
         await member.roles.add(ROLES.INELIGIBLE);
         Logger.info(`Added Ineligible role to ${member.user.username}`);
     }
+}
+
+// Strips ONLY the roles the bot controls in auto role sync, leaving transaction
+// roles (team, captain), GM roles, and NP roles untouched so they can be
+// restored manually / via the sheet role sync. Returns the list of removed
+// role labels for logging.
+async function stripBotAutoRoles(member) {
+    const removed = [];
+
+    if (member.roles.cache.has(ROLES.NEED_RANK)) {
+        await member.roles.remove(ROLES.NEED_RANK);
+        removed.push('Need Rank');
+    }
+    if (member.roles.cache.has(ROLES.NO_SALARY)) {
+        await member.roles.remove(ROLES.NO_SALARY);
+        removed.push('No Salary');
+    }
+    if (member.roles.cache.has(ROLES.SUSPENDED)) {
+        await member.roles.remove(ROLES.SUSPENDED);
+        removed.push('Suspended');
+    }
+    if (member.roles.cache.has(ROLES.INELIGIBLE)) {
+        await member.roles.remove(ROLES.INELIGIBLE);
+        removed.push('Ineligible');
+    }
+    for (const [division, divisionRoleId] of Object.entries(ROLES.DIVISIONS)) {
+        if (member.roles.cache.has(divisionRoleId)) {
+            await member.roles.remove(divisionRoleId);
+            removed.push(`${division} Division`);
+        }
+    }
+    for (const [division, faRoleId] of Object.entries(ROLES.FREE_AGENTS)) {
+        if (member.roles.cache.has(faRoleId)) {
+            await member.roles.remove(faRoleId);
+            removed.push(`${division} FA`);
+        }
+    }
+
+    return removed;
 }
 
 async function cleanupNoSalaryPlayer(member) {

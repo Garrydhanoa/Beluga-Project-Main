@@ -4,13 +4,14 @@ const fs = require('fs');
 const path = require('path');
 const { config } = require('../config/config');
 const Logger = require('../utils/logger');
+const { LeagueDB, TransactionDB, isDatabaseAvailable } = require('../utils/database');
 const { ROLES, TEAM_ROLES, NP_ROLES } = require('../constants/roles');
 
 // Command-specific constants
 const TRANSACTION_REQUEST_CHANNEL_ID = '1178913188750823544';
 const TRANSACTION_CONFIRMATION_CHANNEL_ID = '1156814623371169801';
 const SPREADSHEET_ID = '1cnrCOiAX5PfcxqpTX16YvbPVYnBxZiCk_zSCDqoeDGs';
-const MAX_ROSTER_SIZE = 4;
+const DEFAULT_ROSTER_LIMIT = 4;
 
 // Pending IR transactions storage
 const pendingIRTransactions = new Map();
@@ -284,6 +285,12 @@ async function getRosterSize(guild, teamName, division) {
     }
 }
 
+async function getRosterLimit(division, teamName) {
+    if (!isDatabaseAvailable()) return DEFAULT_ROSTER_LIMIT;
+    const limit = await LeagueDB.getTeamRosterLimit(division, teamName);
+    return Number.isInteger(limit) ? limit : DEFAULT_ROSTER_LIMIT;
+}
+
 // Helper function to find team logo
 function findTeamLogo(teamName) {
     try {
@@ -500,10 +507,11 @@ module.exports = {
                 
                 // Check roster size first
                 const currentRosterSize = await getRosterSize(interaction.guild, playerInfo.teamName, playerInfo.division);
+                const rosterLimit = await getRosterLimit(playerInfo.division, playerInfo.teamName);
                 
-                if (currentRosterSize >= MAX_ROSTER_SIZE) {
+                if (currentRosterSize >= rosterLimit) {
                     await interaction.editReply({
-                        content: `❌ **Cannot remove from IR:** ${playerInfo.teamName} roster in ${playerInfo.division} is at full capacity (${currentRosterSize}/${MAX_ROSTER_SIZE} players). The roster must have space before removing a player from IR.`,
+                        content: `❌ **Cannot remove from IR:** ${playerInfo.teamName} roster in ${playerInfo.division} is at full capacity (${currentRosterSize}/${rosterLimit} players). The roster must have space before removing a player from IR.`,
                     });
                     return;
                 }
@@ -528,7 +536,7 @@ module.exports = {
                         { name: 'Team', value: playerInfo.teamName, inline: true },
                         { name: 'Division', value: playerInfo.division, inline: true },
                         { name: 'Requested By', value: interaction.user.username, inline: true },
-                        { name: 'Current Roster Size', value: `${currentRosterSize}/${MAX_ROSTER_SIZE}`, inline: false }
+                        { name: 'Current Roster Size', value: `${currentRosterSize}/${rosterLimit}`, inline: false }
                     )
                     .setColor(0x00FF00)
                     .setTimestamp()
@@ -660,6 +668,22 @@ module.exports = {
                     });
                 }
                 
+                // Log to shared transactions table.
+                {
+                    const teamId = await TransactionDB.findTeamIdByName(irTransaction.division, irTransaction.teamName);
+                    await TransactionDB.log({
+                        discordId: irTransaction.playerId,
+                        discordUsername: irTransaction.playerUsername,
+                        teamId,
+                        teamNameSnapshot: irTransaction.teamName,
+                        type: 'ir_place',
+                        details: { division: irTransaction.division, requestedByUsername: irTransaction.requestedByUsername },
+                        performedByDiscordId: irTransaction.requestedBy,
+                        performedByUsername: irTransaction.requestedByUsername,
+                        source: 'bot:/ir put',
+                    });
+                }
+
                 Logger.success(`${irTransaction.playerUsername} placed on IR by ${irTransaction.requestedByUsername}`);
                 
             } else if (irTransaction.action === 'remove') {
@@ -710,6 +734,22 @@ module.exports = {
                     });
                 }
                 
+                // Log to shared transactions table.
+                {
+                    const teamId = await TransactionDB.findTeamIdByName(irTransaction.division, irTransaction.teamName);
+                    await TransactionDB.log({
+                        discordId: irTransaction.playerId,
+                        discordUsername: irTransaction.playerUsername,
+                        teamId,
+                        teamNameSnapshot: irTransaction.teamName,
+                        type: 'ir_return',
+                        details: { division: irTransaction.division, requestedByUsername: irTransaction.requestedByUsername },
+                        performedByDiscordId: irTransaction.requestedBy,
+                        performedByUsername: irTransaction.requestedByUsername,
+                        source: 'bot:/ir remove',
+                    });
+                }
+
                 Logger.success(`${irTransaction.playerUsername} removed from IR by ${irTransaction.requestedByUsername}`);
             }
             

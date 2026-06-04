@@ -5,6 +5,7 @@ const path = require('path');
 const { config } = require('../config/config');
 const Logger = require('../utils/logger');
 const { ROLES, TEAM_ROLES, TEAM_NAMES, getTeamChoices } = require('../constants/roles');
+const { TransactionDB } = require('../utils/database');
 
 // Command-specific constants
 const TRANSACTION_REQUEST_CHANNEL_ID = '1178913188750823544';
@@ -459,6 +460,25 @@ module.exports = {
                 } else {
                     await esubChannel.send({ embeds: [trackingEmbed] });
                 }
+            }
+
+            {
+                const teamId = await TransactionDB.findTeamIdByName(transaction.division, transaction.teamName);
+                await TransactionDB.log({
+                    discordId: transaction.playerId,
+                    discordUsername: transaction.playerUsername,
+                    teamId,
+                    teamNameSnapshot: transaction.teamName,
+                    type: 'esub',
+                    details: {
+                        adminEsub: true,
+                        division: transaction.division,
+                        requestedByUsername: transaction.requestedByUsername,
+                    },
+                    performedByDiscordId: transaction.requestedBy,
+                    performedByUsername: transaction.requestedByUsername,
+                    source: 'bot:/admin-esub',
+                });
             }
 
             Logger.success(`Admin one-day sub signed: ${transaction.playerUsername} to ${transaction.teamName} ${transaction.division}`);

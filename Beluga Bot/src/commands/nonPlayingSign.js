@@ -5,6 +5,7 @@ const path = require('path');
 const { config } = require('../config/config');
 const Logger = require('../utils/logger');
 const { ROLES, TEAM_ROLES, NP_ROLES, DIVISIONS } = require('../constants/roles');
+const { TransactionDB } = require('../utils/database');
 
 // Command-specific channel IDs
 const TRANSACTION_REQUEST_CHANNEL_ID = '1178913188750823544';
@@ -642,6 +643,37 @@ async function processNonPlayingCaptainSignCompletion(transaction, message, clie
             });
         }
         
+        {
+            const teamId = await TransactionDB.findTeamIdByName(transaction.division, transaction.teamName);
+            await TransactionDB.log({
+                discordId: transaction.playerId,
+                discordUsername: transaction.playerUsername,
+                teamId,
+                teamNameSnapshot: transaction.teamName,
+                type: 'sign',
+                details: {
+                    nonPlayingCaptain: true,
+                    division: transaction.division,
+                    offeredByUsername: transaction.offeredByUsername,
+                    approvedBy: transaction.approvedBy,
+                },
+                performedByDiscordId: transaction.offeredBy,
+                performedByUsername: transaction.offeredByUsername,
+                source: 'bot:/non-playing-sign',
+            });
+            await TransactionDB.log({
+                discordId: transaction.playerId,
+                discordUsername: transaction.playerUsername,
+                teamId,
+                teamNameSnapshot: transaction.teamName,
+                type: 'captain_assign',
+                details: { nonPlaying: true, division: transaction.division },
+                performedByDiscordId: transaction.offeredBy,
+                performedByUsername: transaction.offeredByUsername,
+                source: 'bot:/non-playing-sign',
+            });
+        }
+
         Logger.success(`Non-playing captain sign completed: ${transaction.playerUsername} to ${transaction.teamName} as ${transaction.division} Captain`);
         
     } catch (error) {

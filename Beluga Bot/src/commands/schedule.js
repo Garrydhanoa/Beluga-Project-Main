@@ -128,8 +128,8 @@ module.exports = {
                 });
             }
 
-            // Get the schedule for this team
-            const teamSchedule = getTeamSchedule(teamName, division);
+            // Get the schedule for this team (DB-first, falls back to hardcoded)
+            const teamSchedule = await getTeamSchedule(teamName, division);
 
             if (Object.keys(teamSchedule).length === 0) {
                 return await interaction.editReply({

@@ -3,20 +3,41 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 
-export default function NotificationBar({ message }) {
+function hashMessage(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) { h = (h << 5) - h + s.charCodeAt(i); h |= 0; }
+  return Math.abs(h).toString(36);
+}
+
+export default function NotificationBar() {
   const [isVisible, setIsVisible] = useState(false);
+  const [config, setConfig] = useState(null);
 
   useEffect(() => {
-    const seen = localStorage.getItem('notification_seen_v3');
-    if (seen !== 'true') setIsVisible(true);
+    fetch('/api/public/notification', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((d) => {
+        const n = d?.notification;
+        if (!n || !n.enabled || !n.message) return;
+        setConfig(n);
+        // Dismissal keyed to the message text so a NEW message re-shows even if a
+        // previous one was dismissed.
+        const key = 'notif_dismissed_' + hashMessage(n.message);
+        if (localStorage.getItem(key) !== 'true') setIsVisible(true);
+      })
+      .catch(() => {});
   }, []);
 
   const dismiss = () => {
     setIsVisible(false);
-    localStorage.setItem('notification_seen_v3', 'true');
+    if (config?.message) {
+      localStorage.setItem('notif_dismissed_' + hashMessage(config.message), 'true');
+    }
   };
 
-  if (!isVisible) return null;
+  if (!isVisible || !config) return null;
+  const message = config.message;
+  const href = config.href || '/players';
 
   const renderMessage = () => {
     const parts = message.split(/(Player Directory)/g);
@@ -41,7 +62,7 @@ export default function NotificationBar({ message }) {
 
       <div className="container mx-auto px-4 py-2.5 relative">
         <div className="flex items-center justify-between gap-4">
-          <Link href="/players" className="group flex items-center gap-3 flex-1 min-w-0">
+          <Link href={href} className="group flex items-center gap-3 flex-1 min-w-0">
             {/* Badge pill */}
             <div className="flex-shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-400/20 border border-blue-300/40 backdrop-blur-sm">
               <span className="w-1.5 h-1.5 rounded-full bg-blue-300 animate-pulse" />

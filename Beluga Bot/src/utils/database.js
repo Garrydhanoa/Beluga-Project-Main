@@ -110,6 +110,237 @@ async function initializeDatabase() {
                 END IF;
             END $$;
         `);
+
+        // League tables used by the website admin panel
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS seasons (
+                id SERIAL PRIMARY KEY,
+                season_number INTEGER NOT NULL UNIQUE,
+                name TEXT,
+                status TEXT NOT NULL DEFAULT 'draft',
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS teams (
+                id SERIAL PRIMARY KEY,
+                season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+                division TEXT NOT NULL,
+                name TEXT NOT NULL,
+                roster_limit INTEGER NOT NULL DEFAULT 4,
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                logo_mime TEXT,
+                logo_data BYTEA,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (season_id, division, name)
+            )
+        `);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS team_roster_members (
+                id SERIAL PRIMARY KEY,
+                season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+                team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+                discord_id TEXT NOT NULL,
+                discord_username TEXT,
+                display_name TEXT,
+                role TEXT NOT NULL DEFAULT 'player',
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (season_id, team_id, discord_id, role)
+            )
+        `);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS roster_syncs (
+                id SERIAL PRIMARY KEY,
+                season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+                division TEXT NOT NULL,
+                synced_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS idx_teams_season_division
+            ON teams(season_id, division)
+        `);
+
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS idx_roster_members_team
+            ON team_roster_members(season_id, team_id)
+        `);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS schedule_matches (
+                id SERIAL PRIMARY KEY,
+                season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+                division TEXT NOT NULL,
+                week INTEGER NOT NULL,
+                home_team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+                away_team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+                status TEXT NOT NULL DEFAULT 'published',
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS playoff_brackets (
+                id SERIAL PRIMARY KEY,
+                season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+                division TEXT NOT NULL,
+                name TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'published',
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS playoff_rounds (
+                id SERIAL PRIMARY KEY,
+                bracket_id INTEGER NOT NULL REFERENCES playoff_brackets(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                round_order INTEGER NOT NULL,
+                is_finals BOOLEAN NOT NULL DEFAULT FALSE,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (bracket_id, round_order)
+            )
+        `);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS playoff_matchups (
+                id SERIAL PRIMARY KEY,
+                round_id INTEGER NOT NULL REFERENCES playoff_rounds(id) ON DELETE CASCADE,
+                home_team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL,
+                away_team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL,
+                best_of INTEGER NOT NULL DEFAULT 7,
+                order_index INTEGER NOT NULL DEFAULT 1,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS match_series (
+                id SERIAL PRIMARY KEY,
+                season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+                division TEXT NOT NULL,
+                week INTEGER,
+                is_playoff BOOLEAN NOT NULL DEFAULT FALSE,
+                schedule_match_id INTEGER REFERENCES schedule_matches(id) ON DELETE SET NULL,
+                playoff_matchup_id INTEGER REFERENCES playoff_matchups(id) ON DELETE SET NULL,
+                home_team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL,
+                away_team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL,
+                home_score INTEGER NOT NULL DEFAULT 0,
+                away_score INTEGER NOT NULL DEFAULT 0,
+                is_forfeit BOOLEAN NOT NULL DEFAULT FALSE,
+                report_type TEXT NOT NULL DEFAULT 'standard',
+                report_source TEXT NOT NULL DEFAULT 'score-report',
+                status TEXT NOT NULL DEFAULT 'pending_captains',
+                thread_id TEXT,
+                reported_by_discord_id TEXT,
+                reported_by_username TEXT,
+                captain_message_id TEXT,
+                salary_message_id TEXT,
+                salary_channel_id TEXT,
+                stats_applied BOOLEAN NOT NULL DEFAULT FALSE,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        await pool.query(`
+            ALTER TABLE match_series
+            ADD COLUMN IF NOT EXISTS is_playoff BOOLEAN NOT NULL DEFAULT FALSE
+        `);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS match_series_approvals (
+                id SERIAL PRIMARY KEY,
+                series_id INTEGER NOT NULL REFERENCES match_series(id) ON DELETE CASCADE,
+                team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL,
+                approver_discord_id TEXT NOT NULL,
+                approver_username TEXT,
+                approver_role TEXT NOT NULL,
+                decision TEXT NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (series_id, approver_discord_id, decision)
+            )
+        `);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS match_replays (
+                id SERIAL PRIMARY KEY,
+                series_id INTEGER NOT NULL REFERENCES match_series(id) ON DELETE CASCADE,
+                ballchasing_id TEXT NOT NULL,
+                ballchasing_url TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'ok',
+                home_team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL,
+                away_team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL,
+                home_goals INTEGER,
+                away_goals INTEGER,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (series_id, ballchasing_id)
+            )
+        `);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS match_replay_players (
+                id SERIAL PRIMARY KEY,
+                replay_id INTEGER NOT NULL REFERENCES match_replays(id) ON DELETE CASCADE,
+                team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL,
+                team_name TEXT,
+                player_name TEXT NOT NULL,
+                platform TEXT,
+                platform_id TEXT,
+                team_color TEXT,
+                stats JSONB,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS team_records (
+                id SERIAL PRIMARY KEY,
+                season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+                division TEXT NOT NULL,
+                team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+                wins INTEGER NOT NULL DEFAULT 0,
+                losses INTEGER NOT NULL DEFAULT 0,
+                game_wins INTEGER NOT NULL DEFAULT 0,
+                game_losses INTEGER NOT NULL DEFAULT 0,
+                goals_for INTEGER NOT NULL DEFAULT 0,
+                goals_against INTEGER NOT NULL DEFAULT 0,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (season_id, division, team_id)
+            )
+        `);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS player_records (
+                id SERIAL PRIMARY KEY,
+                season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+                division TEXT NOT NULL,
+                team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL,
+                player_name TEXT NOT NULL,
+                platform TEXT,
+                platform_id TEXT,
+                games_played INTEGER NOT NULL DEFAULT 0,
+                goals INTEGER NOT NULL DEFAULT 0,
+                assists INTEGER NOT NULL DEFAULT 0,
+                saves INTEGER NOT NULL DEFAULT 0,
+                shots INTEGER NOT NULL DEFAULT 0,
+                score INTEGER NOT NULL DEFAULT 0,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (season_id, division, team_id, player_name, platform, platform_id)
+            )
+        `);
         
         Logger.success('Database tables initialized successfully');
         return true;
@@ -641,6 +872,515 @@ const RosterDB = {
     }
 };
 
+// League operations (shared with website admin)
+const LeagueDB = {
+    async getActiveSeason() {
+        if (!isDatabaseAvailable) return null;
+
+        try {
+            const active = await pool.query(
+                "SELECT * FROM seasons WHERE status = 'active' ORDER BY season_number DESC LIMIT 1"
+            );
+            if (active.rows.length > 0) return active.rows[0];
+
+            const fallback = await pool.query('SELECT * FROM seasons ORDER BY season_number DESC LIMIT 1');
+            return fallback.rows[0] || null;
+        } catch (error) {
+            Logger.error('Failed to get active season', error);
+            return null;
+        }
+    },
+
+    async getTeams(seasonId) {
+        if (!isDatabaseAvailable) return [];
+
+        try {
+            const result = await pool.query(
+                'SELECT id, name, division FROM teams WHERE season_id = $1 AND is_active = TRUE',
+                [seasonId]
+            );
+            return result.rows;
+        } catch (error) {
+            Logger.error('Failed to get teams', error);
+            return [];
+        }
+    },
+
+    async getScheduleMatches({ seasonId = null, division = null, week = null } = {}) {
+        if (!isDatabaseAvailable) return [];
+
+        try {
+            let resolvedSeasonId = seasonId;
+            if (!resolvedSeasonId) {
+                const season = await this.getActiveSeason();
+                if (!season) return [];
+                resolvedSeasonId = season.id;
+            }
+
+            const params = [resolvedSeasonId];
+            let where = 'sm.season_id = $1 AND sm.is_published = TRUE';
+            if (division) {
+                params.push(division === 'MAJORS' ? 'Majors' : division);
+                where += ` AND sm.division = $${params.length}`;
+            }
+            if (week != null) {
+                params.push(week);
+                where += ` AND sm.week = $${params.length}`;
+            }
+
+            const result = await pool.query(
+                `SELECT sm.id, sm.week, sm.division, sm.match_order,
+                    sm.home_team_id, sm.away_team_id,
+                    ht.name AS home_team, at.name AS away_team
+                 FROM schedule_matches sm
+                 LEFT JOIN teams ht ON ht.id = sm.home_team_id
+                 LEFT JOIN teams at ON at.id = sm.away_team_id
+                 WHERE ${where}
+                 ORDER BY sm.week, sm.division, sm.match_order, sm.id`,
+                params
+            );
+            return result.rows;
+        } catch (error) {
+            Logger.error('Failed to get schedule matches', error);
+            return [];
+        }
+    },
+
+    async getTeamRosterLimit(division, teamName) {
+        if (!isDatabaseAvailable) return null;
+
+        const divisionLabel = division === 'MAJORS' ? 'Majors' : division;
+
+        try {
+            const season = await this.getActiveSeason();
+            if (!season) return null;
+
+            const result = await pool.query(
+                'SELECT roster_limit FROM teams WHERE season_id = $1 AND division = $2 AND name = $3 AND is_active = TRUE',
+                [season.id, divisionLabel, teamName]
+            );
+            if (!result.rows.length) return null;
+
+            const value = Number(result.rows[0].roster_limit);
+            return Number.isFinite(value) ? value : null;
+        } catch (error) {
+            Logger.error('Failed to get team roster limit', error);
+            return null;
+        }
+    },
+
+    async syncTeamRoster(seasonId, teamId, members) {
+        if (!isDatabaseAvailable) return false;
+
+        try {
+            await pool.query(
+                `UPDATE team_roster_members
+                 SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP
+                 WHERE season_id = $1 AND team_id = $2`,
+                [seasonId, teamId]
+            );
+
+            for (const member of members) {
+                await pool.query(
+                    `INSERT INTO team_roster_members (
+                        season_id, team_id, discord_id, discord_username, display_name, role, is_active, updated_at
+                     ) VALUES ($1, $2, $3, $4, $5, $6, TRUE, CURRENT_TIMESTAMP)
+                     ON CONFLICT (season_id, team_id, discord_id, role)
+                     DO UPDATE SET discord_username = $4, display_name = $5, is_active = TRUE, updated_at = CURRENT_TIMESTAMP`,
+                    [
+                        seasonId,
+                        teamId,
+                        member.discordId,
+                        member.discordUsername || null,
+                        member.displayName || null,
+                        member.role || 'player'
+                    ]
+                );
+            }
+
+            return true;
+        } catch (error) {
+            Logger.error('Failed to sync roster members', error);
+            return false;
+        }
+    },
+
+    async recordRosterSync(seasonId, division) {
+        if (!isDatabaseAvailable) return false;
+
+        try {
+            await pool.query(
+                'INSERT INTO roster_syncs (season_id, division) VALUES ($1, $2)',
+                [seasonId, division]
+            );
+            return true;
+        } catch (error) {
+            Logger.error('Failed to record roster sync', error);
+            return false;
+        }
+    }
+};
+
+const ScoreReportDB = {
+    async findTeamByName(seasonId, division, teamName) {
+        if (!isDatabaseAvailable) return null;
+
+        try {
+            const result = await pool.query(
+                `SELECT id, name, division
+                 FROM teams
+                 WHERE season_id = $1
+                   AND division = $2
+                   AND LOWER(name) = LOWER($3)
+                   AND is_active = TRUE
+                 LIMIT 1`,
+                [seasonId, division, teamName]
+            );
+            return result.rows[0] || null;
+        } catch (error) {
+            Logger.error('Failed to find team by name', error);
+            return null;
+        }
+    },
+
+    async createSeries(payload) {
+        if (!isDatabaseAvailable) return null;
+
+        try {
+            const result = await pool.query(
+                `INSERT INTO match_series (
+                    season_id, division, week, is_playoff, schedule_match_id, playoff_matchup_id,
+                    home_team_id, away_team_id, home_score, away_score, is_forfeit,
+                    report_type, report_source, status, thread_id,
+                    reported_by_discord_id, reported_by_username,
+                    captain_message_id, salary_message_id, salary_channel_id, stats_applied
+                 ) VALUES (
+                    $1, $2, $3, $4, $5, $6,
+                    $7, $8, $9, $10, $11,
+                    $12, $13, $14, $15,
+                    $16, $17,
+                    $18, $19, $20, $21
+                 ) RETURNING *`,
+                [
+                    payload.seasonId,
+                    payload.division,
+                    payload.week,
+                    payload.isPlayoff || false,
+                    payload.scheduleMatchId || null,
+                    payload.playoffMatchupId || null,
+                    payload.homeTeamId,
+                    payload.awayTeamId,
+                    payload.homeScore || 0,
+                    payload.awayScore || 0,
+                    payload.isForfeit || false,
+                    payload.reportType || 'standard',
+                    payload.reportSource || 'score-report',
+                    payload.status || 'pending_captains',
+                    payload.threadId || null,
+                    payload.reportedByDiscordId || null,
+                    payload.reportedByUsername || null,
+                    payload.captainMessageId || null,
+                    payload.salaryMessageId || null,
+                    payload.salaryChannelId || null,
+                    payload.statsApplied || false
+                ]
+            );
+            return result.rows[0] || null;
+        } catch (error) {
+            Logger.error('Failed to create series', error);
+            return null;
+        }
+    },
+
+    async getSeries(seriesId) {
+        if (!isDatabaseAvailable) return null;
+
+        try {
+            const result = await pool.query(
+                `SELECT ms.*, ht.name AS home_team_name, at.name AS away_team_name
+                 FROM match_series ms
+                 LEFT JOIN teams ht ON ht.id = ms.home_team_id
+                 LEFT JOIN teams at ON at.id = ms.away_team_id
+                 WHERE ms.id = $1
+                 LIMIT 1`,
+                [seriesId]
+            );
+            return result.rows[0] || null;
+        } catch (error) {
+            Logger.error('Failed to get series', error);
+            return null;
+        }
+    },
+
+    async addReplay(seriesId, replay) {
+        if (!isDatabaseAvailable) return null;
+
+        try {
+            const result = await pool.query(
+                `INSERT INTO match_replays (
+                    series_id, ballchasing_id, ballchasing_url, status,
+                    home_team_id, away_team_id, home_goals, away_goals
+                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                 ON CONFLICT (series_id, ballchasing_id)
+                 DO UPDATE SET
+                    ballchasing_url = EXCLUDED.ballchasing_url,
+                    status = EXCLUDED.status,
+                    home_team_id = EXCLUDED.home_team_id,
+                    away_team_id = EXCLUDED.away_team_id,
+                    home_goals = EXCLUDED.home_goals,
+                    away_goals = EXCLUDED.away_goals,
+                    updated_at = CURRENT_TIMESTAMP
+                 RETURNING *`,
+                [
+                    seriesId,
+                    replay.ballchasingId,
+                    replay.ballchasingUrl,
+                    replay.status || 'ok',
+                    replay.homeTeamId || null,
+                    replay.awayTeamId || null,
+                    replay.homeGoals ?? null,
+                    replay.awayGoals ?? null
+                ]
+            );
+            return result.rows[0] || null;
+        } catch (error) {
+            Logger.error('Failed to add replay', error);
+            return null;
+        }
+    },
+
+    async addReplayPlayers(replayId, players) {
+        if (!isDatabaseAvailable) return false;
+
+        try {
+            for (const player of players) {
+                await pool.query(
+                    `INSERT INTO match_replay_players (
+                        replay_id, team_id, team_name, player_name, platform, platform_id, team_color, stats
+                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                    [
+                        replayId,
+                        player.teamId || null,
+                        player.teamName || null,
+                        player.playerName,
+                        player.platform || null,
+                        player.platformId || null,
+                        player.teamColor || null,
+                        player.stats || {}
+                    ]
+                );
+            }
+            return true;
+        } catch (error) {
+            Logger.error('Failed to add replay players', error);
+            return false;
+        }
+    },
+
+    async addApproval(seriesId, teamId, approverDiscordId, approverUsername, approverRole, decision) {
+        if (!isDatabaseAvailable) return false;
+
+        try {
+            await pool.query(
+                `INSERT INTO match_series_approvals (
+                    series_id, team_id, approver_discord_id, approver_username, approver_role, decision
+                 ) VALUES ($1, $2, $3, $4, $5, $6)
+                 ON CONFLICT (series_id, approver_discord_id, decision)
+                 DO NOTHING`,
+                [seriesId, teamId || null, approverDiscordId, approverUsername || null, approverRole, decision]
+            );
+            return true;
+        } catch (error) {
+            Logger.error('Failed to add approval', error);
+            return false;
+        }
+    },
+
+    async getApprovals(seriesId) {
+        if (!isDatabaseAvailable) return [];
+
+        try {
+            const result = await pool.query(
+                'SELECT * FROM match_series_approvals WHERE series_id = $1 ORDER BY created_at ASC',
+                [seriesId]
+            );
+            return result.rows;
+        } catch (error) {
+            Logger.error('Failed to get approvals', error);
+            return [];
+        }
+    },
+
+    async setSeriesMessages(seriesId, patch) {
+        if (!isDatabaseAvailable) return false;
+
+        const fields = [];
+        const values = [];
+        let index = 1;
+
+        if (patch.captainMessageId !== undefined) {
+            fields.push(`captain_message_id = $${index++}`);
+            values.push(patch.captainMessageId);
+        }
+        if (patch.salaryMessageId !== undefined) {
+            fields.push(`salary_message_id = $${index++}`);
+            values.push(patch.salaryMessageId);
+        }
+        if (patch.salaryChannelId !== undefined) {
+            fields.push(`salary_channel_id = $${index++}`);
+            values.push(patch.salaryChannelId);
+        }
+
+        if (!fields.length) return false;
+
+        values.push(seriesId);
+        try {
+            await pool.query(
+                `UPDATE match_series
+                 SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = $${index}`,
+                values
+            );
+            return true;
+        } catch (error) {
+            Logger.error('Failed to set series message ids', error);
+            return false;
+        }
+    },
+
+    async setSeriesStatus(seriesId, status, statsApplied = null) {
+        if (!isDatabaseAvailable) return false;
+
+        try {
+            if (statsApplied === null) {
+                await pool.query(
+                    'UPDATE match_series SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+                    [status, seriesId]
+                );
+            } else {
+                await pool.query(
+                    'UPDATE match_series SET status = $1, stats_applied = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3',
+                    [status, statsApplied, seriesId]
+                );
+            }
+            return true;
+        } catch (error) {
+            Logger.error('Failed to set series status', error);
+            return false;
+        }
+    },
+
+    async applyTeamRecord(series, addStats) {
+        if (!isDatabaseAvailable) return false;
+
+        const homeSeriesWin = series.home_score > series.away_score;
+        const awaySeriesWin = series.away_score > series.home_score;
+
+        try {
+            if (homeSeriesWin) {
+                await pool.query(
+                    `INSERT INTO team_records (season_id, division, team_id, wins, losses, game_wins, game_losses, goals_for, goals_against)
+                     VALUES ($1, $2, $3, 1, 0, $4, $5, $6, $7)
+                     ON CONFLICT (season_id, division, team_id)
+                     DO UPDATE SET
+                        wins = team_records.wins + 1,
+                        game_wins = team_records.game_wins + $4,
+                        game_losses = team_records.game_losses + $5,
+                        goals_for = team_records.goals_for + $6,
+                        goals_against = team_records.goals_against + $7,
+                        updated_at = CURRENT_TIMESTAMP`,
+                    [series.season_id, series.division, series.home_team_id, series.home_score, series.away_score, addStats.homeGoalsFor, addStats.homeGoalsAgainst]
+                );
+
+                await pool.query(
+                    `INSERT INTO team_records (season_id, division, team_id, wins, losses, game_wins, game_losses, goals_for, goals_against)
+                     VALUES ($1, $2, $3, 0, 1, $4, $5, $6, $7)
+                     ON CONFLICT (season_id, division, team_id)
+                     DO UPDATE SET
+                        losses = team_records.losses + 1,
+                        game_wins = team_records.game_wins + $4,
+                        game_losses = team_records.game_losses + $5,
+                        goals_for = team_records.goals_for + $6,
+                        goals_against = team_records.goals_against + $7,
+                        updated_at = CURRENT_TIMESTAMP`,
+                    [series.season_id, series.division, series.away_team_id, series.away_score, series.home_score, addStats.awayGoalsFor, addStats.awayGoalsAgainst]
+                );
+            } else if (awaySeriesWin) {
+                await pool.query(
+                    `INSERT INTO team_records (season_id, division, team_id, wins, losses, game_wins, game_losses, goals_for, goals_against)
+                     VALUES ($1, $2, $3, 1, 0, $4, $5, $6, $7)
+                     ON CONFLICT (season_id, division, team_id)
+                     DO UPDATE SET
+                        wins = team_records.wins + 1,
+                        game_wins = team_records.game_wins + $4,
+                        game_losses = team_records.game_losses + $5,
+                        goals_for = team_records.goals_for + $6,
+                        goals_against = team_records.goals_against + $7,
+                        updated_at = CURRENT_TIMESTAMP`,
+                    [series.season_id, series.division, series.away_team_id, series.away_score, series.home_score, addStats.awayGoalsFor, addStats.awayGoalsAgainst]
+                );
+
+                await pool.query(
+                    `INSERT INTO team_records (season_id, division, team_id, wins, losses, game_wins, game_losses, goals_for, goals_against)
+                     VALUES ($1, $2, $3, 0, 1, $4, $5, $6, $7)
+                     ON CONFLICT (season_id, division, team_id)
+                     DO UPDATE SET
+                        losses = team_records.losses + 1,
+                        game_wins = team_records.game_wins + $4,
+                        game_losses = team_records.game_losses + $5,
+                        goals_for = team_records.goals_for + $6,
+                        goals_against = team_records.goals_against + $7,
+                        updated_at = CURRENT_TIMESTAMP`,
+                    [series.season_id, series.division, series.home_team_id, series.home_score, series.away_score, addStats.homeGoalsFor, addStats.homeGoalsAgainst]
+                );
+            }
+            return true;
+        } catch (error) {
+            Logger.error('Failed applying team record updates', error);
+            return false;
+        }
+    },
+
+    async applyPlayerStatLine(seasonId, division, statLine) {
+        if (!isDatabaseAvailable) return false;
+
+        try {
+            await pool.query(
+                `INSERT INTO player_records (
+                    season_id, division, team_id, player_name, platform, platform_id,
+                    games_played, goals, assists, saves, shots, score
+                 ) VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $8, $9, $10, $11)
+                 ON CONFLICT (season_id, division, team_id, player_name, platform, platform_id)
+                 DO UPDATE SET
+                    games_played = player_records.games_played + 1,
+                    goals = player_records.goals + $7,
+                    assists = player_records.assists + $8,
+                    saves = player_records.saves + $9,
+                    shots = player_records.shots + $10,
+                    score = player_records.score + $11,
+                    updated_at = CURRENT_TIMESTAMP`,
+                [
+                    seasonId,
+                    division,
+                    statLine.teamId || null,
+                    statLine.playerName,
+                    statLine.platform || null,
+                    statLine.platformId || null,
+                    statLine.goals || 0,
+                    statLine.assists || 0,
+                    statLine.saves || 0,
+                    statLine.shots || 0,
+                    statLine.score || 0
+                ]
+            );
+            return true;
+        } catch (error) {
+            Logger.error('Failed applying player stat line', error);
+            return false;
+        }
+    }
+};
+
 // Test database connection
 async function testConnection() {
     if (!isDatabaseAvailable) {
@@ -658,6 +1398,147 @@ async function testConnection() {
     }
 }
 
+/**
+ * TransactionDB — bot-side helper to write to the shared `transactions` table
+ * that the website's admin panel reads from. Always non-throwing so bot
+ * commands never break on logging failures.
+ *
+ * Transaction types match those exported from the website's
+ * `lib/transactionStore.js` TRANSACTION_TYPES constant.
+ */
+const TransactionDB = {
+    async log({
+        seasonId = null,
+        discordId,
+        discordUsername = null,
+        displayName = null,
+        teamId = null,
+        teamNameSnapshot = null,
+        franchiseId = null,
+        pairedTeamId = null,
+        pairedTeamNameSnapshot = null,
+        type,
+        details = {},
+        performedByDiscordId = null,
+        performedByUsername = null,
+        source = 'bot',
+    }) {
+        if (!isDatabaseAvailable) return null;
+        if (!discordId || !type) {
+            Logger.warn(`TransactionDB.log skipped: missing discordId or type (got ${discordId}/${type})`);
+            return null;
+        }
+
+        try {
+            // Resolve team_name_snapshot if not provided.
+            let resolvedTeamSnapshot = teamNameSnapshot;
+            if (teamId && !resolvedTeamSnapshot) {
+                const r = await pool.query('SELECT name FROM teams WHERE id = $1', [teamId]);
+                if (r.rows.length) resolvedTeamSnapshot = r.rows[0].name;
+            }
+            let resolvedPairedSnapshot = pairedTeamNameSnapshot;
+            if (pairedTeamId && !resolvedPairedSnapshot) {
+                const r = await pool.query('SELECT name FROM teams WHERE id = $1', [pairedTeamId]);
+                if (r.rows.length) resolvedPairedSnapshot = r.rows[0].name;
+            }
+            let resolvedFranchiseId = franchiseId;
+            if (teamId && !resolvedFranchiseId) {
+                const r = await pool.query('SELECT franchise_id FROM teams WHERE id = $1', [teamId]);
+                if (r.rows.length) resolvedFranchiseId = r.rows[0].franchise_id;
+            }
+
+            // Auto-resolve seasonId if not given.
+            let resolvedSeasonId = seasonId;
+            if (!resolvedSeasonId) {
+                const season = await LeagueDB.getActiveSeason();
+                if (season) resolvedSeasonId = season.id;
+            }
+
+            const result = await pool.query(`
+                INSERT INTO transactions (
+                    season_id, discord_id, discord_username, display_name,
+                    team_id, team_name_snapshot, franchise_id,
+                    paired_team_id, paired_team_name_snapshot,
+                    type, details, performed_by_discord_id, performed_by_username, source
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14)
+                RETURNING id`,
+                [
+                    resolvedSeasonId,
+                    String(discordId),
+                    discordUsername,
+                    displayName,
+                    teamId,
+                    resolvedTeamSnapshot,
+                    resolvedFranchiseId,
+                    pairedTeamId,
+                    resolvedPairedSnapshot,
+                    type,
+                    JSON.stringify(details || {}),
+                    performedByDiscordId,
+                    performedByUsername,
+                    source,
+                ]
+            );
+            return result.rows[0].id;
+        } catch (error) {
+            Logger.error(`TransactionDB.log failed (type=${type}, discordId=${discordId})`, error);
+            return null;
+        }
+    },
+
+    /**
+     * Helper: look up the team_id for (active season, team name) so callers
+     * that only know names can still log transactions.
+     */
+    async findTeamIdByName(division, teamName) {
+        if (!isDatabaseAvailable) return null;
+        try {
+            const season = await LeagueDB.getActiveSeason();
+            if (!season) return null;
+            const divisionLabel = division === 'MAJORS' ? 'Majors' : division;
+            const r = await pool.query(
+                `SELECT id FROM teams WHERE season_id = $1 AND division = $2 AND name = $3 AND is_active = TRUE LIMIT 1`,
+                [season.id, divisionLabel, teamName]
+            );
+            return r.rows[0]?.id || null;
+        } catch {
+            return null;
+        }
+    },
+
+    /**
+     * Look up a Discord role ID for a team's role slot.
+     * @param {string} division 'MAJORS' | 'AAA' | 'AA' (or DB form 'Majors'/'AAA'/'AA')
+     * @param {string} teamName
+     * @param {string} slot 'team' | 'gm' | 'captain' | 'np'
+     * @returns {Promise<string|null>}
+     */
+    async findTeamRoleId(division, teamName, slot = 'team') {
+        if (!isDatabaseAvailable) return null;
+        try {
+            const season = await LeagueDB.getActiveSeason();
+            if (!season) return null;
+            const divisionLabel = division === 'MAJORS' ? 'Majors' : division;
+            const cols = {
+                team: 'discord_role_id',
+                gm: 'discord_gm_role_id',
+                captain: 'discord_captain_role_id',
+                np: 'discord_np_role_id',
+            };
+            const col = cols[slot] || 'discord_role_id';
+            const r = await pool.query(
+                `SELECT ${col} AS role_id FROM teams
+                 WHERE season_id = $1 AND division = $2 AND name = $3 AND is_active = TRUE
+                 LIMIT 1`,
+                [season.id, divisionLabel, teamName]
+            );
+            return r.rows[0]?.role_id || null;
+        } catch {
+            return null;
+        }
+    },
+};
+
 module.exports = {
     pool,
     initializeDatabase,
@@ -666,6 +1547,9 @@ module.exports = {
     ManualSalaryDB,
     SalaryLockNotificationDB,
     RosterDB,
+    LeagueDB,
+    ScoreReportDB,
+    TransactionDB,
     testConnection,
     isDatabaseAvailable: () => isDatabaseAvailable
 };

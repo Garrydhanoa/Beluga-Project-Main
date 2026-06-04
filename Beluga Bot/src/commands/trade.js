@@ -4,16 +4,13 @@ const fs = require('fs');
 const path = require('path');
 const { config } = require('../config/config');
 const Logger = require('../utils/logger');
+const { LeagueDB, TransactionDB, isDatabaseAvailable } = require('../utils/database');
 const { ROLES, TEAM_ROLES, TEAM_NAMES, getTeamChoices } = require('../constants/roles');
 
 // Command-specific constants
 const TRANSACTION_REQUEST_CHANNEL_ID = '1178913188750823544';
 const TRANSACTION_CONFIRMATION_CHANNEL_ID = '1156814623371169801';
-const ROSTER_LIMITS = {
-    MAJORS: 4,
-    AAA: 4,
-    AA: 4
-};
+const DEFAULT_ROSTER_LIMIT = 4;
 
 // Pending trade transactions storage
 const pendingTrades = new Map();
@@ -49,6 +46,12 @@ async function countTeamRoster(guild, teamName, division) {
     
     const role = await guild.roles.fetch(roleId);
     return role?.members.size || 0;
+}
+
+async function getRosterLimit(division, teamName) {
+    if (!isDatabaseAvailable()) return DEFAULT_ROSTER_LIMIT;
+    const limit = await LeagueDB.getTeamRosterLimit(division, teamName);
+    return Number.isInteger(limit) ? limit : DEFAULT_ROSTER_LIMIT;
 }
 
 /**
@@ -311,7 +314,7 @@ module.exports = {
                 for (const [division, change] of Object.entries(divisionChanges[team])) {
                     const currentCount = await countTeamRoster(interaction.guild, team, division);
                     const newCount = currentCount + change;
-                    const limit = ROSTER_LIMITS[division];
+                    const limit = await getRosterLimit(division, team);
                     
                     if (newCount > limit) {
                         return await interaction.editReply({
@@ -504,6 +507,63 @@ module.exports = {
                 content: allPlayerPings,
                 embeds: [confirmationEmbed]
             });
+
+            // Log trade to shared transactions table.
+            // Each player gets ONE row: trade_out from origin team + trade_in to destination team.
+            // Players going FROM initiator → receiving:
+            try {
+                const initiatorTeamId = await TransactionDB.findTeamIdByName(trade.offeredPlayers[0]?.division, trade.initiatorTeam);
+                const receivingTeamId = await TransactionDB.findTeamIdByName(trade.requestedPlayers[0]?.division, trade.receivingTeam);
+
+                for (const p of (trade.offeredPlayers || [])) {
+                    // Player going FROM initiator TO receiving
+                    await TransactionDB.log({
+                        discordId: p.id,
+                        teamId: receivingTeamId,
+                        teamNameSnapshot: trade.receivingTeam,
+                        pairedTeamId: initiatorTeamId,
+                        pairedTeamNameSnapshot: trade.initiatorTeam,
+                        type: 'trade_in',
+                        details: { division: p.division, from: trade.initiatorTeam, to: trade.receivingTeam },
+                        source: 'bot:/trade',
+                    });
+                    await TransactionDB.log({
+                        discordId: p.id,
+                        teamId: initiatorTeamId,
+                        teamNameSnapshot: trade.initiatorTeam,
+                        pairedTeamId: receivingTeamId,
+                        pairedTeamNameSnapshot: trade.receivingTeam,
+                        type: 'trade_out',
+                        details: { division: p.division, from: trade.initiatorTeam, to: trade.receivingTeam },
+                        source: 'bot:/trade',
+                    });
+                }
+                for (const p of (trade.requestedPlayers || [])) {
+                    // Player going FROM receiving TO initiator
+                    await TransactionDB.log({
+                        discordId: p.id,
+                        teamId: initiatorTeamId,
+                        teamNameSnapshot: trade.initiatorTeam,
+                        pairedTeamId: receivingTeamId,
+                        pairedTeamNameSnapshot: trade.receivingTeam,
+                        type: 'trade_in',
+                        details: { division: p.division, from: trade.receivingTeam, to: trade.initiatorTeam },
+                        source: 'bot:/trade',
+                    });
+                    await TransactionDB.log({
+                        discordId: p.id,
+                        teamId: receivingTeamId,
+                        teamNameSnapshot: trade.receivingTeam,
+                        pairedTeamId: initiatorTeamId,
+                        pairedTeamNameSnapshot: trade.initiatorTeam,
+                        type: 'trade_out',
+                        details: { division: p.division, from: trade.receivingTeam, to: trade.initiatorTeam },
+                        source: 'bot:/trade',
+                    });
+                }
+            } catch (txErr) {
+                Logger.warning('Trade tx logging failed (non-fatal): ' + txErr.message);
+            }
 
             Logger.success(`Trade completed between ${trade.initiatorTeam} and ${trade.receivingTeam}`);
             

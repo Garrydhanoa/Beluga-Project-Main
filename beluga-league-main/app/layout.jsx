@@ -29,7 +29,7 @@ export default function RootLayout({
           navigation={<Navigation />}
           footer={<Footer />}
           scrollToTop={<ScrollToTop />}
-          notificationBar={<NotificationBar message="Player Directory, Rosters, Standings, and Power Rankings are now available for all divisions! (Season 8, 2025)" />}
+          notificationBar={<NotificationBar />}
         >
           {children}
         </LayoutShell>

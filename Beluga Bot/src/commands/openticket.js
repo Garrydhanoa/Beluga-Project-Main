@@ -1,6 +1,6 @@
 const { SlashCommandBuilder, PermissionFlagsBits, ChannelType, EmbedBuilder } = require('discord.js');
 const Logger = require('../utils/logger');
-const { TicketDB } = require('../utils/database');
+const { TicketDB, pool, isDatabaseAvailable } = require('../utils/database');
 const { ROLES } = require('../constants/roles');
 const https = require('https');
 
@@ -14,6 +14,20 @@ const AUTHORIZED_ROLES = {
 // Channel IDs
 const TICKET_CATEGORY_ID = '1156814621865427022';
 const TRANSCRIPT_CHANNEL_ID = '1304985779864473721';
+
+/**
+ * Message body pointing staff to the saved transcript on the website (replaces
+ * the old dpaste link). The live + saved ticket transcript lives in the admin
+ * panel's Tickets tab, rendered from the ticket_messages mirror.
+ */
+function ticketTranscriptPointer() {
+    const base = process.env.WEBSITE_URL || process.env.PUBLIC_WEBSITE_URL;
+    if (base) {
+        const link = `${base.replace(/\/$/, '')}/admin/dashboard/tickets`;
+        return `📄 **Check out the full transcript on the website.**\nView it under [Admin → Tickets](${link}).`;
+    }
+    return '📄 **Check out the full transcript on the website** — under the **Admin → Tickets** tab.';
+}
 
 // Ticket reasons
 const TICKET_REASONS = {
@@ -746,7 +760,7 @@ module.exports = {
 
             const closeEmbed = new EmbedBuilder()
                 .setTitle('🔒 Closing Ticket')
-                .setDescription('This ticket will be closed in **5 minutes**.\n\nThe transcript will be saved.')
+                .setDescription('This ticket will be closed in **5 minutes**.\n\n📄 The full transcript is saved — view it anytime on the **league website → Tickets tab**.')
                 .setColor(0xFF0000)
                 .setTimestamp()
                 .setFooter({ text: `Closed by ${interaction.user.username}` });
@@ -760,14 +774,14 @@ module.exports = {
             // Wait 5 minutes
             setTimeout(async () => {
                 try {
-                    // Generate transcript (pass ticketData for metadata)
-                    const transcript = await generateTranscript(interaction.channel, ticketData);
-                    
-                    // Send transcript to transcript channel
+                    // Send transcript pointer to transcript channel. The transcript
+                    // itself is saved on the website (ticket_messages mirror); we no
+                    // longer upload HTML to dpaste.
                     const transcriptChannel = await interaction.client.channels.fetch(TRANSCRIPT_CHANNEL_ID);
-                    
+
                     const transcriptEmbed = new EmbedBuilder()
-                        .setTitle(`Ticket Transcript: ${ticketData.channelName}`)
+                        .setTitle(`🎫 Ticket Closed: ${ticketData.channelName}`)
+                        .setDescription(ticketTranscriptPointer())
                         .addFields(
                             { name: 'Reason', value: ticketData.reason, inline: true },
                             { name: 'Opened By', value: ticketData.createdByUsername, inline: true },
@@ -778,61 +792,23 @@ module.exports = {
                         .setColor(0x0099FF)
                         .setTimestamp();
 
-                    if (transcript) {
-                        try {
-                            // Upload to dpaste for viewing
-                            const rawUrl = await uploadHTMLToPaste(transcript, `Ticket: ${ticketData.channelName}`);
-                            
-                            // Create an HTML viewer URL using htmlpreview.github.io or direct link
-                            const viewerUrl = `https://htmlpreview.github.io/?${encodeURIComponent(rawUrl)}`;
-                            
-                            // Add link to embed description with both options
-                            transcriptEmbed.setDescription(
-                                `**View Options:**\n` +
-                                `• [🌐 Interactive Viewer](${viewerUrl})\n` +
-                                `• [📄 Raw HTML](${rawUrl})\n` +
-                                `• 📥 Download the file attached below`
-                            );
-                            
-                            // Also include HTML file as backup
-                            const transcriptBuffer = Buffer.from(transcript, 'utf8');
-                            
-                            await transcriptChannel.send({
-                                embeds: [transcriptEmbed],
-                                files: [{
-                                    attachment: transcriptBuffer,
-                                    name: `transcript-${ticketData.channelName}-${Date.now()}.html`
-                                }]
-                            });
-                        } catch (uploadError) {
-                            Logger.error('Failed to upload transcript to dpaste', uploadError);
-                            
-                            // Fallback: just send the file
-                            transcriptEmbed.setDescription('⚠️ Online viewer unavailable. Download the HTML file below to view the transcript.');
-                            
-                            const transcriptBuffer = Buffer.from(transcript, 'utf8');
-                            
-                            await transcriptChannel.send({
-                                embeds: [transcriptEmbed],
-                                files: [{
-                                    attachment: transcriptBuffer,
-                                    name: `transcript-${ticketData.channelName}-${Date.now()}.html`
-                                }]
-                            });
-                        }
-                    } else {
+                    {
                         await transcriptChannel.send({
                             embeds: [transcriptEmbed],
-                            content: 'Failed to generate transcript.'
                         });
                     }
+
+                    // Backfill any missed messages, then archive (snapshot + delete
+                    // live rows) for the website's closed-ticket transcript.
+                    await backfillTicketChannel(interaction.channel).catch(() => {});
+                    await archiveTicket(ticketData, interaction.user.username);
 
                     // Remove from active tickets database
                     await deleteTicket(interaction.channel.id);
 
                     // Delete channel
                     await interaction.channel.delete();
-                    
+
                     Logger.success(`Ticket ${ticketData.channelName} closed successfully`);
 
                 } catch (error) {
@@ -855,7 +831,287 @@ module.exports = {
 
     // Load tickets on module load
     loadActiveTickets,
-    
+
     // Export for cleanup
-    activeTickets
+    activeTickets,
+
+    // Website integration
+    isValidTicketChannel,
+    captureTicketMessage,
+    backfillTicketChannel,
+    closeTicketByChannelId,
+    createTicketFromRequest,
+    archiveTicket,
 };
+
+/**
+ * Create a ticket channel from a website request (ticket_requests row).
+ * targetKind: 'user' → grant that user access; 'role' → grant that role access.
+ * Mirrors the /openticket creation flow (category, permission overwrites,
+ * welcome embed, DB row) so website-created tickets behave identically.
+ */
+async function createTicketFromRequest(client, { targetKind, targetId, reason, requestedByDiscordId, requestedByUsername }) {
+    const guild = client.guilds.cache.first();
+    if (!guild) return { ok: false, error: 'no guild' };
+
+    const category = await guild.channels.fetch(TICKET_CATEGORY_ID).catch(() => null);
+    if (!category || category.type !== ChannelType.GuildCategory) {
+        return { ok: false, error: 'ticket category not found' };
+    }
+
+    const reasonText = reason || 'General';
+
+    // Resolve a friendly name + the target permission overwrite.
+    let targetLabel = targetId;
+    const targetOverwrites = [];
+    const userIds = [];
+    if (targetKind === 'role') {
+        const role = await guild.roles.fetch(targetId).catch(() => null);
+        targetLabel = role ? role.name : `role-${targetId}`;
+        targetOverwrites.push({
+            id: targetId,
+            allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
+        });
+    } else {
+        const member = await guild.members.fetch(targetId).catch(() => null);
+        targetLabel = member ? member.user.username : `user-${targetId}`;
+        userIds.push(targetId);
+        targetOverwrites.push({
+            id: targetId,
+            allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
+        });
+    }
+
+    const ticketName = `${reasonText} ${targetLabel}`
+        .toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, '-').substring(0, 100) || `ticket-${Date.now()}`;
+
+    let ticketChannel;
+    try {
+        ticketChannel = await guild.channels.create({
+            name: ticketName,
+            type: ChannelType.GuildText,
+            parent: TICKET_CATEGORY_ID,
+            permissionOverwrites: [
+                { id: guild.id, deny: [PermissionFlagsBits.ViewChannel] },
+                { id: AUTHORIZED_ROLES.SALARY_CREW, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
+                { id: AUTHORIZED_ROLES.ADMINS, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
+                { id: AUTHORIZED_ROLES.BOD, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
+                ...targetOverwrites,
+            ],
+        });
+    } catch (err) {
+        Logger.error('createTicketFromRequest: channel create failed', err);
+        return { ok: false, error: err.message };
+    }
+
+    const ticketData = {
+        channelId: ticketChannel.id,
+        channelName: ticketChannel.name,
+        reason: reasonText,
+        createdBy: requestedByDiscordId || 'website',
+        createdByUsername: requestedByUsername || 'Website Admin',
+        userIds,
+        createdAt: new Date().toISOString(),
+    };
+    await saveTicket(ticketChannel.id, ticketData);
+
+    const mention = targetKind === 'role' ? `<@&${targetId}>` : `<@${targetId}>`;
+    const welcomeEmbed = new EmbedBuilder()
+        .setTitle('🎫 Ticket Opened')
+        .setDescription(`This ticket has been opened for the following reason:\n**${reasonText}**`)
+        .addFields(
+            { name: 'For', value: mention, inline: false },
+            { name: 'Opened By', value: `${requestedByUsername || 'Website Admin'} (website)`, inline: true },
+            { name: 'Opened At', value: new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }), inline: true }
+        )
+        .setColor(0x00FF00)
+        .setTimestamp()
+        .setFooter({ text: 'Use /close to close this ticket' });
+
+    await ticketChannel.send({
+        content: `${mention} - A ticket has been opened for you.\n\n**Reason:** ${reasonText}`,
+        embeds: [welcomeEmbed],
+    }).catch(() => {});
+
+    Logger.success(`Ticket opened via website: ${ticketName} (${targetKind} ${targetId})`);
+    return { ok: true, channelId: ticketChannel.id, channelName: ticketChannel.name };
+}
+
+// ============================================================================
+// Website integration: live transcript capture + close-from-website
+// ============================================================================
+
+/**
+ * Insert one Discord message into ticket_messages (the website transcript
+ * mirror). No-op if the channel isn't a tracked ticket.
+ */
+async function captureTicketMessage(message) {
+    if (!isDatabaseAvailable || !isDatabaseAvailable()) return;
+    try {
+        const channelId = message.channel?.id;
+        if (!channelId) return;
+        // Only capture for tracked ticket channels.
+        if (!isValidTicketChannel(channelId)) return;
+
+        const author = message.author;
+        const member = message.member;
+        const avatar = author?.displayAvatarURL ? author.displayAvatarURL({ extension: 'png', size: 64 }) : null;
+        const color = member?.displayHexColor && member.displayHexColor !== '#000000' ? member.displayHexColor : null;
+        const attachments = Array.from(message.attachments?.values?.() || []).map((a) => ({
+            url: a.url, name: a.name, contentType: a.contentType || null,
+        }));
+        const embeds = (message.embeds || []).map((e) => ({
+            title: e.title || null, description: e.description || null,
+        }));
+
+        await pool.query(`
+            INSERT INTO ticket_messages
+              (channel_id, message_id, author_id, author_username, author_display, author_avatar, author_color, is_bot, content, attachments, embeds, message_created_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12)
+            ON CONFLICT (channel_id, message_id) DO UPDATE SET content = EXCLUDED.content
+        `, [
+            channelId,
+            message.id,
+            author?.id || null,
+            author?.username || null,
+            member?.displayName || author?.globalName || author?.username || null,
+            avatar,
+            color,
+            !!author?.bot,
+            message.content || '',
+            JSON.stringify(attachments),
+            JSON.stringify(embeds),
+            message.createdAt || new Date(),
+        ]);
+    } catch (err) {
+        // The ticket_messages table is created by ticketSync.ensureTicketTables()
+        // at startup; ignore the transient "relation does not exist" race quietly.
+        if (err && err.code === '42P01') return;
+        Logger.error('captureTicketMessage failed', err.message || err);
+    }
+}
+
+/**
+ * Backfill the last N messages of a ticket channel into ticket_messages.
+ * Used on startup and when a ticket is first opened so the website transcript
+ * isn't empty for already-active tickets.
+ */
+async function backfillTicketChannel(channel) {
+    if (!isDatabaseAvailable || !isDatabaseAvailable()) return;
+    try {
+        const fetched = await channel.messages.fetch({ limit: 100 });
+        const ordered = Array.from(fetched.values()).reverse();
+        for (const msg of ordered) {
+            await captureTicketMessage(msg);
+        }
+    } catch (err) {
+        Logger.error(`backfillTicketChannel failed for ${channel?.id}`, err);
+    }
+}
+
+/**
+ * Close a ticket by channel id WITHOUT a slash-command interaction (used by the
+ * website close queue). Mirrors the /close flow: save transcript → delete the
+ * tickets row → delete the channel.
+ */
+async function closeTicketByChannelId(client, channelId, closedByUsername = 'Website Admin') {
+    if (!isDatabaseAvailable || !isDatabaseAvailable()) return { ok: false, error: 'db unavailable' };
+    await loadActiveTickets();
+    const ticketData = isValidTicketChannel(channelId);
+    if (!ticketData) return { ok: false, error: 'not a tracked ticket' };
+
+    let channel;
+    try {
+        channel = await client.channels.fetch(channelId);
+    } catch {
+        // Channel already gone — clean up the row.
+        await deleteTicket(channelId);
+        return { ok: true, note: 'channel missing; row cleaned' };
+    }
+
+    try {
+        const transcriptChannel = await client.channels.fetch(TRANSCRIPT_CHANNEL_ID).catch(() => null);
+        if (transcriptChannel) {
+            const embed = new EmbedBuilder()
+                .setTitle(`🎫 Ticket Closed: ${ticketData.channelName}`)
+                .setDescription(ticketTranscriptPointer())
+                .addFields(
+                    { name: 'Reason', value: ticketData.reason || '—', inline: true },
+                    { name: 'Opened By', value: ticketData.createdByUsername || '—', inline: true },
+                    { name: 'Closed By', value: `${closedByUsername} (website)`, inline: true }
+                )
+                .setColor(0x0099FF)
+                .setTimestamp();
+            await transcriptChannel.send({ embeds: [embed] }).catch(() => {});
+        }
+
+        // Backfill any missed messages so the final snapshot is complete, then
+        // archive (snapshot + delete live rows) before deleting the channel.
+        await backfillTicketChannel(channel).catch(() => {});
+        await archiveTicket(ticketData, closedByUsername);
+        await deleteTicket(channelId);
+        await channel.delete().catch(() => {});
+        Logger.success(`Ticket ${ticketData.channelName} closed via website by ${closedByUsername}`);
+        return { ok: true };
+    } catch (err) {
+        Logger.error('closeTicketByChannelId failed', err);
+        return { ok: false, error: err.message };
+    }
+}
+
+/**
+ * Record closed-ticket header metadata into ticket_archives + store a single
+ * FINAL transcript snapshot, then delete the live ticket_messages rows so closed
+ * tickets don't accumulate per-message rows in the DB. The website reads the
+ * snapshot for closed tickets and the live rows only while a ticket is open.
+ */
+async function archiveTicket(ticketData, closedByUsername) {
+    if (!isDatabaseAvailable || !isDatabaseAvailable()) return;
+    try {
+        // Build the consolidated transcript from the live rows.
+        const msgRes = await pool.query(
+            `SELECT message_id, author_id, author_username, author_display, author_avatar,
+                    author_color, is_bot, content, attachments, embeds, message_created_at
+             FROM ticket_messages WHERE channel_id = $1
+             ORDER BY message_created_at ASC, id ASC`,
+            [ticketData.channelId]
+        ).catch(() => ({ rows: [] }));
+        const snapshot = msgRes.rows.map((m) => ({
+            messageId: m.message_id,
+            authorId: m.author_id,
+            authorUsername: m.author_username,
+            authorDisplay: m.author_display || m.author_username,
+            authorAvatar: m.author_avatar,
+            authorColor: m.author_color,
+            isBot: !!m.is_bot,
+            content: m.content || '',
+            attachments: m.attachments || [],
+            embeds: m.embeds || [],
+            createdAt: m.message_created_at,
+        }));
+
+        await pool.query(`
+            INSERT INTO ticket_archives (channel_id, channel_name, reason, opened_by_username, opened_at, closed_by_username, message_count, transcript)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+            ON CONFLICT (channel_id) DO UPDATE SET
+                closed_by_username = EXCLUDED.closed_by_username,
+                closed_at = CURRENT_TIMESTAMP,
+                message_count = EXCLUDED.message_count,
+                transcript = EXCLUDED.transcript
+        `, [
+            ticketData.channelId,
+            ticketData.channelName || null,
+            ticketData.reason || null,
+            ticketData.createdByUsername || null,
+            ticketData.createdAt ? new Date(ticketData.createdAt) : null,
+            closedByUsername || null,
+            snapshot.length,
+            JSON.stringify(snapshot),
+        ]);
+
+        // Delete the live per-message rows — the snapshot is the kept transcript.
+        await pool.query('DELETE FROM ticket_messages WHERE channel_id = $1', [ticketData.channelId]).catch(() => {});
+    } catch (err) {
+        Logger.error('archiveTicket failed', err.message || err);
+    }
+}

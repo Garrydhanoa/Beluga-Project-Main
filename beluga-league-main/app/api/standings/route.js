@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getStandings } from '../../../lib/sheets';
+import { getActiveSeason, getStandingsFromRecords } from '../../../lib/leagueStore';
 
 // Tell Next.js this is a dynamic route that shouldn't be prerendered
 export const dynamic = 'force-dynamic';
@@ -17,37 +17,29 @@ export async function GET(request) {
     );
   }
   
-  console.log(`API: Fetching standings for ${division} division`);
-  
   try {
-    // Fetch the standings data from Google Sheets with enhanced error handling
-    const response = await getStandings(division);
-    
-    // Check if data exists
-    if (response.data && response.data.length > 0) {
-      console.log(`API: Successfully fetched ${response.data.length} teams for ${division} (${response.fromCache ? 'from cache' : 'fresh data'})`);
-      
-      // Return the data with status information
-      return NextResponse.json({
-        data: response.data,
-        fromCache: response.fromCache,
-        cachedAt: response.cachedAt,
-        fetchError: response.fetchError,
-        timestamp: new Date().toISOString()
-      });
-    } 
-    else {
-      // Empty data with possible fetch error
-      const status = response.fetchError ? 503 : 200; // Service Unavailable if there was an error
-      
+    const season = await getActiveSeason();
+    if (!season) {
       return NextResponse.json({
         data: [],
-        fromCache: response.fromCache,
-        cachedAt: response.cachedAt,
-        fetchError: response.fetchError || "No data available",
+        season: null,
         timestamp: new Date().toISOString()
-      }, { status });
+      });
     }
+
+    const divisionMap = {
+      majors: 'Majors',
+      aaa: 'AAA',
+      aa: 'AA'
+    };
+
+    const data = await getStandingsFromRecords(season.id, divisionMap[division]);
+
+    return NextResponse.json({
+      data,
+      season,
+      timestamp: new Date().toISOString()
+    });
   } catch (error) {
     console.error('API Error in standings endpoint:', error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';

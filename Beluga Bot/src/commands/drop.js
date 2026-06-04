@@ -5,6 +5,7 @@ const path = require('path');
 const { config } = require('../config/config');
 const Logger = require('../utils/logger');
 const { ROLES, TEAM_ROLES, NP_ROLES } = require('../constants/roles');
+const { TransactionDB } = require('../utils/database');
 
 // Command-specific constants
 const TRANSACTION_REQUEST_CHANNEL_ID = '1178913188750823544';
@@ -831,7 +832,25 @@ async function processDropCompletion(drop, message, client, isPlayerDecision) {
             content: '✅ Drop completed successfully!',
             embeds: [EmbedBuilder.from(embed).setColor(0x00FF00).setFooter({ text: 'Completed' })]
         });
-        
+
+        // Log transaction to shared DB.
+        const teamId = await TransactionDB.findTeamIdByName(drop.division, drop.teamName);
+        await TransactionDB.log({
+            discordId: drop.playerId,
+            discordUsername: drop.playerUsername,
+            teamId,
+            teamNameSnapshot: drop.teamName,
+            type: isPlayerDecision ? 'rfa' : 'drop',
+            details: {
+                division: drop.division,
+                isPlayerDecision: !!isPlayerDecision,
+                requestedByUsername: drop.requestedByUsername,
+            },
+            performedByDiscordId: drop.requestedBy,
+            performedByUsername: drop.requestedByUsername,
+            source: 'bot:/drop',
+        });
+
         Logger.success(`Drop completed: ${drop.playerUsername} from ${drop.teamName} (${drop.division}) - Player Decision: ${isPlayerDecision}`);
         
     } catch (error) {

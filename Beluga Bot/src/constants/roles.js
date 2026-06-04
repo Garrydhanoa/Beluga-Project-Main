@@ -14,6 +14,12 @@ const ROLES = {
     SUSPENDED: '1156814621366292483',
     INELIGIBLE: '1156814621366292482',
 
+    // Verification roles (managed by the Double Counter verification bot).
+    // The role sync only reads these to decide behavior; it never adds VERIFIED
+    // and only adds UNVERIFIED to members who have neither role (see roleSync.js).
+    UNVERIFIED: '1510025184403390534',
+    VERIFIED: '1509998587009044683',
+
     // GM Roles (one per team)
     GM_ROLES: {
         'Sublunary': '1209290241081606174',

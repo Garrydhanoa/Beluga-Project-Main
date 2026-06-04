@@ -1,14 +1,10 @@
 "use client"
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { motion } from 'framer-motion'
-import {
-  getPlayerByUsername,
-  getMatchHistoryFor,
-  getRecentForm,
-} from '../../../lib/fakePlayers'
+import Avatar from '../../components/Avatar'
 
 // ====================================================================
 // Color palette — matches the reference design
@@ -112,11 +108,91 @@ export default function PlayerProfilePage() {
   const params = useParams()
   const username = decodeURIComponent(params.username)
 
-  const player = useMemo(() => getPlayerByUsername(username), [username])
-  const history = useMemo(() => (player ? getMatchHistoryFor(player) : []), [player])
-  const recentForm = useMemo(() => (player ? getRecentForm(player) : []), [player])
+  const [apiData, setApiData] = useState(null)
+  const [notFound, setNotFound] = useState(false)
+  const [loading, setLoading] = useState(true)
 
-  if (!player) {
+  useEffect(() => {
+    setLoading(true)
+    fetch(`/api/players/${encodeURIComponent(username)}`, { cache: 'no-store' })
+      .then(async (r) => {
+        if (r.status === 404) { setNotFound(true); return null }
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json()
+      })
+      .then((d) => { if (d) setApiData(d) })
+      .catch(() => setNotFound(true))
+      .finally(() => setLoading(false))
+  }, [username])
+
+  // Adapt the API payload to the shape the existing UI expects (preserving the
+  // dense visualization with achievements, stat bars, match history, etc.).
+  const player = useMemo(() => {
+    if (!apiData?.player) return null
+    const current = (apiData.rosterHistory || []).find((r) => r.rosterActive) || (apiData.rosterHistory || [])[0]
+    const totalStats = (apiData.stats || []).reduce((acc, s) => ({
+      goals: acc.goals + (s.goals || 0),
+      assists: acc.assists + (s.assists || 0),
+      saves: acc.saves + (s.saves || 0),
+      shots: acc.shots + (s.shots || 0),
+      gp: acc.gp + (s.gamesPlayed || 0),
+    }), { goals: 0, assists: 0, saves: 0, shots: 0, gp: 0 })
+    const divLabel = apiData.player.division || current?.division || null
+    const divKey = (() => {
+      const d = String(divLabel || '').toLowerCase()
+      if (d.includes('major')) return 'major'
+      if (d.includes('aaa')) return 'aaa'
+      if (d.includes('aa')) return 'aa'
+      return 'aa'
+    })()
+    return {
+      username: apiData.player.discordUsername || null,
+      discordId: apiData.player.discordId || null,
+      avatarUrl: apiData.player.avatarUrl || null,
+      displayName: apiData.player.displayName,
+      team: current?.teamName || apiData.player.currentTeam || null,
+      divisionLabel: divKey === 'major' ? 'Majors' : divKey.toUpperCase(),
+      isCaptain: current?.role === 'captain',
+      isFreeAgent: !current?.rosterActive,
+      role: current?.role || null,
+      goals: totalStats.goals,
+      assists: totalStats.assists,
+      saves: totalStats.saves,
+      shots: totalStats.shots,
+      mvps: 0,
+      salary: apiData.player.salary ?? 0,
+      eligible: apiData.player.eligible,
+      shootingPct: totalStats.shots > 0 ? Math.round((totalStats.goals / totalStats.shots) * 100) : 0,
+      ranks: { goals: 0, assists: 0, saves: 0, shots: 0, mvps: 0 },
+      achievements: [],
+    }
+  }, [apiData])
+
+  const transactions = useMemo(() => apiData?.transactions || [], [apiData])
+
+  const history = useMemo(() => {
+    if (!apiData?.matches) return []
+    return apiData.matches.map((m) => ({
+      result: (m.homeScore || 0) > (m.awayScore || 0) ? 'W' : ((m.homeScore || 0) < (m.awayScore || 0) ? 'L' : 'T'),
+      opponent: m.home && m.away ? `${m.home} vs ${m.away}` : '—',
+      ownScore: m.homeScore,
+      oppScore: m.awayScore,
+      weekLabel: m.isPlayoff ? 'Playoffs' : `Week ${m.week ?? '—'}`,
+    }))
+  }, [apiData])
+
+  const recentForm = useMemo(() => history.slice(0, 5).map((h) => h.result), [history])
+  const rosterHistory = useMemo(() => apiData?.rosterHistory || [], [apiData])
+
+  if (loading) {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center">
+        <div className="text-sm text-blue-200/60">Loading…</div>
+      </div>
+    )
+  }
+
+  if (notFound || !player) {
     return (
       <div className="min-h-[60vh] flex items-center justify-center">
         <div className="text-center">
@@ -179,24 +255,14 @@ export default function PlayerProfilePage() {
         <div className="relative text-center max-w-4xl mx-auto">
           {/* Avatar + team logo row */}
           <div className="mb-6 flex items-center justify-center gap-5">
-            {/* Player avatar (monogram circle) */}
+            {/* Player Discord avatar */}
             <div
               style={{
-                position: 'relative',
-                width: '80px',
-                height: '80px',
                 borderRadius: '9999px',
-                background: 'linear-gradient(135deg, rgba(59,130,246,0.25), rgba(30,58,138,0.15))',
-                border: '2px solid rgba(96,165,250,0.5)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
                 boxShadow: '0 0 30px rgba(59,130,246,0.3)',
               }}
             >
-              <span style={{ fontSize: '32px', fontWeight: 900, color: '#ffffff' }}>
-                {player.displayName.charAt(0).toUpperCase()}
-              </span>
+              <Avatar src={player.avatarUrl} name={player.displayName} size={80} />
             </div>
 
             {/* Separator + team logo */}
@@ -367,7 +433,7 @@ export default function PlayerProfilePage() {
                 Salary
               </div>
               <div style={{ fontSize: '15px', fontWeight: 800, color: '#60a5fa' }}>
-                ${Math.round(player.salary * 100).toLocaleString()}
+                {player.salary ? Number(player.salary).toFixed(2) : '—'}
               </div>
             </div>
 
@@ -403,9 +469,11 @@ export default function PlayerProfilePage() {
           </div>
 
           {/* ---- Copy User ID footer ---- */}
-          <div style={{ padding: '14px 24px' }}>
-            <CopyUserIdButton username={player.username} />
-          </div>
+          {player.discordId && (
+            <div style={{ padding: '14px 24px' }}>
+              <CopyUserIdButton userId={player.discordId} />
+            </div>
+          )}
         </div>
       </section>
 
@@ -477,9 +545,84 @@ export default function PlayerProfilePage() {
             </div>
           )}
         </FadeIn>
+
+        {/* ============ ROSTER HISTORY ============ */}
+        <FadeIn delay={0.32}>
+          <div className="mt-10 mb-4 flex items-center gap-3">
+            <span className="text-[10px] font-bold tracking-[0.25em] uppercase text-blue-300/70">
+              Roster History
+            </span>
+            <div className="flex-1 h-px bg-gradient-to-r from-blue-400/30 to-transparent" />
+            <span className="text-[10px] font-bold text-blue-300/60">
+              {rosterHistory.length} {rosterHistory.length === 1 ? 'stint' : 'stints'}
+            </span>
+          </div>
+          {rosterHistory.length === 0 ? (
+            <div className="text-center py-10 text-sm text-white/40 rounded-2xl bg-white/[0.02] border border-dashed border-white/10">
+              No roster history.
+            </div>
+          ) : (
+            <div className="rounded-2xl bg-white/[0.03] border border-white/10 overflow-hidden divide-y divide-white/5">
+              {rosterHistory.map((r, i) => (
+                <div key={i} className="flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-white/[0.02]">
+                  <span className="text-blue-300/90 font-bold w-14 text-xs">S{r.seasonNumber ?? '—'}</span>
+                  <span className="text-blue-200/70 w-14 text-xs uppercase">{r.division}</span>
+                  <span className="text-white flex-1 truncate">{r.teamName || '—'}</span>
+                  {r.role && r.role !== 'player' && (
+                    <span className="text-[9px] uppercase font-bold tracking-wider text-blue-300 px-1.5 py-0.5 rounded bg-blue-500/15 border border-blue-400/30">{r.role}</span>
+                  )}
+                  {!r.rosterActive && <span className="text-[9px] uppercase text-white/40">inactive</span>}
+                </div>
+              ))}
+            </div>
+          )}
+        </FadeIn>
+
+        {/* ============ TRANSACTION HISTORY ============ */}
+        <FadeIn delay={0.35}>
+          <div className="mt-10 mb-4 flex items-center gap-3">
+            <span className="text-[10px] font-bold tracking-[0.25em] uppercase text-blue-300/70">
+              Transaction History
+            </span>
+            <div className="flex-1 h-px bg-gradient-to-r from-blue-400/30 to-transparent" />
+            <span className="text-[10px] font-bold text-blue-300/60">
+              {transactions.length} {transactions.length === 1 ? 'entry' : 'entries'}
+            </span>
+          </div>
+          {transactions.length === 0 ? (
+            <div className="text-center py-10 text-sm text-white/40 rounded-2xl bg-white/[0.02] border border-dashed border-white/10">
+              No transactions recorded.
+            </div>
+          ) : (
+            <div className="rounded-2xl bg-white/[0.03] border border-white/10 overflow-hidden divide-y divide-white/5">
+              {transactions.map((tx) => (
+                <div key={tx.id} className="flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-white/[0.02]">
+                  <span className="text-blue-300/90 font-bold w-32 text-xs uppercase tracking-wide">{TX_LABELS[tx.type] || tx.type}</span>
+                  <span className="text-white flex-1 truncate">
+                    {tx.teamName || '—'}
+                    {tx.pairedTeamName && <span className="text-white/40 mx-1">↔ {tx.pairedTeamName}</span>}
+                  </span>
+                  {tx.seasonNumber && <span className="text-blue-200/60 text-xs">S{tx.seasonNumber}</span>}
+                  <span className="text-white/30 text-[11px] whitespace-nowrap">{tx.performedAt ? new Date(tx.performedAt).toLocaleDateString() : ''}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </FadeIn>
       </section>
     </div>
   )
+}
+
+const TX_LABELS = {
+  sign: 'Signed', drop: 'Dropped', release: 'Released',
+  trade_in: 'Traded in', trade_out: 'Traded out',
+  ir_place: 'Placed on IR', ir_return: 'Returned from IR',
+  suspend: 'Suspended', reinstate: 'Reinstated',
+  rfa: 'RFA', role_change: 'Role change', rename: 'Renamed',
+  gm_assign: 'GM assigned', gm_remove: 'GM removed',
+  captain_assign: 'Captain assigned', captain_remove: 'Captain removed',
+  esub: 'Emergency sub', other: 'Other',
 }
 
 // ====================================================================
@@ -523,12 +666,12 @@ function ColorStat({ label, value, rank, color }) {
   )
 }
 
-function CopyUserIdButton({ username }) {
+function CopyUserIdButton({ userId }) {
   const [copied, setCopied] = useState(false)
 
   function handleCopy() {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
-      navigator.clipboard.writeText(username).then(() => {
+      navigator.clipboard.writeText(String(userId)).then(() => {
         setCopied(true)
         setTimeout(() => setCopied(false), 1800)
       })

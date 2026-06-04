@@ -4,16 +4,13 @@ const fs = require('fs');
 const path = require('path');
 const { config } = require('../config/config');
 const Logger = require('../utils/logger');
+const { LeagueDB, TransactionDB, isDatabaseAvailable } = require('../utils/database');
 const { ROLES, TEAM_ROLES, TEAM_NAMES, getTeamChoices } = require('../constants/roles');
 
 // Command-specific constants
 const TRANSACTION_REQUEST_CHANNEL_ID = '1178913188750823544';
 const TRANSACTION_CONFIRMATION_CHANNEL_ID = '1156814623371169801';
-const ROSTER_LIMITS = {
-    MAJORS: 4,
-    AAA: 4,
-    AA: 4
-};
+const DEFAULT_ROSTER_LIMIT = 4;
 
 /**
  * Get player's division by checking their team roles
@@ -37,6 +34,12 @@ async function countTeamRoster(guild, teamName, division) {
     
     const role = await guild.roles.fetch(roleId);
     return role?.members.size || 0;
+}
+
+async function getRosterLimit(division, teamName) {
+    if (!isDatabaseAvailable()) return DEFAULT_ROSTER_LIMIT;
+    const limit = await LeagueDB.getTeamRosterLimit(division, teamName);
+    return Number.isInteger(limit) ? limit : DEFAULT_ROSTER_LIMIT;
 }
 
 /**
@@ -272,7 +275,7 @@ module.exports = {
                 for (const [division, change] of Object.entries(divisionChanges[team])) {
                     const currentCount = await countTeamRoster(interaction.guild, team, division);
                     const newCount = currentCount + change;
-                    const limit = ROSTER_LIMITS[division];
+                    const limit = await getRosterLimit(division, team);
                     
                     if (newCount > limit) {
                         return await interaction.editReply({
@@ -341,6 +344,57 @@ module.exports = {
             await interaction.editReply({
                 content: `✅ Trade successfully executed between ${team1} and ${team2}!`,
             });
+
+            try {
+                const team1Id = await TransactionDB.findTeamIdByName(team1PlayerData[0]?.division, team1);
+                const team2Id = await TransactionDB.findTeamIdByName(team2PlayerData[0]?.division, team2);
+                for (const p of (team1PlayerData || [])) {
+                    await TransactionDB.log({
+                        discordId: p.id, discordUsername: p.username,
+                        teamId: team2Id, teamNameSnapshot: team2,
+                        pairedTeamId: team1Id, pairedTeamNameSnapshot: team1,
+                        type: 'trade_in',
+                        details: { division: p.division, from: team1, to: team2, adminTrade: true },
+                        performedByDiscordId: interaction.user.id,
+                        performedByUsername: interaction.user.username,
+                        source: 'bot:/admin-trade',
+                    });
+                    await TransactionDB.log({
+                        discordId: p.id, discordUsername: p.username,
+                        teamId: team1Id, teamNameSnapshot: team1,
+                        pairedTeamId: team2Id, pairedTeamNameSnapshot: team2,
+                        type: 'trade_out',
+                        details: { division: p.division, from: team1, to: team2, adminTrade: true },
+                        performedByDiscordId: interaction.user.id,
+                        performedByUsername: interaction.user.username,
+                        source: 'bot:/admin-trade',
+                    });
+                }
+                for (const p of (team2PlayerData || [])) {
+                    await TransactionDB.log({
+                        discordId: p.id, discordUsername: p.username,
+                        teamId: team1Id, teamNameSnapshot: team1,
+                        pairedTeamId: team2Id, pairedTeamNameSnapshot: team2,
+                        type: 'trade_in',
+                        details: { division: p.division, from: team2, to: team1, adminTrade: true },
+                        performedByDiscordId: interaction.user.id,
+                        performedByUsername: interaction.user.username,
+                        source: 'bot:/admin-trade',
+                    });
+                    await TransactionDB.log({
+                        discordId: p.id, discordUsername: p.username,
+                        teamId: team2Id, teamNameSnapshot: team2,
+                        pairedTeamId: team1Id, pairedTeamNameSnapshot: team1,
+                        type: 'trade_out',
+                        details: { division: p.division, from: team2, to: team1, adminTrade: true },
+                        performedByDiscordId: interaction.user.id,
+                        performedByUsername: interaction.user.username,
+                        source: 'bot:/admin-trade',
+                    });
+                }
+            } catch (txErr) {
+                Logger.warning('admin-trade tx logging failed (non-fatal): ' + txErr.message);
+            }
 
             Logger.success(`Admin trade executed by ${interaction.user.username} between ${team1} and ${team2}`);
 

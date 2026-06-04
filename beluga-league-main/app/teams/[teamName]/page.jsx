@@ -1,11 +1,17 @@
 "use client"
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { majorsSchedule, aaaSchedule, getTeamInitials } from '../../../lib/scheduleData'
-import { getAllPlayers } from '../../../lib/fakePlayers'
+import Avatar from '../../components/Avatar'
+import TeamLogoImg from '../../components/TeamLogo'
+
+const ROLE_LABEL = { gm: 'General Manager', captain: 'Captain', player: 'Player', sub: 'Sub', np: 'Non-Playing' }
+// fakePlayers retired — when the API has no roster data, getTeamRoster()
+// returns an empty roster + null GM so the page renders an honest empty state.
+const getAllPlayers = () => []
 
 // ====================================================================
 // Deterministic fake data generation
@@ -162,18 +168,10 @@ function TeamLogo({ name, size = 'md', link = true }) {
   const content = (
     <div className={`relative ${sizes[size]} flex items-center justify-center`}>
       <div className="absolute inset-0 rounded-full bg-blue-500/10 blur-xl" />
-      <img
-        src={`/logos/${name}.png`}
-        alt={name}
-        className="relative w-full h-full object-contain drop-shadow-[0_0_20px_rgba(59,130,246,0.4)]"
-        onError={(e) => {
-          e.currentTarget.onerror = null
-          e.currentTarget.style.display = 'none'
-          if (e.currentTarget.parentElement) {
-            const initials = getTeamInitials(name)
-            e.currentTarget.parentElement.innerHTML += `<span class="relative text-3xl font-bold text-white/90">${initials}</span>`
-          }
-        }}
+      <TeamLogoImg
+        name={name}
+        className="relative w-full h-full text-3xl"
+        imgClassName="relative w-full h-full object-contain drop-shadow-[0_0_20px_rgba(59,130,246,0.4)]"
       />
     </div>
   )
@@ -196,13 +194,103 @@ export default function TeamPage() {
   const teamName = decodeURIComponent(params.teamName)
 
   const [activeTab, setActiveTab] = useState('roster')
+  const [apiData, setApiData] = useState(null)
+  const [loaded, setLoaded] = useState(false)
 
-  const divisions = useMemo(() => getTeamDivisions(teamName), [teamName])
-  const [activeDivision, setActiveDivision] = useState(() => divisions[0] || 'aa')
+  useEffect(() => {
+    let cancelled = false
+    fetch(`/api/public/team/${encodeURIComponent(teamName)}`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (!cancelled) { setApiData(d); setLoaded(true) } })
+      .catch(() => { if (!cancelled) setLoaded(true) })
+    return () => { cancelled = true }
+  }, [teamName])
 
-  const stats = useMemo(() => generateTeamStats(teamName), [teamName])
-  const roster = useMemo(() => getTeamRoster(teamName, activeDivision), [teamName, activeDivision])
-  const schedule = useMemo(() => getTeamSchedule(teamName, activeDivision), [teamName, activeDivision])
+  // Division keys come from the DB (e.g. ['Majors','AAA','AA']). Map to the
+  // lowercase keys the UI uses. Fall back to hardcoded inference pre-load.
+  const DIV_TO_KEY = { Majors: 'major', AAA: 'aaa', AA: 'aa' }
+  const KEY_TO_DIV = { major: 'Majors', aaa: 'AAA', aa: 'AA' }
+
+  const divisions = useMemo(() => {
+    if (apiData?.divisions?.length) {
+      return apiData.divisions.map((d) => DIV_TO_KEY[d] || d.toLowerCase())
+    }
+    return loaded ? [] : getTeamDivisions(teamName)
+  }, [apiData, loaded, teamName])
+
+  const [activeDivision, setActiveDivision] = useState('major')
+  // Keep activeDivision valid as divisions resolve.
+  useEffect(() => {
+    if (divisions.length && !divisions.includes(activeDivision)) {
+      setActiveDivision(divisions[0])
+    }
+  }, [divisions, activeDivision])
+
+  // The currently-selected division's DB payload.
+  const divData = useMemo(() => {
+    if (!apiData?.byDivision) return null
+    const dbDiv = KEY_TO_DIV[activeDivision] || activeDivision
+    return apiData.byDivision[dbDiv] || null
+  }, [apiData, activeDivision])
+
+  // Real, record-only stats from the DB — no seeded/placeholder values.
+  const stats = useMemo(() => {
+    const rec = divData?.record || {}
+    const wins = rec.wins || 0
+    const losses = rec.losses || 0
+    const goalsFor = rec.goalsFor || 0
+    const goalsAgainst = rec.goalsAgainst || 0
+    const totalGames = wins + losses
+    return {
+      wins, losses, goalsFor, goalsAgainst,
+      gameWins: rec.gameWins || 0, gameLosses: rec.gameLosses || 0,
+      diff: goalsFor - goalsAgainst,
+      totalGames,
+      winPct: totalGames > 0 ? Math.round((wins / totalGames) * 100) : 0,
+      avgGoalsFor: totalGames > 0 ? (goalsFor / totalGames).toFixed(1) : '0.0',
+      avgGoalsAgainst: totalGames > 0 ? (goalsAgainst / totalGames).toFixed(1) : '0.0',
+      hasData: totalGames > 0,
+    }
+  }, [divData])
+
+  const roster = useMemo(() => {
+    if (divData?.roster) {
+      const mapMember = (m) => ({
+        discordId: m.discordId,
+        username: m.discordUsername || null,
+        displayName: m.displayName || m.discordUsername || `User ${String(m.discordId).slice(-4)}`,
+        avatarUrl: m.avatarUrl || null,
+        role: m.role || 'player',
+        isCaptain: m.role === 'captain',
+        salary: typeof m.salary === 'number' ? m.salary : (m.salary != null ? Number(m.salary) : null),
+      })
+      const players = divData.roster.filter((m) => m.role !== 'gm').map(mapMember)
+      const gmEntry = divData.roster.find((m) => m.role === 'gm')
+      const gm = gmEntry ? mapMember(gmEntry) : null
+      const captain = players.find((p) => p.isCaptain) || null
+      return { gm, captain, players }
+    }
+    return { gm: null, captain: null, players: [] }
+  }, [divData])
+
+  const onfieldCap = divData?.onfieldCap ?? null
+
+  const schedule = useMemo(() => {
+    if (divData?.schedule) {
+      const byWeek = {}
+      for (const m of divData.schedule) {
+        const key = `Week ${m.week}`
+        if (!byWeek[key]) byWeek[key] = []
+        byWeek[key].push({
+          opponent: m.isHome ? m.away : m.home,
+          isHome: m.isHome,
+          matchup: `${m.home} vs ${m.away}`,
+        })
+      }
+      return byWeek
+    }
+    return {}
+  }, [divData])
 
   return (
     <div className="relative text-white overflow-hidden">
@@ -228,7 +316,7 @@ export default function TeamPage() {
             <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-blue-500/10 border border-blue-400/30 backdrop-blur-sm mb-8">
               <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
               <span className="text-xs text-blue-200 font-medium tracking-[0.2em] uppercase">
-                Beluga League · Season 9
+                Beluga League{apiData?.season?.season_number ? ` · Season ${apiData.season.season_number}` : ''}
               </span>
             </div>
 
@@ -260,7 +348,7 @@ export default function TeamPage() {
               {[
                 { value: `${stats.wins}-${stats.losses}`, label: 'Record' },
                 { value: stats.diff > 0 ? `+${stats.diff}` : `${stats.diff}`, label: 'Goal Diff' },
-                { value: `#${stats.position}`, label: 'Standing' },
+                { value: stats.goalsFor, label: 'Goals For' },
                 { value: `${stats.winPct}%`, label: 'Win Rate' },
               ].map((s) => (
                 <div key={s.label} className="p-4 rounded-xl bg-white/[0.03] border border-white/10 backdrop-blur-sm">
@@ -333,7 +421,7 @@ export default function TeamPage() {
 
       {/* ============ TAB CONTENT ============ */}
       <section className="container mx-auto px-4 pb-24 max-w-6xl">
-        {activeTab === 'roster' && <RosterTab teamName={teamName} roster={roster} />}
+        {activeTab === 'roster' && <RosterTab teamName={teamName} roster={roster} onfieldCap={onfieldCap} />}
         {activeTab === 'schedule' && (
           <ScheduleTab teamName={teamName} schedule={schedule} division={activeDivision} />
         )}
@@ -347,9 +435,136 @@ export default function TeamPage() {
 // ROSTER TAB
 // ====================================================================
 
-function RosterTab({ teamName, roster }) {
+function LeaderCard({ icon, label, member, teamName, emptyText }) {
+  const body = (
+    <div className="relative flex items-center gap-4">
+      {member ? (
+        <Avatar src={member.avatarUrl} name={member.displayName} size={56} className="flex-shrink-0" />
+      ) : (
+        <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-blue-400/30 to-blue-700/20 border border-blue-300/50 flex items-center justify-center flex-shrink-0">
+          <svg className="h-7 w-7 text-blue-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+            <path strokeLinecap="round" strokeLinejoin="round" d={icon} />
+          </svg>
+        </div>
+      )}
+      <div className="flex-1 min-w-0">
+        <div className="text-[10px] tracking-[0.25em] uppercase text-blue-300/70 font-bold mb-1">{label}</div>
+        <div className="text-xl font-black text-white truncate">{member?.displayName || '—'}</div>
+        <div className="text-xs text-blue-200/60 mt-0.5">{member ? `with ${teamName}` : emptyText}</div>
+      </div>
+    </div>
+  )
+  const cls = "relative p-6 rounded-2xl bg-gradient-to-br from-blue-500/15 via-blue-800/10 to-blue-950/20 border border-blue-400/30 overflow-hidden"
+  return member?.discordId ? (
+    <Link href={`/players/${encodeURIComponent(member.discordId)}`} className={`${cls} block hover:border-blue-400/60 transition-colors`}>
+      <div className="absolute -top-16 -right-16 w-40 h-40 rounded-full bg-blue-500/20 blur-3xl pointer-events-none" />
+      {body}
+    </Link>
+  ) : (
+    <div className={cls}>
+      <div className="absolute -top-16 -right-16 w-40 h-40 rounded-full bg-blue-500/20 blur-3xl pointer-events-none" />
+      {body}
+    </div>
+  )
+}
+
+// On-field eligibility: actual players (player/captain/sub) — exclude GM + non-playing.
+const ONFIELD_ROLES = new Set(['player', 'captain', 'sub'])
+
+function buildOnfieldCombos(players, cap) {
+  const eligible = players.filter((p) => ONFIELD_ROLES.has(p.role) && typeof p.salary === 'number')
+  const combos = []
+  for (let i = 0; i < eligible.length; i++) {
+    for (let j = i + 1; j < eligible.length; j++) {
+      for (let k = j + 1; k < eligible.length; k++) {
+        const trio = [eligible[i], eligible[j], eligible[k]]
+        const sum = trio.reduce((s, p) => s + p.salary, 0)
+        combos.push({ trio, sum, playable: cap == null ? true : sum <= cap + 1e-9 })
+      }
+    }
+  }
+  const missingSalary = players.filter((p) => ONFIELD_ROLES.has(p.role) && typeof p.salary !== 'number')
+  // Not-playable (over cap) listed first, then playable (closest to cap first).
+  const notPlayable = combos.filter((c) => !c.playable).sort((a, b) => a.sum - b.sum)
+  const playable = combos.filter((c) => c.playable).sort((a, b) => b.sum - a.sum)
+  return { notPlayable, playable, eligibleCount: eligible.length, missingSalary }
+}
+
+function OnFieldLineups({ players, cap }) {
+  const { notPlayable, playable, eligibleCount, missingSalary } = buildOnfieldCombos(players, cap)
+  if (eligibleCount < 3) {
+    return (
+      <div className="text-center py-10 text-sm text-white/40 rounded-2xl bg-white/[0.02] border border-dashed border-white/10">
+        Need at least 3 players with a listed salary to compute on-field lineups.
+        {missingSalary.length > 0 && <div className="mt-1 text-[11px] text-white/30">{missingSalary.length} player(s) missing a salary.</div>}
+      </div>
+    )
+  }
+
+  const Row = ({ c }) => (
+    <li className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm ${
+      c.playable ? 'bg-blue-500/[0.04] border-blue-400/20' : 'bg-red-500/[0.06] border-red-400/30'
+    }`}>
+      <span className="flex-1 min-w-0 truncate text-white/90">
+        {c.trio.map((p) => p.displayName).join('  ·  ')}
+      </span>
+      <span className={`font-mono font-bold ${c.playable ? 'text-blue-200' : 'text-red-300'}`}>{c.sum.toFixed(2)}</span>
+      {!c.playable && <span className="text-[9px] uppercase font-bold text-red-300/80">over cap</span>}
+    </li>
+  )
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="text-sm text-blue-100/70">
+          On-field cap: <strong className="text-white">{cap != null ? cap.toFixed(2) : '—'}</strong>
+          <span className="text-white/40"> · 3-player lineups (salaries from the sheet)</span>
+        </div>
+        <div className="text-[11px] text-white/50">
+          <span className="text-green-300 font-bold">{playable.length}</span> playable · <span className="text-red-300 font-bold">{notPlayable.length}</span> over cap
+        </div>
+      </div>
+
+      {missingSalary.length > 0 && (
+        <div className="text-[11px] text-amber-300/70">
+          Note: {missingSalary.map((p) => p.displayName).join(', ')} {missingSalary.length === 1 ? 'has' : 'have'} no listed salary and {missingSalary.length === 1 ? 'is' : 'are'} excluded from lineups.
+        </div>
+      )}
+
+      {notPlayable.length > 0 && (
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-red-300/80 mb-2">Not Playable (over cap)</div>
+          <ul className="space-y-1.5">{notPlayable.map((c, i) => <Row key={`np-${i}`} c={c} />)}</ul>
+        </div>
+      )}
+
+      <div>
+        <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-blue-300/80 mb-2">Playable Lineups</div>
+        {playable.length === 0 ? (
+          <div className="text-sm text-white/40 italic py-4">No 3-player lineup fits under the cap.</div>
+        ) : (
+          <ul className="space-y-1.5">{playable.map((c, i) => <Row key={`p-${i}`} c={c} />)}</ul>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function RosterTab({ teamName, roster, onfieldCap }) {
+  const hasRoster = roster.players.length > 0 || roster.gm
   return (
     <div className="space-y-10">
+      {/* On-field lineup calculator (only when this division has a cap set) */}
+      {onfieldCap != null && roster.players.length > 0 && (
+        <div>
+          <div className="mb-4 flex items-center gap-3">
+            <span className="text-[10px] font-bold tracking-[0.25em] uppercase text-blue-300/70">On-Field Lineups</span>
+            <div className="flex-1 h-px bg-gradient-to-r from-blue-400/30 to-transparent" />
+          </div>
+          <OnFieldLineups players={roster.players} cap={onfieldCap} />
+        </div>
+      )}
+
       {/* Leadership */}
       <FadeIn>
         <div className="mb-4 flex items-center gap-3">
@@ -359,49 +574,20 @@ function RosterTab({ teamName, roster }) {
           <div className="flex-1 h-px bg-gradient-to-r from-blue-400/30 to-transparent" />
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* GM Card */}
-          <div className="relative p-6 rounded-2xl bg-gradient-to-br from-blue-500/15 via-blue-800/10 to-blue-950/20 border border-blue-400/30 overflow-hidden">
-            <div className="absolute -top-16 -right-16 w-40 h-40 rounded-full bg-blue-500/20 blur-3xl pointer-events-none" />
-            <div className="relative flex items-center gap-4">
-              <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-blue-400/30 to-blue-700/20 border border-blue-300/50 flex items-center justify-center flex-shrink-0">
-                <svg className="h-7 w-7 text-blue-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
-                </svg>
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-[10px] tracking-[0.25em] uppercase text-blue-300/70 font-bold mb-1">
-                  General Manager
-                </div>
-                <div className="text-xl font-black text-white truncate">{roster.gm.displayName}</div>
-                <div className="text-xs text-blue-200/60 mt-0.5">
-                  {roster.gm.seasons} seasons with {teamName}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Captain Card */}
-          <div className="relative p-6 rounded-2xl bg-gradient-to-br from-blue-500/15 via-blue-800/10 to-blue-950/20 border border-blue-400/30 overflow-hidden">
-            <div className="absolute -top-16 -right-16 w-40 h-40 rounded-full bg-blue-500/20 blur-3xl pointer-events-none" />
-            <div className="relative flex items-center gap-4">
-              <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-blue-400/30 to-blue-700/20 border border-blue-300/50 flex items-center justify-center flex-shrink-0">
-                <svg className="h-7 w-7 text-blue-200" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 21v-2a4 4 0 014-4h4a4 4 0 014 4v2M16.5 7.5l2.83 2.83a2 2 0 010 2.83l-.83.83a2 2 0 01-2.83 0L12.84 10.67M9 7a4 4 0 100 8 4 4 0 000-8z" />
-                </svg>
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-[10px] tracking-[0.25em] uppercase text-blue-300/70 font-bold mb-1">
-                  Team Captain
-                </div>
-                <div className="text-xl font-black text-white truncate">
-                  {roster.players[0]?.displayName}
-                </div>
-                <div className="text-xs text-blue-200/60 mt-0.5">
-                  {roster.players[0]?.rank} · {roster.players[0]?.seasons} seasons
-                </div>
-              </div>
-            </div>
-          </div>
+          <LeaderCard
+            label="General Manager"
+            icon="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"
+            member={roster.gm}
+            teamName={teamName}
+            emptyText="No GM assigned"
+          />
+          <LeaderCard
+            label="Team Captain"
+            icon="M3 21v-2a4 4 0 014-4h4a4 4 0 014 4v2M16.5 7.5l2.83 2.83a2 2 0 010 2.83l-.83.83a2 2 0 01-2.83 0L12.84 10.67M9 7a4 4 0 100 8 4 4 0 000-8z"
+            member={roster.captain}
+            teamName={teamName}
+            emptyText="No captain assigned"
+          />
         </div>
       </FadeIn>
 
@@ -419,94 +605,39 @@ function RosterTab({ teamName, roster }) {
           </div>
         </FadeIn>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {roster.players.map((p, i) => {
-            // Take the top 2 non-status achievements so the card isn't crowded.
-            // Skip 'Registered' and 'Active Player' since they're true for almost everyone.
-            const featuredBadges = (p.achievements || [])
-              .filter((a) => a.key !== 'registered' && a.key !== 'active')
-              .slice(0, 2)
-
-            return (
-              <FadeIn key={p.username} delay={i * 0.04} y={20}>
+        {!hasRoster ? (
+          <div className="text-center py-16 text-sm text-white/40 rounded-2xl bg-white/[0.02] border border-dashed border-white/10">
+            No roster set for this team yet.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {roster.players.map((p, i) => (
+              <FadeIn key={p.discordId || p.displayName} delay={i * 0.04} y={20}>
                 <Link
-                  href={`/players/${encodeURIComponent(p.username)}`}
-                  className="group relative block p-5 rounded-2xl bg-white/[0.03] border border-white/10 hover:border-blue-400/50 hover:bg-blue-500/5 hover:-translate-y-1 hover:shadow-[0_10px_30px_rgba(59,130,246,0.2)] transition-all overflow-hidden"
+                  href={`/players/${encodeURIComponent(p.discordId || p.displayName)}`}
+                  className="group relative flex items-center gap-4 p-4 rounded-2xl bg-white/[0.03] border border-white/10 hover:border-blue-400/50 hover:bg-blue-500/5 hover:-translate-y-0.5 hover:shadow-[0_10px_30px_rgba(59,130,246,0.18)] transition-all overflow-hidden"
                 >
-                  {/* Top row: role pill + rank */}
-                  <div className="relative flex items-center justify-between mb-4">
-                    <span
-                      className={`text-[9px] font-bold tracking-[0.2em] uppercase px-2.5 py-1 rounded-full border ${
-                        p.role === 'Captain'
-                          ? 'bg-blue-500/20 border-blue-400/50 text-blue-100'
-                          : p.role === 'Sub'
-                            ? 'bg-white/5 border-white/20 text-white/60'
-                            : 'bg-blue-500/10 border-blue-400/30 text-blue-200'
-                      }`}
-                    >
-                      {p.role}
-                    </span>
-                    <span className="text-[10px] font-black tracking-wider text-blue-300/60">
-                      {p.rank}
-                    </span>
-                  </div>
-
-                  {/* Name */}
-                  <div className="relative text-xl font-black text-white group-hover:text-blue-200 transition-colors mb-1 truncate">
-                    {p.displayName}
-                  </div>
-                  <div className="text-[10px] text-blue-300/50 mb-3">@{p.username}</div>
-
-                  {/* Featured badges */}
-                  {featuredBadges.length > 0 && (
-                    <div className="relative flex flex-wrap gap-1.5 mb-4">
-                      {featuredBadges.map((b) => (
-                        <span
-                          key={b.key}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-500/10 border border-blue-400/30 text-[9px] font-bold tracking-wider uppercase text-blue-200"
-                          title={b.label}
-                        >
-                          {b.label}
-                        </span>
-                      ))}
-                      {p.achievements && p.achievements.length > featuredBadges.length + 2 && (
-                        <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-white/5 border border-white/10 text-[9px] font-bold text-white/50">
-                          +{p.achievements.length - featuredBadges.length - 2}
-                        </span>
-                      )}
+                  <Avatar src={p.avatarUrl} name={p.displayName} size={52} className="flex-shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-lg font-black text-white group-hover:text-blue-200 transition-colors truncate">
+                      {p.displayName}
                     </div>
-                  )}
-
-                  {/* Stats grid */}
-                  <div className="relative grid grid-cols-3 gap-2 pt-3 border-t border-white/5">
-                    <div>
-                      <div className="text-base font-black text-white">{p.goals}</div>
-                      <div className="text-[9px] text-blue-300/50 tracking-wider uppercase">Goals</div>
-                    </div>
-                    <div>
-                      <div className="text-base font-black text-white">{p.saves}</div>
-                      <div className="text-[9px] text-blue-300/50 tracking-wider uppercase">Saves</div>
-                    </div>
-                    <div>
-                      <div className="text-base font-black text-transparent bg-clip-text bg-gradient-to-b from-blue-200 to-blue-400">
-                        {p.mvps}
-                      </div>
-                      <div className="text-[9px] text-blue-300/50 tracking-wider uppercase">MVPs</div>
-                    </div>
+                    {p.username && <div className="text-[10px] text-blue-300/50 truncate">@{p.username}</div>}
                   </div>
-
-                  {/* Salary strip */}
-                  <div className="relative mt-3 pt-3 border-t border-white/5 flex items-center justify-between text-xs">
-                    <span className="text-blue-300/60 tracking-wider uppercase text-[9px] font-bold">Salary</span>
-                    <span className="font-mono font-bold text-blue-200">
-                      {typeof p.salary === 'number' ? p.salary.toFixed(2) : p.salary}
-                    </span>
-                  </div>
+                  <span
+                    className={`flex-shrink-0 text-[9px] font-bold tracking-[0.15em] uppercase px-2.5 py-1 rounded-full border ${
+                      p.isCaptain
+                        ? 'bg-blue-500/20 border-blue-400/50 text-blue-100'
+                        : 'bg-white/5 border-white/15 text-white/60'
+                    }`}
+                  >
+                    {ROLE_LABEL[p.role] || p.role}
+                  </span>
                 </Link>
               </FadeIn>
-            )
-          })}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -598,12 +729,7 @@ function MatchTicketCard({ ownTeam, opponent, isHome }) {
             </div>
           </div>
           <div className="flex-shrink-0 w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center">
-            <img
-              src={`/logos/${ownTeam}.png`}
-              alt={ownTeam}
-              className="w-full h-full object-contain drop-shadow-lg"
-              onError={(e) => { e.currentTarget.style.display = 'none' }}
-            />
+            <TeamLogoImg name={ownTeam} className="w-full h-full" imgClassName="w-full h-full object-contain drop-shadow-lg" />
           </div>
         </div>
       </div>
@@ -640,12 +766,7 @@ function MatchTicketCard({ ownTeam, opponent, isHome }) {
         </div>
         <div className="relative flex items-center gap-3">
           <div className="flex-shrink-0 w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center">
-            <img
-              src={`/logos/${opponent}.png`}
-              alt={opponent}
-              className="w-full h-full object-contain drop-shadow-lg"
-              onError={(e) => { e.currentTarget.style.display = 'none' }}
-            />
+            <TeamLogoImg name={opponent} className="w-full h-full" imgClassName="w-full h-full object-contain drop-shadow-lg" />
           </div>
           <div className="text-left">
             <div className="text-[9px] font-bold tracking-[0.25em] uppercase text-blue-300/60">
@@ -666,7 +787,13 @@ function MatchTicketCard({ ownTeam, opponent, isHome }) {
 // ====================================================================
 
 function StatsTab({ stats }) {
-  const formColor = (r) => (r === 'W' ? 'text-blue-300 bg-blue-500/20 border-blue-400/50' : 'text-white/40 bg-white/5 border-white/20')
+  if (!stats.hasData) {
+    return (
+      <div className="text-center py-20 text-sm text-white/40 rounded-2xl bg-white/[0.02] border border-dashed border-white/10">
+        No games recorded for this team yet. Stats appear here once matches are reported.
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-10">
@@ -674,7 +801,7 @@ function StatsTab({ stats }) {
       <FadeIn>
         <div className="mb-4 flex items-center gap-3">
           <span className="text-[10px] font-bold tracking-[0.25em] uppercase text-blue-300/70">
-            Season 9
+            Season Record
           </span>
           <div className="flex-1 h-px bg-gradient-to-r from-blue-400/30 to-transparent" />
         </div>
@@ -704,41 +831,27 @@ function StatsTab({ stats }) {
         </div>
       </FadeIn>
 
-      {/* Recent form + detail grid */}
+      {/* Detail grid — all derived from the real record */}
       <FadeIn delay={0.1}>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* Recent form */}
           <div className="lg:col-span-2 p-6 rounded-2xl bg-white/[0.03] border border-white/10">
-            <div className="text-[10px] font-bold tracking-[0.25em] uppercase text-blue-300/70 mb-4">
-              Recent Form
-            </div>
-            <div className="flex items-center gap-2 mb-4">
-              {stats.recentForm.map((r, i) => (
-                <div
-                  key={i}
-                  className={`w-10 h-10 rounded-lg border flex items-center justify-center font-black text-sm ${formColor(r)}`}
-                >
-                  {r}
-                </div>
-              ))}
-              <div className="ml-2 text-xs text-blue-200/50">Last 5 matches</div>
-            </div>
-            <div className="flex items-center gap-4 pt-4 border-t border-white/10">
+            <div className="text-[10px] font-bold tracking-[0.25em] uppercase text-blue-300/70 mb-4">Summary</div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               <div>
-                <div className="text-[9px] font-bold tracking-wider uppercase text-blue-300/60">Streak</div>
-                <div className="text-lg font-black text-white mt-0.5">
-                  {stats.streak} {stats.streakType === 'W' ? 'Wins' : 'Losses'}
-                </div>
+                <div className="text-[9px] font-bold tracking-wider uppercase text-blue-300/60">Games</div>
+                <div className="text-lg font-black text-white mt-0.5">{stats.totalGames}</div>
               </div>
-              <div className="w-px h-10 bg-white/10" />
               <div>
                 <div className="text-[9px] font-bold tracking-wider uppercase text-blue-300/60">Win Rate</div>
                 <div className="text-lg font-black text-white mt-0.5">{stats.winPct}%</div>
               </div>
-              <div className="w-px h-10 bg-white/10" />
               <div>
-                <div className="text-[9px] font-bold tracking-wider uppercase text-blue-300/60">Position</div>
-                <div className="text-lg font-black text-white mt-0.5">#{stats.position}</div>
+                <div className="text-[9px] font-bold tracking-wider uppercase text-blue-300/60">Game W-L</div>
+                <div className="text-lg font-black text-white mt-0.5">{stats.gameWins}-{stats.gameLosses}</div>
+              </div>
+              <div>
+                <div className="text-[9px] font-bold tracking-wider uppercase text-blue-300/60">Avg GF / GA</div>
+                <div className="text-lg font-black text-white mt-0.5">{stats.avgGoalsFor} / {stats.avgGoalsAgainst}</div>
               </div>
             </div>
           </div>
@@ -748,9 +861,7 @@ function StatsTab({ stats }) {
             <div className="text-[10px] font-bold tracking-[0.25em] uppercase text-blue-300/70 mb-2">
               Goal Differential
             </div>
-            <div
-              className={`text-6xl font-black leading-none text-transparent bg-clip-text bg-gradient-to-b from-blue-200 to-blue-500`}
-            >
+            <div className="text-6xl font-black leading-none text-transparent bg-clip-text bg-gradient-to-b from-blue-200 to-blue-500">
               {stats.diff > 0 ? `+${stats.diff}` : stats.diff}
             </div>
             <div className="text-xs text-blue-200/60 mt-3">
@@ -759,38 +870,6 @@ function StatsTab({ stats }) {
           </div>
         </div>
       </FadeIn>
-
-      {/* Detail rows */}
-      <FadeIn delay={0.15}>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {[
-            { label: 'Biggest Win', value: stats.biggestWin, sub: 'Season high' },
-            { label: 'Biggest Loss', value: stats.biggestLoss, sub: 'Season low' },
-            { label: 'Games Played', value: stats.totalGames, sub: `Out of ${stats.totalGames} scheduled` },
-            { label: 'Avg Margin', value: `${((stats.goalsFor - stats.goalsAgainst) / stats.totalGames).toFixed(1)}`, sub: 'Goals per match' },
-          ].map((s) => (
-            <div
-              key={s.label}
-              className="flex items-center justify-between p-5 rounded-2xl bg-white/[0.03] border border-white/10"
-            >
-              <div>
-                <div className="text-[10px] font-bold tracking-[0.2em] uppercase text-blue-300/70">
-                  {s.label}
-                </div>
-                <div className="text-xs text-blue-200/50 mt-1">{s.sub}</div>
-              </div>
-              <div className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-b from-white to-blue-300">
-                {s.value}
-              </div>
-            </div>
-          ))}
-        </div>
-      </FadeIn>
-
-      {/* Disclaimer */}
-      <div className="text-center text-[10px] text-white/30 tracking-wider">
-        Stats shown are placeholder data for design purposes.
-      </div>
     </div>
   )
 }

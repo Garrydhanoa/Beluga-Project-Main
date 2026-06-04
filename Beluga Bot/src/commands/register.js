@@ -213,6 +213,56 @@ class GoogleSheetsManager {
             return false;
         }
     }
+
+    /**
+     * Append the user's Discord ID to the SalSheet Discord-ID column (column P,
+     * the same column checkUserRegistration reads at index 9 of G:P).
+     *
+     * The ID is written at the FIRST empty cell AFTER the LAST filled cell — i.e.
+     * appended at the very end of the existing IDs. Mid-list gaps (left behind
+     * when an ID is removed) are intentionally skipped so a removed ID's slot is
+     * never reused. Non-fatal: failures here never block registration.
+     */
+    async appendDiscordIdToSalSheet(userId) {
+        try {
+            if (!this.sheets) {
+                await this.initialize();
+            }
+
+            // Read only the Discord-ID column (P).
+            const res = await this.sheets.spreadsheets.values.get({
+                spreadsheetId: this.spreadsheetId,
+                range: 'SalSheet!P:P',
+            });
+            const col = res.data.values || []; // [ [id], [id], [], [id], ... ]
+
+            // Find the LAST row (1-indexed) that actually contains an ID. Scanning
+            // for the max filled index means any empty gaps above it are ignored,
+            // so we always append below the newest ID.
+            let lastFilledRow = 0;
+            for (let i = 0; i < col.length; i++) {
+                const cell = col[i] && col[i][0];
+                if (cell !== undefined && cell !== null && String(cell).trim().length > 0) {
+                    lastFilledRow = i + 1; // sheets are 1-indexed
+                }
+            }
+
+            const targetRow = lastFilledRow + 1; // first empty cell after the last ID
+
+            await this.sheets.spreadsheets.values.update({
+                spreadsheetId: this.spreadsheetId,
+                range: `SalSheet!P${targetRow}`,
+                valueInputOption: 'RAW',
+                resource: { values: [[String(userId)]] },
+            });
+
+            Logger.success(`Discord ID ${userId} appended to SalSheet!P${targetRow}`);
+            return true;
+        } catch (error) {
+            Logger.error('Failed to append Discord ID to SalSheet', error);
+            return false;
+        }
+    }
 }
 
 function validateTrackerUrl(url) {
@@ -862,6 +912,14 @@ module.exports = {
                             components: []
                         });
                         return;
+                    }
+
+                    // Extra step: append the Discord ID to the end of the SalSheet
+                    // Discord-ID column (column P). Non-fatal — never blocks success.
+                    try {
+                        await sheetsManager.appendDiscordIdToSalSheet(session.userId);
+                    } catch (salSheetError) {
+                        Logger.error('SalSheet Discord-ID append failed (registration still saved)', salSheetError);
                     }
 
                     // Send registration announcement

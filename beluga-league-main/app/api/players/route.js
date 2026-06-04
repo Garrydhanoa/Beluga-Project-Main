@@ -1,245 +1,137 @@
-import { GoogleSpreadsheet } from 'google-spreadsheet';
-import { JWT } from 'google-auth-library';
-import { NextResponse } from 'next/server';
-import path from 'path';
-import fs from 'fs';
+import { NextResponse } from 'next/server'
+import { query } from '../../../lib/db'
+import { ensureLeagueSchema } from '../../../lib/leagueSchema'
+import { getActiveSeason } from '../../../lib/leagueStore'
+import { getSalaryMap } from '../../../lib/salarySheet'
+import { getMemberMap } from '../../../lib/discordMembers'
 
-// Cache for player data
-const cache = {
-  data: null,
-  timestamp: null,
-  expiryTime: 30 * 60 * 1000 // 30 minutes
-};
+export const dynamic = 'force-dynamic'
 
-// Get credentials
-function getConfig() {
-  try {
-    if (process.env.NODE_ENV === 'production') {
-      return {
-        auth: {
-          client_email: process.env.GOOGLE_CLIENT_EMAIL,
-          private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n')
-        },
-        sheetId: process.env.SHEET_ID_PLAYERS
-      };
-    }
-    
-    if (process.env.GOOGLE_CLIENT_EMAIL && process.env.GOOGLE_PRIVATE_KEY) {
-      return {
-        auth: {
-          client_email: process.env.GOOGLE_CLIENT_EMAIL,
-          private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n')
-        },
-        sheetId: process.env.SHEET_ID_PLAYERS || '1cnrCOiAX5PfcxqpTX16YvbPVYnBxZiCk_zSCDqoeDGs'
-      };
-    }
-    
-    const credPath = path.join(process.cwd(), 'credentials.json');
-    if (fs.existsSync(credPath)) {
-      const credentials = JSON.parse(fs.readFileSync(credPath, 'utf8'));
-      return {
-        auth: {
-          client_email: credentials.client_email,
-          private_key: credentials.private_key
-        },
-        sheetId: '1cnrCOiAX5PfcxqpTX16YvbPVYnBxZiCk_zSCDqoeDGs'
-      };
-    }
-    
-    throw new Error('Missing Google Sheets API credentials');
-  } catch (error) {
-    console.error('Error getting configuration:', error);
-    throw error;
-  }
-}
-
-// Fetch player data from sheets
-async function fetchPlayerData() {
-  try {
-    const config = getConfig();
-    
-    const serviceAccountAuth = new JWT({
-      email: config.auth.client_email,
-      key: config.auth.private_key,
-      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-    });
-    
-    const doc = new GoogleSpreadsheet(config.sheetId, serviceAccountAuth);
-    await doc.loadInfo();
-    
-    // Get both sheets
-    const playerDirSheet = doc.sheetsByTitle['Player Directory'];
-    const salSheet = doc.sheetsByTitle['SalSheet'];
-    
-    if (!playerDirSheet || !salSheet) {
-      throw new Error('Required sheets not found');
-    }
-    
-    // Load rows from both sheets
-    const playerDirRows = await playerDirSheet.getRows();
-    const salSheetRows = await salSheet.getRows();
-    
-    // Create a map of registered players from SalSheet (match by Discord ID)
-    const registeredPlayers = new Map();
-    salSheetRows.forEach(row => {
-      const discordId = row.get('Discord ID'); // Column P in SalSheet
-      const nickname = row.get('Nickname');
-      const salary = row.get('SAL lock'); // Column O
-      const sal2sPeak = row.get('2s PEAK');
-      const sal3sPeak = row.get('3s PEAK');
-      const sal2sCurrent = row.get('2s Current');
-      const sal3sCurrent = row.get('3s Current');
-      const fa = row.get('FA?');
-      const eligible = row.get('Eligible?');
-      const ir = row.get('IR?');
-      const suspended = row.get('Suspended?');
-      const playing = row.get('Playing?');
-      const league = row.get('League');
-      const ballchasingLink = row.get('Ballchasing Replay Or Profile LINK!');
-      const rlTracker = row.get('RL Tracker based on BC');
-      const mainAccount = row.get('Main Account');
-      const altAccount = row.get('Alt Account');
-      const rfa = row.get('RFA');
-      const releaseDate = row.get('< RELEASE DATE');
-      const lastIRDate = row.get('< Last IR date');
-      
-      // Match by Discord ID (User ID) - this ensures correct matching even with duplicate names
-      if (discordId) {
-        registeredPlayers.set(discordId.trim(), {
-          salary: salary ? parseFloat(salary) : null,
-          sal2sPeak: sal2sPeak || null,
-          sal3sPeak: sal3sPeak || null,
-          sal2sCurrent: sal2sCurrent || null,
-          sal3sCurrent: sal3sCurrent || null,
-          isFreeAgent: fa === 'YES',
-          eligible: eligible === 'YES',
-          ir: ir === 'YES',
-          suspended: suspended === 'YES',
-          playing: playing === 'YES',
-          league: league || null,
-          ballchasingLink: ballchasingLink || null,
-          rlTracker: rlTracker || null,
-          mainAccount: mainAccount || null,
-          altAccount: altAccount || null,
-          isRFA: rfa === 'YES',
-          releaseDate: releaseDate || null,
-          lastIRDate: lastIRDate || null
-        });
-      }
-    });
-    
-    // Process player directory data
-    const players = [];
-    playerDirRows.forEach(row => {
-      const username = row.get('Username');
-      const userId = row.get('User ID');
-      const displayName = row.get('Display Name');
-      const salary = row.get('Salary');
-      const league = row.get('League');
-      const team = row.get('Team');
-      const fa = row.get('FA');
-      const ineligible = row.get('INELIGIBLE');
-      // suspended from Player Directory sheet (not used, we get it from SalSheet)
-      const mainAccount = row.get('Main Account');
-      const altAccount = row.get('Alt Account');
-      const gmRole = row.get('GM?');
-      const aaCaptainRole = row.get('AA Captain?');
-      const aaaCaptainRole = row.get('AAA Captain?');
-      const majorsCaptainRole = row.get('Majors Captain?');
-      
-      if (!username) return;
-      
-      // Check if player is registered in SalSheet - match by User ID (from Player Directory) with Discord ID (from SalSheet)
-      const salData = registeredPlayers.get(userId?.trim());
-      
-      const isRegistered = salData !== undefined && salData.salary !== null;
-      
-      // For eligibility: If registered (in SalSheet), use SalSheet data. If not registered, they are NOT eligible
-      const isEligibleValue = isRegistered ? salData.eligible : false;
-      const isSuspendedValue = isRegistered ? salData.suspended : false;
-      const isFreeAgentValue = isRegistered ? salData.isFreeAgent : (fa === 'TRUE' || fa === 'Yes' || fa === '1' || team === 'Free Agent' || !team);
-      
-      players.push({
-        username: username || '',
-        userId: userId || '',
-        displayName: displayName || username || '',
-        salary: isRegistered ? (salData.salary || parseFloat(salary) || 0) : (parseFloat(salary) || 0),
-        league: isRegistered ? (salData?.league || league || 'Unknown') : (league || 'Unknown'),
-        team: team || 'Free Agent',
-        isFreeAgent: isFreeAgentValue,
-        isIneligible: ineligible === 'TRUE' || ineligible === 'Yes' || ineligible === '1',
-        isSuspended: isSuspendedValue,
-        isRegistered: isRegistered,
-        mainAccount: mainAccount || salData?.mainAccount || '',
-        altAccount: altAccount || salData?.altAccount || '',
-        gmRole: gmRole || null,
-        aaCaptainRole: aaCaptainRole || null,
-        aaaCaptainRole: aaaCaptainRole || null,
-        majorsCaptainRole: majorsCaptainRole || null,
-        // Additional SAL data
-        sal2sPeak: salData?.sal2sPeak || null,
-        sal3sPeak: salData?.sal3sPeak || null,
-        sal2sCurrent: salData?.sal2sCurrent || null,
-        sal3sCurrent: salData?.sal3sCurrent || null,
-        isEligible: isEligibleValue,
-        isPlaying: salData?.playing || false,
-        isIR: salData?.ir || false,
-        isRFA: salData?.isRFA || false,
-        releaseDate: salData?.releaseDate || null,
-        lastIRDate: salData?.lastIRDate || null,
-        ballchasingLink: salData?.ballchasingLink || null,
-        rlTracker: salData?.rlTracker || null
-      });
-    });
-    
-    return players;
-  } catch (error) {
-    console.error('Error fetching player data:', error);
-    throw error;
-  }
-}
-
+/**
+ * Public player directory — DB-only, no Google Sheets.
+ *
+ * Surface every Discord ID the league has ever touched, with current-season
+ * roster slot (if any) folded in. Salary / eligibility / IR are intentionally
+ * omitted for now per the project plan (will be reintroduced when the
+ * website-side salary system lands).
+ */
 export async function GET() {
-  try {
-    const now = Date.now();
-    
-    // Check cache
-    if (cache.data && cache.timestamp && (now - cache.timestamp) < cache.expiryTime) {
-      return NextResponse.json({
-        players: cache.data,
-        fromCache: true,
-        cachedAt: new Date(cache.timestamp).toISOString()
-      });
+  await ensureLeagueSchema()
+  const season = await getActiveSeason()
+  const activeSeasonId = season?.id || null
+
+  // Identities UNIONed across every place a player might appear in the DB.
+  const idsRes = await query(`
+    WITH identities AS (
+      SELECT discord_id, discord_username, display_name, updated_at AS seen_at
+      FROM team_roster_members
+      UNION ALL
+      SELECT discord_id, discord_username, display_name, performed_at AS seen_at
+      FROM transactions
+      UNION ALL
+      SELECT discord_id, username AS discord_username, username AS display_name, updated_at AS seen_at
+      FROM manual_salaries
+    )
+    SELECT discord_id,
+      (ARRAY_REMOVE(ARRAY_AGG(display_name ORDER BY seen_at DESC), NULL))[1] AS display_name,
+      (ARRAY_REMOVE(ARRAY_AGG(discord_username ORDER BY seen_at DESC), NULL))[1] AS discord_username,
+      MAX(seen_at) AS last_seen,
+      COUNT(*)::int AS source_rows
+    FROM identities
+    GROUP BY discord_id
+    ORDER BY last_seen DESC NULLS LAST
+  `)
+
+  // Current rosters for the active season (if any).
+  const currentByDiscord = new Map()
+  if (activeSeasonId) {
+    const r = await query(`
+      SELECT rm.discord_id, rm.role, t.id AS team_id, t.name AS team_name, t.division
+      FROM team_roster_members rm
+      JOIN teams t ON t.id = rm.team_id
+      LEFT JOIN team_franchises f ON f.id = t.franchise_id
+      WHERE rm.season_id = $1 AND rm.is_active = TRUE AND t.is_active = TRUE
+        AND (f.is_active IS DISTINCT FROM FALSE)
+    `, [activeSeasonId])
+    for (const row of r.rows) {
+      currentByDiscord.set(row.discord_id, {
+        teamId: row.team_id,
+        teamName: row.team_name,
+        division: row.division,
+        role: row.role,
+      })
     }
-    
-    // Fetch fresh data
-    const players = await fetchPlayerData();
-    
-    // Update cache
-    cache.data = players;
-    cache.timestamp = now;
-    
-    return NextResponse.json({
-      players: players,
-      fromCache: false,
-      cachedAt: new Date(now).toISOString()
-    });
-  } catch (error) {
-    console.error('Error in players API:', error);
-    
-    // Return cached data if available
-    if (cache.data) {
-      return NextResponse.json({
-        players: cache.data,
-        fromCache: true,
-        cachedAt: new Date(cache.timestamp).toISOString(),
-        error: 'Failed to fetch fresh data, using cache'
-      });
-    }
-    
-    return NextResponse.json(
-      { error: 'Failed to fetch player data', message: error.message },
-      { status: 500 }
-    );
   }
+
+  // Salary + division enrichment from the league sheet (keyed by Discord ID).
+  const salaryMap = await getSalaryMap().catch(() => new Map())
+  // Discord identity (display name + avatar) — the single source of names.
+  const memberMap = await getMemberMap().catch(() => new Map())
+
+  const byId = new Map()
+
+  // 1) Everyone the DB knows about (roster + transactions + manual_salaries).
+  for (const row of idsRes.rows) {
+    const current = currentByDiscord.get(row.discord_id) || null
+    const sheet = salaryMap.get(String(row.discord_id)) || null
+    const member = memberMap.get(String(row.discord_id)) || null
+    byId.set(String(row.discord_id), {
+      discordId: row.discord_id,
+      displayName: member?.displayName || row.display_name || sheet?.displayName || sheet?.nickname || row.discord_username || `User ${String(row.discord_id).slice(-4)}`,
+      discordUsername: member?.username || row.discord_username,
+      avatarUrl: member?.avatarUrl || null,
+      inGuild: member?.isInGuild ?? null,
+      lastSeen: row.last_seen,
+      currentTeam: current?.teamName || null,
+      currentTeamId: current?.teamId || null,
+      currentDivision: current?.division || sheet?.league || null,
+      role: current?.role || null,
+      isFreeAgent: !current,
+      salary: sheet?.salary ?? null,
+      eligible: sheet?.eligible ?? null,
+      inSheet: !!sheet,
+    })
+  }
+
+  // 2) Every member the salary sheet knows about (the registered-member list),
+  //    even if they've never been rostered or had a transaction. This makes the
+  //    directory the full member roster, matched to DB data where it exists.
+  for (const [discordId, sheet] of salaryMap.entries()) {
+    if (byId.has(String(discordId))) continue
+    const current = currentByDiscord.get(discordId) || null
+    const member = memberMap.get(String(discordId)) || null
+    byId.set(String(discordId), {
+      discordId,
+      displayName: member?.displayName || sheet.displayName || sheet.nickname || `User ${String(discordId).slice(-4)}`,
+      discordUsername: member?.username || null,
+      avatarUrl: member?.avatarUrl || null,
+      inGuild: member?.isInGuild ?? null,
+      lastSeen: null,
+      currentTeam: current?.teamName || sheet.sheetTeam || null,
+      currentTeamId: current?.teamId || null,
+      currentDivision: current?.division || sheet.league || null,
+      role: current?.role || null,
+      isFreeAgent: !current,
+      salary: sheet.salary ?? null,
+      eligible: sheet.eligible ?? null,
+      inSheet: true,
+    })
+  }
+
+  // Sort: sheet-present members first (by salary desc), then everyone else by name.
+  const players = Array.from(byId.values()).sort((a, b) => {
+    if (a.inSheet !== b.inSheet) return a.inSheet ? -1 : 1
+    if (a.inSheet && b.inSheet) {
+      const sa = a.salary ?? -1, sb = b.salary ?? -1
+      if (sa !== sb) return sb - sa
+    }
+    return (a.displayName || '').localeCompare(b.displayName || '')
+  })
+
+  return NextResponse.json({
+    players,
+    seasonId: activeSeasonId,
+    season: season || null,
+    fromCache: false,
+  })
 }

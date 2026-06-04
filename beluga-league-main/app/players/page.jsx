@@ -3,7 +3,8 @@
 import { useState, useMemo, useEffect } from 'react'
 import Link from 'next/link'
 import { motion } from 'framer-motion'
-import { getAllPlayers, TEAMS, DIVISION_LABEL } from '../../lib/fakePlayers'
+import Avatar from '../components/Avatar'
+// Team list and division labels are derived from API data at runtime.
 
 const DIVISION_OPTIONS = [
   { key: 'all', label: 'All Divisions' },
@@ -35,8 +36,55 @@ function FadeIn({ children, delay = 0, y = 20, className = '' }) {
   )
 }
 
+function adaptApiPlayer(p) {
+  const divKey = (() => {
+    const d = String(p.currentDivision || p.division || '').toLowerCase()
+    if (d.includes('major')) return 'major'
+    if (d.includes('aaa')) return 'aaa'
+    if (d.includes('aa')) return 'aa'
+    return 'aa'
+  })()
+  const displayName = p.displayName || (p.discordId ? `User ${String(p.discordId).slice(-4)}` : 'Unknown')
+  return {
+    // username is ONLY the real Discord username — never the raw ID. Used for the
+    // "@handle" line, which is hidden entirely when there's no real username.
+    username: p.discordUsername || null,
+    displayName,
+    discordId: p.discordId,
+    avatarUrl: p.avatarUrl || null,
+    team: p.currentTeam || 'Free Agent',
+    division: divKey,
+    divisionLabel: divKey === 'major' ? 'Majors' : divKey.toUpperCase(),
+    isCaptain: p.role === 'captain',
+    isFreeAgent: !!p.isFreeAgent,
+    role: p.role || null,
+    rank: 0,
+    goals: 0, assists: 0, saves: 0, mvps: 0,
+    salary: Number(p.salary) || 0,
+    eligible: p.eligible,
+    achievements: [],
+  }
+}
+
 export default function PlayersDirectoryPage() {
-  const allPlayers = useMemo(() => getAllPlayers(), [])
+  const [apiPlayers, setApiPlayers] = useState(null)
+  const [season, setSeason] = useState(null)
+  useEffect(() => {
+    fetch('/api/players', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d?.season) setSeason(d.season)
+        if (Array.isArray(d.players)) setApiPlayers(d.players.map(adaptApiPlayer))
+        else setApiPlayers([])
+      })
+      .catch(() => setApiPlayers([]))
+  }, [])
+  const allPlayers = apiPlayers || []
+  const TEAMS = useMemo(() => {
+    const set = new Set()
+    for (const p of allPlayers) if (p.team && p.team !== 'Free Agent') set.add(p.team)
+    return Array.from(set).sort()
+  }, [allPlayers])
 
   const [query, setQuery] = useState('')
   const [division, setDivision] = useState('all')
@@ -53,8 +101,8 @@ export default function PlayersDirectoryPage() {
       const q = query.toLowerCase()
       list = list.filter(
         (p) =>
-          p.displayName.toLowerCase().includes(q) ||
-          p.username.toLowerCase().includes(q) ||
+          (p.displayName || '').toLowerCase().includes(q) ||
+          (p.username || '').toLowerCase().includes(q) ||
           (p.team || '').toLowerCase().includes(q)
       )
     }
@@ -90,7 +138,7 @@ export default function PlayersDirectoryPage() {
             <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-blue-500/10 border border-blue-400/30 backdrop-blur-sm mb-6">
               <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
               <span className="text-xs text-blue-200 font-medium tracking-[0.2em] uppercase">
-                Season 9 · Directory
+                {season?.season_number ? `Season ${season.season_number} · ` : ''}Directory
               </span>
             </div>
             <h1 className="text-5xl sm:text-6xl md:text-7xl font-black tracking-tight mb-4 leading-[0.95]">
@@ -100,7 +148,7 @@ export default function PlayersDirectoryPage() {
               </span>
             </h1>
             <p className="text-base md:text-lg text-blue-100/70 max-w-xl mx-auto">
-              {allPlayers.length} players across 14 teams and 3 divisions. Click any player to see their profile.
+              {allPlayers.length} players{TEAMS.length ? ` across ${TEAMS.length} teams` : ''} and 3 divisions. Click any player to see their profile.
             </p>
           </div>
         </FadeIn>
@@ -222,7 +270,7 @@ export default function PlayersDirectoryPage() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {pageItems.map((player, i) => (
-              <FadeIn key={player.username} delay={(i % 8) * 0.03}>
+              <FadeIn key={player.discordId || player.username} delay={(i % 8) * 0.03}>
                 <PlayerCard player={player} />
               </FadeIn>
             ))}
@@ -294,7 +342,7 @@ function PlayerCard({ player }) {
   const hasTeam = !!player.team
   return (
     <Link
-      href={`/players/${encodeURIComponent(player.username)}`}
+      href={`/players/${encodeURIComponent(player.discordId || player.username)}`}
       className="group relative block h-full p-5 rounded-2xl bg-white/[0.03] border border-white/10 hover:border-blue-400/50 hover:bg-blue-500/5 hover:-translate-y-1 hover:shadow-[0_10px_30px_rgba(59,130,246,0.2)] transition-all overflow-hidden"
     >
       {/* Ghost team logo in background */}
@@ -314,29 +362,40 @@ function PlayerCard({ player }) {
 
       {/* Top: role + rank */}
       <div className="relative flex items-center justify-between mb-4">
-        <span
-          className={`text-[9px] font-bold tracking-[0.2em] uppercase px-2.5 py-1 rounded-full border ${
-            player.isCaptain
-              ? 'bg-blue-500/20 border-blue-400/50 text-blue-100'
-              : player.isFreeAgent
-                ? 'bg-white/5 border-white/20 text-white/60'
-                : player.role === 'Sub'
+        {player.role ? (
+          <span
+            className={`text-[9px] font-bold tracking-[0.2em] uppercase px-2.5 py-1 rounded-full border ${
+              player.isCaptain
+                ? 'bg-blue-500/20 border-blue-400/50 text-blue-100'
+                : player.isFreeAgent
                   ? 'bg-white/5 border-white/20 text-white/60'
-                  : 'bg-blue-500/10 border-blue-400/30 text-blue-200'
-          }`}
-        >
-          {player.role}
-        </span>
-        <span className="text-[10px] font-black tracking-wider text-blue-300/70">
-          {player.rank}
-        </span>
+                  : player.role === 'Sub'
+                    ? 'bg-white/5 border-white/20 text-white/60'
+                    : 'bg-blue-500/10 border-blue-400/30 text-blue-200'
+            }`}
+          >
+            {player.role}
+          </span>
+        ) : (
+          <span className="text-[9px] font-bold tracking-[0.2em] uppercase px-2.5 py-1 rounded-full border bg-white/5 border-white/20 text-white/50">
+            {player.isFreeAgent ? 'Free Agent' : 'Player'}
+          </span>
+        )}
       </div>
 
-      {/* Name */}
-      <div className="relative text-xl font-black text-white group-hover:text-blue-200 transition-colors truncate">
-        {player.displayName}
+      {/* Avatar + Name */}
+      <div className="relative flex items-center gap-3">
+        <Avatar src={player.avatarUrl} name={player.displayName} size={44} />
+        <div className="min-w-0">
+          <div className="text-lg font-black text-white group-hover:text-blue-200 transition-colors truncate">
+            {player.displayName}
+          </div>
+          {player.username && (
+            <div className="text-[10px] text-blue-300/50 truncate">@{player.username}</div>
+          )}
+        </div>
       </div>
-      <div className="relative text-[10px] text-blue-300/50 mb-3">@{player.username}</div>
+      <div className="mb-3" />
 
       {/* Team row */}
       <div className="relative flex items-center gap-2 mb-4 pb-3 border-b border-white/5">

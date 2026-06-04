@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import { readData, updateSection } from '../../../../lib/adminStore'
 import { requireAdmin } from '../../../../lib/adminAuth'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET(request) {
   const auth = await requireAdmin()
   if (!auth.ok) return auth.response

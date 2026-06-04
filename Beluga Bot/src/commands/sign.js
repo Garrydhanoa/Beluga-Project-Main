@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { config } = require('../config/config');
 const Logger = require('../utils/logger');
+const { LeagueDB, TransactionDB, isDatabaseAvailable } = require('../utils/database');
 const { ROLES, TEAM_ROLES, NP_ROLES, getTeamChoices, getDivisionChoices } = require('../constants/roles');
 
 // Command-specific channel IDs
@@ -11,7 +12,7 @@ const TRANSACTION_REQUEST_CHANNEL_ID = '1178913188750823544';
 const TRANSACTION_CONFIRMATION_CHANNEL_ID = '1156814623371169801';
 const ROSTER_ALERT_CHANNEL_ID = '1299015210702737429';
 const SPREADSHEET_ID = '1cnrCOiAX5PfcxqpTX16YvbPVYnBxZiCk_zSCDqoeDGs';
-const MAX_ROSTER_SIZE = 4;
+const DEFAULT_ROSTER_LIMIT = 4;
 
 // Pending transactions storage
 const pendingTransactions = new Map();
@@ -324,8 +325,14 @@ async function getRosterSize(guild, teamName, division) {
     }
 }
 
+async function getRosterLimit(division, teamName) {
+    if (!isDatabaseAvailable()) return DEFAULT_ROSTER_LIMIT;
+    const limit = await LeagueDB.getTeamRosterLimit(division, teamName);
+    return Number.isInteger(limit) ? limit : DEFAULT_ROSTER_LIMIT;
+}
+
 // Helper function to send roster alert to Salary Crew
-async function sendRosterAlert(client, teamName, division, rosterSize) {
+async function sendRosterAlert(client, teamName, division, rosterSize, limit) {
     try {
         const alertChannel = await client.channels.fetch(ROSTER_ALERT_CHANNEL_ID);
         if (!alertChannel) {
@@ -338,7 +345,7 @@ async function sendRosterAlert(client, teamName, division, rosterSize) {
             content: `⚠️ ${salaryCrewMention} **ROSTER ALERT**`,
             embeds: [new EmbedBuilder()
                 .setTitle('🚨 Roster Over Capacity')
-                .setDescription(`**${teamName}** in **${division}** division has **${rosterSize} players** (maximum is ${MAX_ROSTER_SIZE})!`)
+                .setDescription(`**${teamName}** in **${division}** division has **${rosterSize} players** (maximum is ${limit})!`)
                 .setColor(0xFF0000)
                 .setTimestamp()
                 .setFooter({ text: 'Please review and resolve this roster issue' })
@@ -455,18 +462,19 @@ module.exports = {
 
             // Check roster size before sending transaction
             const currentRosterSize = await getRosterSize(interaction.guild, teamName, division);
+            const rosterLimit = await getRosterLimit(division, teamName);
             
-            if (currentRosterSize > MAX_ROSTER_SIZE) {
+            if (currentRosterSize > rosterLimit) {
                 // Roster is already over capacity - alert Salary Crew and block
-                await sendRosterAlert(interaction.client, teamName, division, currentRosterSize);
+                await sendRosterAlert(interaction.client, teamName, division, currentRosterSize, rosterLimit);
                 await interaction.editReply({
-                    content: `❌ **Cannot sign player:** ${teamName} roster in ${division} is already over capacity (${currentRosterSize}/${MAX_ROSTER_SIZE} players). Salary Crew has been notified of this roster issue.`,
+                    content: `❌ **Cannot sign player:** ${teamName} roster in ${division} is already over capacity (${currentRosterSize}/${rosterLimit} players). Salary Crew has been notified of this roster issue.`,
                 });
                 return;
-            } else if (currentRosterSize >= MAX_ROSTER_SIZE) {
+            } else if (currentRosterSize >= rosterLimit) {
                 // Roster is at capacity - signing would exceed limit
                 await interaction.editReply({
-                    content: `❌ **Cannot sign player:** ${teamName} roster in ${division} is at full capacity (${currentRosterSize}/${MAX_ROSTER_SIZE} players). Signing this player would exceed the maximum roster size.`,
+                    content: `❌ **Cannot sign player:** ${teamName} roster in ${division} is at full capacity (${currentRosterSize}/${rosterLimit} players). Signing this player would exceed the maximum roster size.`,
                 });
                 return;
             }
@@ -734,7 +742,26 @@ async function processSigningCompletion(transaction, message, client) {
             content: '✅ Transaction completed successfully!',
             embeds: [EmbedBuilder.from(embed).setColor(0x00FF00).setFooter({ text: 'Completed' })]
         });
-        
+
+        // Log transaction to shared DB (website admin panel reads from this).
+        const teamId = await TransactionDB.findTeamIdByName(transaction.division, transaction.teamName);
+        await TransactionDB.log({
+            discordId: transaction.playerId,
+            discordUsername: transaction.playerUsername,
+            displayName: sheetUsername || transaction.playerUsername,
+            teamId,
+            teamNameSnapshot: transaction.teamName,
+            type: 'sign',
+            details: {
+                division: transaction.division,
+                offeredByUsername: transaction.offeredByUsername,
+                approvedBy: transaction.approvedBy,
+            },
+            performedByDiscordId: transaction.offeredBy,
+            performedByUsername: transaction.offeredByUsername,
+            source: 'bot:/sign',
+        });
+
         Logger.success(`Transaction completed: ${transaction.playerUsername} signed to ${transaction.teamName} (${transaction.division})`);
         
     } catch (error) {

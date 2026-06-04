@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import Link from 'next/link'
 import { motion } from 'framer-motion'
 
@@ -147,8 +147,40 @@ export default function StandingsPage() {
   const [query, setQuery] = useState('')
   const [sortField, setSortField] = useState('position')
   const [sortDir, setSortDir] = useState('asc')
+  const [apiData, setApiData] = useState(null)
+  const [loading, setLoading] = useState(true)
 
-  const rawStandings = useMemo(() => generateStandings(division), [division])
+  useEffect(() => {
+    const divKey = division === 'major' ? 'majors' : division
+    setLoading(true)
+    fetch(`/api/standings?division=${divKey}`, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((d) => setApiData(d))
+      .catch(() => setApiData({ data: [] }))
+      .finally(() => setLoading(false))
+  }, [division])
+
+  const rawStandings = useMemo(() => {
+    if (!apiData || !Array.isArray(apiData.data)) return []
+    return apiData.data.map((row, i) => {
+      const wins = Number(row.wins || 0)
+      const losses = Number(row.losses || 0)
+      const goalsFor = Number(row.goalsFor || row.goals_for || 0)
+      const goalsAgainst = Number(row.goalsAgainst || row.goals_against || 0)
+      const totalGames = wins + losses || 1
+      return {
+        team: row.team,
+        wins,
+        losses,
+        winPct: parseFloat(((wins / totalGames) * 100).toFixed(1)),
+        goalsFor,
+        goalsAgainst,
+        gameDiff: wins - losses,
+        goalDiff: goalsFor - goalsAgainst,
+        position: row.rank || i + 1,
+      }
+    })
+  }, [apiData])
 
   const sortedStandings = useMemo(() => {
     let list = rawStandings

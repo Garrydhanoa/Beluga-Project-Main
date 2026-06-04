@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { config } = require('../config/config');
 const Logger = require('./logger');
+const { syncGuildToDb } = require('./memberStore');
 
 /**
  * Performs automatic member pull from Discord server to Google Sheets with smart ID matching
@@ -31,6 +32,15 @@ async function performMemberPull(client, confirmationChannelId = '14039614617760
         // Get all members from the server
         Logger.info('Fetching all guild members...');
         await guild.members.fetch();
+
+        // Persist members + roles to Postgres so the website has a single source
+        // of identity (display names, avatars) + an exact member count. Non-fatal.
+        try {
+            await syncGuildToDb(guild);
+        } catch (dbErr) {
+            Logger.error('Member DB sync failed (continuing with sheet pull)', dbErr);
+        }
+
         const currentMembers = Array.from(guild.members.cache.values())
             .filter(member => !member.user.bot);
         

@@ -9,7 +9,11 @@ const { updateAllRosters } = require('./utils/rosterManager');
 const AIChatHandler = require('./utils/aiChat');
 const { initializeDatabase } = require('./utils/database');
 const { startBirthdayChecker } = require('./utils/birthdayChecker');
-const { initializeWeekThreadsTable, scheduleAutoCreation: scheduleWeekThreads } = require('./commands/week-thread');
+const {
+    initializeWeekThreadsTable,
+    startPendingWeekThreadWatcher,
+} = require('./commands/week-thread');
+const { startTicketSync } = require('./utils/ticketSync');
 
 class BelugaLeagueBot {
     constructor() {
@@ -129,14 +133,25 @@ class BelugaLeagueBot {
                 Logger.error('Failed to initialize rosters on startup', rosterError);
             }
             
-            // Initialize week threads table and schedule auto-creation
+            // Initialize week threads table + the single DB-driven watcher. The
+            // watcher auto-opens the current week (from the season start_date),
+            // creates threads for any materialized rows, reconciles closures, and
+            // processes website delete actions. There is no separate hardcoded
+            // auto-creator anymore (that caused duplicate threads).
             Logger.info('Initializing week thread system...');
             try {
                 await initializeWeekThreadsTable();
-                scheduleWeekThreads(client);
+                startPendingWeekThreadWatcher(client, 60 * 1000);
                 Logger.success('Week thread system initialized');
             } catch (weekThreadError) {
                 Logger.error('Failed to initialize week thread system', weekThreadError);
+            }
+
+            // Ticket website-sync: backfill transcripts + poll website close requests.
+            try {
+                startTicketSync(client, 20 * 1000);
+            } catch (ticketSyncError) {
+                Logger.error('Failed to start ticket sync', ticketSyncError);
             }
         });
 
@@ -196,7 +211,25 @@ class BelugaLeagueBot {
                 else if (interaction.isButton()) {
                     // Add debug logging for button interactions
                     Logger.info(`Button interaction received: ${interaction.customId} from ${interaction.user.tag}`);
-                    
+
+                    // Handle score report approval buttons
+                    if (interaction.customId.startsWith('sr:')) {
+                        const scoreReportCommand = this.commandHandler.getCommand('score-report');
+                        if (scoreReportCommand && scoreReportCommand.handleButton) {
+                            await scoreReportCommand.handleButton(interaction);
+                        }
+                        return;
+                    }
+
+                    // Registration panel "Register" button → starts the register flow.
+                    if (interaction.customId === 'panel_register_start') {
+                        const panelRegister = this.commandHandler.getCommand('panel-register');
+                        if (panelRegister && panelRegister.handleButton) {
+                            await panelRegister.handleButton(interaction);
+                        }
+                        return;
+                    }
+
                     // Handle button interactions (for navigation) - only for register command buttons
                     if (interaction.customId.includes('registration') || 
                         interaction.customId.includes('main_account') ||
@@ -245,6 +278,23 @@ class BelugaLeagueBot {
         // Handle message events for Blitz sandbagging response, clanker responses, and AI chat
         this.client.on(Events.MessageCreate, async (message) => {
             try {
+                // Capture EVERY message (including bot messages) in tracked ticket
+                // channels AND week-thread channels into their live transcript
+                // mirrors. Runs before the bot-author early-return below so bot
+                // replies appear in transcripts too.
+                try {
+                    const ticketCmd = this.commandHandler.getCommand('openticket');
+                    if (ticketCmd && ticketCmd.captureTicketMessage) {
+                        await ticketCmd.captureTicketMessage(message);
+                    }
+                    const weekCmd = this.commandHandler.getCommand('week-thread');
+                    if (weekCmd && weekCmd.captureThreadMessage) {
+                        await weekCmd.captureThreadMessage(message);
+                    }
+                } catch (capErr) {
+                    // non-fatal
+                }
+
                 // Ignore messages from bots
                 if (message.author.bot) return;
 

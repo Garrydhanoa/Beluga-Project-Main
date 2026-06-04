@@ -5,6 +5,7 @@ const path = require('path');
 const { config } = require('../config/config');
 const Logger = require('../utils/logger');
 const { ROLES, TEAM_ROLES, NP_ROLES } = require('../constants/roles');
+const { TransactionDB } = require('../utils/database');
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const DEVELOPER_ID              = '769357454890631170';
@@ -258,6 +259,27 @@ async function executeMassDrop(approvalMessage, client, requestedBy) {
             } else {
                 await confirmChannel.send({ embeds: [confirmEmbed] });
             }
+
+            // Log the drop per-player to the shared transactions table.
+            try {
+                const divsArr = [...divisions];
+                const primaryDiv = divsArr[0] || null;
+                const teamId = teamName ? await TransactionDB.findTeamIdByName(primaryDiv, teamName) : null;
+                await TransactionDB.log({
+                    discordId: member.user.id,
+                    discordUsername: member.user.username,
+                    displayName: member.displayName,
+                    teamId,
+                    teamNameSnapshot: teamName || null,
+                    type: 'drop',
+                    details: {
+                        kind: 'massDrop',
+                        divisions: divsArr,
+                    },
+                    performedByDiscordId: requestedBy,
+                    source: 'bot:/mass-drop',
+                });
+            } catch { /* non-fatal */ }
 
             done++;
         } catch (err) {

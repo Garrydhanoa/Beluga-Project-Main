@@ -5,6 +5,7 @@ const path = require('path');
 const { config } = require('../config/config');
 const Logger = require('../utils/logger');
 const { ROLES, TEAM_ROLES, NP_ROLES } = require('../constants/roles');
+const { TransactionDB } = require('../utils/database');
 
 // Command-specific constants
 const TRANSACTION_REQUEST_CHANNEL_ID = '1178913188750823544';
@@ -363,6 +364,25 @@ module.exports = {
                     });
                 }
                 
+                {
+                    const teamId = await TransactionDB.findTeamIdByName(transaction.captainDivision, transaction.teamName);
+                    await TransactionDB.log({
+                        discordId: transaction.playerId,
+                        discordUsername: transaction.playerUsername,
+                        teamId,
+                        teamNameSnapshot: transaction.teamName,
+                        type: 'captain_assign',
+                        details: {
+                            captainDivision: transaction.captainDivision,
+                            playerDivision: transaction.playerDivision,
+                            requestedByUsername: transaction.requestedByUsername,
+                        },
+                        performedByDiscordId: transaction.requestedBy,
+                        performedByUsername: transaction.requestedByUsername,
+                        source: 'bot:/captaincontrol promote',
+                    });
+                }
+
                 Logger.success(`${transaction.playerUsername} (${transaction.playerDivision}) promoted to ${transaction.captainDivision} captain by ${transaction.requestedByUsername}`);
                 
             } else if (transaction.action === 'demote') {
@@ -398,6 +418,25 @@ module.exports = {
                     });
                 }
                 
+                {
+                    const teamId = await TransactionDB.findTeamIdByName(transaction.captainDivision, transaction.teamName);
+                    await TransactionDB.log({
+                        discordId: transaction.playerId,
+                        discordUsername: transaction.playerUsername,
+                        teamId,
+                        teamNameSnapshot: transaction.teamName,
+                        type: 'captain_remove',
+                        details: {
+                            captainDivision: transaction.captainDivision,
+                            playerDivision: transaction.playerDivision,
+                            requestedByUsername: transaction.requestedByUsername,
+                        },
+                        performedByDiscordId: transaction.requestedBy,
+                        performedByUsername: transaction.requestedByUsername,
+                        source: 'bot:/captaincontrol demote',
+                    });
+                }
+
                 Logger.success(`${transaction.playerUsername} (${transaction.playerDivision}) demoted from ${transaction.captainDivision} captain by ${transaction.requestedByUsername}`);
             }
             

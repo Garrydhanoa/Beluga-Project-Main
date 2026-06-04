@@ -1,0 +1,412 @@
+{
+  "division": "majors",
+  "sheet": "Template",
+  "range": "'Template'!A1:Q80",
+  "fetchedAt": "2026-05-07T04:29:43.009Z",
+  "values": [
+    [
+      "TEAMLOGO"
+    ],
+    [
+      "",
+      "GM - User",
+      "",
+      "",
+      "Captain - Username"
+    ],
+    [
+      "Player 1 (Name Unknown)"
+    ],
+    [
+      "Sal",
+      "",
+      "Stat"
+    ],
+    [
+      "Team For",
+      "Team Against",
+      "G/P",
+      "Score",
+      "Goals",
+      "Assists",
+      "Saves",
+      "Shots",
+      "Demos"
+    ],
+    [
+      1,
+      2
+    ],
+    [
+      2,
+      2
+    ],
+    [
+      3,
+      3
+    ],
+    [
+      4,
+      4
+    ],
+    [
+      5,
+      5
+    ],
+    [
+      6,
+      6
+    ],
+    [
+      7,
+      7
+    ],
+    [
+      8,
+      8
+    ],
+    [
+      9,
+      9
+    ],
+    [
+      10,
+      10
+    ],
+    [
+      11,
+      11
+    ],
+    [
+      12,
+      12
+    ],
+    [
+      13,
+      13
+    ],
+    [
+      14,
+      14
+    ],
+    [
+      15,
+      15
+    ],
+    [
+      16,
+      16
+    ],
+    [
+      "Average Game",
+      "",
+      "",
+      "=iferror(round(D24/$C24, 2),\"0\")",
+      "=iferror(round(E24/$C24, 2),\"0\")",
+      "=iferror(round(F24/$C24, 2),\"0\")",
+      "=iferror(round(G24/$C24, 2),\"0\")",
+      "=iferror(round(H24/$C24, 2),\"0\")",
+      "=iferror(round(I24/$C24, 2),\"0\")"
+    ],
+    [
+      "Average Series",
+      "",
+      "=iferror(ROUND(C24/COUNT(C6:C21),2),\"0\")",
+      "=iferror(ROUND(D24/COUNT(D6:D21),2),\"0\")",
+      "=iferror(ROUND(E24/COUNT(E6:E21),2),\"0\")",
+      "=iferror(ROUND(F24/COUNT(F6:F21),2),\"0\")",
+      "=iferror(ROUND(G24/COUNT(G6:G21),2),\"0\")",
+      "=iferror(ROUND(H24/COUNT(H6:H21),2),\"0\")",
+      "=iferror(ROUND(I24/COUNT(I6:I21),2),\"0\")"
+    ],
+    [
+      "Total",
+      "",
+      "=SUM(C6:C21)",
+      "=SUM(D6:D21)",
+      "=SUM(E6:E21)",
+      "=SUM(F6:F21)",
+      "=SUM(G6:G21)",
+      "=SUM(H6:H21)",
+      "=SUM(I6:I21)"
+    ],
+    [],
+    [
+      "Player 2 (Name Unknown)"
+    ],
+    [
+      "Sal",
+      "",
+      "Stat"
+    ],
+    [
+      "Team For",
+      "Team Against",
+      "G/P",
+      "Score",
+      "Goals",
+      "Assists",
+      "Saves",
+      "Shots",
+      "Demos"
+    ],
+    [
+      1,
+      1
+    ],
+    [
+      2,
+      2
+    ],
+    [
+      3,
+      3
+    ],
+    [
+      4,
+      4
+    ],
+    [
+      5,
+      5
+    ],
+    [
+      6,
+      6
+    ],
+    [
+      7,
+      7
+    ],
+    [
+      8,
+      8
+    ],
+    [
+      9,
+      9
+    ],
+    [
+      10,
+      10
+    ],
+    [
+      11,
+      11
+    ],
+    [
+      12,
+      12
+    ],
+    [
+      13,
+      13
+    ],
+    [
+      14,
+      14
+    ],
+    [
+      15,
+      15
+    ],
+    [
+      16,
+      16
+    ],
+    [
+      "Average Game",
+      "",
+      "",
+      "=iferror(round(D47/$C47, 2),\"0\")",
+      "=iferror(round(E47/$C47, 2),\"0\")",
+      "=iferror(round(F47/$C47, 2),\"0\")",
+      "=iferror(round(G47/$C47, 2),\"0\")",
+      "=iferror(round(H47/$C47, 2),\"0\")",
+      "=iferror(round(I47/$C47, 2),\"0\")"
+    ],
+    [
+      "Average Series",
+      "",
+      "=iferror(ROUND(C47/COUNT(C29:C44),2),\"0\")",
+      "=iferror(ROUND(D47/COUNT(D29:D44),2),\"0\")",
+      "=iferror(ROUND(E47/COUNT(E29:E44),2),\"0\")",
+      "=iferror(ROUND(F47/COUNT(F29:F44),2),\"0\")",
+      "=iferror(ROUND(G47/COUNT(G29:G44),2),\"0\")",
+      "=iferror(ROUND(H47/COUNT(H29:H44),2),\"0\")",
+      "=iferror(ROUND(I47/COUNT(I29:I44),2),\"0\")"
+    ],
+    [
+      "Total",
+      "",
+      "=SUM(C29:C44)",
+      "=SUM(D29:D44)",
+      "=SUM(E29:E44)",
+      "=SUM(F29:F44)",
+      "=SUM(G29:G44)",
+      "=SUM(H29:H44)",
+      "=SUM(I29:I44)"
+    ],
+    [],
+    [
+      "Player 3 (Name Unknown)"
+    ],
+    [
+      "Sal",
+      "",
+      "Stat"
+    ],
+    [
+      "Team For",
+      "Team Against",
+      "G/P",
+      "Score",
+      "Goals",
+      "Assists",
+      "Saves",
+      "Shots",
+      "Demos"
+    ],
+    [
+      1,
+      1
+    ],
+    [
+      2,
+      2
+    ],
+    [
+      3,
+      3
+    ],
+    [
+      4,
+      4
+    ],
+    [
+      5,
+      5
+    ],
+    [
+      6,
+      6
+    ],
+    [
+      7,
+      7
+    ],
+    [
+      8,
+      8
+    ],
+    [
+      9,
+      9
+    ],
+    [
+      10,
+      10
+    ],
+    [
+      11,
+      11
+    ],
+    [
+      12,
+      12
+    ],
+    [
+      13,
+      13
+    ],
+    [
+      14,
+      14
+    ],
+    [
+      15,
+      15
+    ],
+    [
+      16,
+      16
+    ],
+    [
+      "Average Game",
+      "",
+      "",
+      "=iferror(round(D70/$C70, 2),\"0\")",
+      "=iferror(round(E70/$C70, 2),\"0\")",
+      "=iferror(round(F70/$C70, 2),\"0\")",
+      "=iferror(round(G70/$C70, 2),\"0\")",
+      "=iferror(round(H70/$C70, 2),\"0\")",
+      "=iferror(round(I70/$C70, 2),\"0\")"
+    ],
+    [
+      "Average Series",
+      "",
+      "=iferror(ROUND(C70/COUNT(C52:C67),2),\"0\")",
+      "=iferror(ROUND(D70/COUNT(D52:D67),2),\"0\")",
+      "=iferror(ROUND(E70/COUNT(E52:E67),2),\"0\")",
+      "=iferror(ROUND(F70/COUNT(F52:F67),2),\"0\")",
+      "=iferror(ROUND(G70/COUNT(G52:G67),2),\"0\")",
+      "=iferror(ROUND(H70/COUNT(H52:H67),2),\"0\")",
+      "=iferror(ROUND(I70/COUNT(I52:I67),2),\"0\")"
+    ],
+    [
+      "Total",
+      "",
+      "=SUM(C52:C67)",
+      "=SUM(D52:D67)",
+      "=SUM(E52:E67)",
+      "=SUM(F52:F67)",
+      "=SUM(G52:G67)",
+      "=SUM(H52:H67)",
+      "=SUM(I52:I67)"
+    ],
+    [],
+    [
+      "Player 4 (Name Unknown)"
+    ],
+    [
+      "Sal",
+      "",
+      "Stat"
+    ],
+    [
+      "Team For",
+      "Team Against",
+      "G/P",
+      "Score",
+      "Goals",
+      "Assists",
+      "Saves",
+      "Shots",
+      "Demos"
+    ],
+    [
+      1,
+      1
+    ],
+    [
+      2,
+      2
+    ],
+    [
+      3,
+      3
+    ],
+    [
+      4,
+      4
+    ],
+    [
+      5,
+      5
+    ],
+    [
+      6,
+      6
+    ]
+  ]
+}

@@ -4,98 +4,146 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useSession } from 'next-auth/react'
 
-const QUICK_TILES = [
-  { label: 'Notification Bar', href: '/admin/dashboard/notification', desc: 'Edit the homepage banner', icon: '🔔' },
-  { label: 'Season Config', href: '/admin/dashboard/season', desc: 'Current season number, status, year', icon: '📅' },
-  { label: 'Champions', href: '/admin/dashboard/champions', desc: 'Hall of Fame editor', icon: '🏆' },
-  { label: 'Match Results', href: '/admin/dashboard/matches', desc: 'Enter scores after match nights', icon: '⚔️' },
-  { label: 'Power Rankings', href: '/admin/dashboard/rankings', desc: 'Weekly team rankings', icon: '📊' },
-  { label: 'Rosters', href: '/admin/dashboard/rosters', desc: 'Team lineups and roles', icon: '👥' },
-  { label: 'Schedule', href: '/admin/dashboard/schedule', desc: 'Upcoming matches', icon: '⏰' },
-  { label: 'Players', href: '/admin/dashboard/players', desc: 'Player directory', icon: '🎮' },
-  { label: 'Reports', href: '/admin/dashboard/reports', desc: 'Moderation queue', icon: '⚠️' },
+const QUICK_LINKS = [
+  { label: 'Seasons', href: '/admin/dashboard/seasons', desc: 'Lifecycle, champions, teams' },
+  { label: 'Teams & Franchises', href: '/admin/dashboard/teams', desc: 'Active teams + franchise registry' },
+  { label: 'Schedule', href: '/admin/dashboard/schedule', desc: 'Generate + edit matchups' },
+  { label: 'Match Results', href: '/admin/dashboard/matches', desc: 'Series + replay status' },
+  { label: 'Players', href: '/admin/dashboard/players', desc: 'Everyone who has ever played' },
+  { label: 'Stats Editor', href: '/admin/dashboard/stats', desc: 'Manual standings + player stats' },
 ]
+
+function Tile({ value, label, sub, href }) {
+  const content = (
+    <div className="p-5 rounded-2xl bg-white/[0.03] border border-white/10 hover:border-blue-400/40 transition group">
+      <div className="text-3xl font-black text-white">{value}</div>
+      <div className="text-xs font-bold tracking-wider uppercase text-blue-300/70 mt-1">{label}</div>
+      {sub && <div className="text-[11px] text-white/40 mt-1">{sub}</div>}
+    </div>
+  )
+  return href ? <Link href={href} className="block">{content}</Link> : content
+}
+
+function fmtTime(iso) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+}
+
+function txLabel(type) {
+  const map = {
+    sign: 'Signed', drop: 'Dropped', release: 'Released',
+    trade_in: 'Traded in', trade_out: 'Traded out',
+    ir_place: 'Placed on IR', ir_return: 'Returned from IR',
+    suspend: 'Suspended', reinstate: 'Reinstated',
+    rfa: 'RFA', role_change: 'Role change', rename: 'Renamed',
+    gm_assign: 'GM assigned', gm_remove: 'GM removed',
+    captain_assign: 'Captain assigned', captain_remove: 'Captain removed',
+    esub: 'Emergency sub', other: 'Other',
+  }
+  return map[type] || type
+}
 
 export default function DashboardOverview() {
   const { data: session } = useSession()
-  const [stats, setStats] = useState(null)
+  const [data, setData] = useState(null)
+  const [error, setError] = useState(null)
 
   useEffect(() => {
-    fetch('/api/admin/data')
+    fetch('/api/admin/overview', { cache: 'no-store' })
       .then((r) => r.json())
-      .then((data) => {
-        setStats({
-          champions: data.champions?.length || 0,
-          matches: data.matches?.length || 0,
-          openReports: data.reports?.filter((r) => r.status === 'open').length || 0,
-          scheduled: data.matches?.filter((m) => m.status === 'scheduled').length || 0,
-          players: data.players?.length || 0,
-          season: data.config?.season?.number || 9,
-        })
-      })
-      .catch(() => {})
+      .then((d) => setData(d))
+      .catch((e) => setError(e.message || 'Failed to load'))
   }, [])
+
+  if (error) return <div className="text-red-300">Error: {error}</div>
+  if (!data) return <div className="text-blue-200/60">Loading…</div>
+
+  const { season, counts, recentTransactions, recentMatches } = data
 
   return (
     <div className="max-w-6xl">
-      <div className="mb-10">
-        <div className="text-xs font-bold tracking-[0.25em] uppercase text-blue-300/70 mb-2">
-          Dashboard
-        </div>
-        <h1 className="text-4xl font-black text-white mb-2">
-          Welcome back, {session?.discordUsername || 'Director'}
+      <div className="mb-8">
+        <div className="text-xs font-bold tracking-[0.25em] uppercase text-blue-300/70 mb-2">Dashboard</div>
+        <h1 className="text-3xl font-black text-white mb-2">
+          Welcome back{session?.discordUsername ? `, ${session.discordUsername}` : ''}
         </h1>
-        <p className="text-blue-100/60">Manage your league from one place.</p>
+        <p className="text-blue-100/60 text-sm">
+          {season
+            ? `Active: Season ${season.seasonNumber}${season.name ? ` · ${season.name}` : ''}`
+            : 'No active season — start one in the Seasons tab.'}
+        </p>
       </div>
 
-      {/* Stat tiles */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-12">
-        {stats && [
-          { label: 'Current Season', value: `S${stats.season}` },
-          { label: 'Champions', value: stats.champions },
-          { label: 'Matches', value: stats.matches },
-          { label: 'Scheduled', value: stats.scheduled },
-          { label: 'Players', value: stats.players },
-          { label: 'Open Reports', value: stats.openReports, urgent: stats.openReports > 0 },
-        ].map((s) => (
-          <div
-            key={s.label}
-            className={`p-4 rounded-xl border backdrop-blur-sm ${
-              s.urgent
-                ? 'bg-blue-500/15 border-blue-400/60 shadow-[0_0_20px_rgba(59,130,246,0.3)]'
-                : 'bg-white/[0.03] border-white/10'
-            }`}
-          >
-            <div className="text-2xl font-black text-white">{s.value}</div>
-            <div className="text-[10px] tracking-wider uppercase text-blue-300/60 mt-1">
-              {s.label}
-            </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
+        <Tile value={season?.seasonNumber ?? '—'} label="Active Season" sub={`${counts.seasons} total`} href="/admin/dashboard/seasons" />
+        <Tile value={counts.activeTeams} label="Active Teams" sub={`${counts.franchises} franchises`} href="/admin/dashboard/teams" />
+        <Tile value={counts.roster} label="Roster Size" sub="distinct discord IDs" href="/admin/dashboard/players" />
+        <Tile value={counts.pendingMatches} label="Pending Matches" sub={`${counts.matches} total`} href="/admin/dashboard/matches" />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        <section className="p-5 rounded-2xl bg-white/[0.02] border border-white/10">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-black text-white tracking-wide">Recent Transactions</h2>
+            <Link href="/admin/dashboard/transactions" className="text-[11px] text-blue-300 hover:text-blue-200">View all →</Link>
           </div>
-        ))}
+          {recentTransactions.length === 0 ? (
+            <div className="text-xs text-white/40 italic py-4 text-center">No transactions yet. The bot will populate these as roster moves happen.</div>
+          ) : (
+            <ul className="space-y-1.5">
+              {recentTransactions.map((tx) => (
+                <li key={tx.id} className="flex items-center gap-3 text-xs px-2 py-1.5 rounded hover:bg-white/[0.03]">
+                  <span className="text-blue-300/80 font-bold w-24 truncate">{txLabel(tx.type)}</span>
+                  <span className="text-white truncate flex-1">{tx.displayName}</span>
+                  {tx.teamName && <span className="text-white/50 truncate">→ {tx.teamName}</span>}
+                  <span className="text-white/30 text-[10px] whitespace-nowrap">{fmtTime(tx.performedAt)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="p-5 rounded-2xl bg-white/[0.02] border border-white/10">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-black text-white tracking-wide">Recent Matches</h2>
+            <Link href="/admin/dashboard/matches" className="text-[11px] text-blue-300 hover:text-blue-200">View all →</Link>
+          </div>
+          {recentMatches.length === 0 ? (
+            <div className="text-xs text-white/40 italic py-4 text-center">No matches yet this season.</div>
+          ) : (
+            <ul className="space-y-1.5">
+              {recentMatches.map((m) => (
+                <li key={m.id} className="flex items-center gap-3 text-xs px-2 py-1.5 rounded hover:bg-white/[0.03]">
+                  <span className="text-blue-200/70 font-bold w-12">{m.division}</span>
+                  <span className="text-white/50 w-12">W{m.week ?? '—'}</span>
+                  <span className="text-white truncate flex-1">
+                    {m.home || '?'} <span className="text-white/40 mx-1">{m.homeScore}-{m.awayScore}</span> {m.away || '?'}
+                  </span>
+                  <span className={`text-[10px] uppercase font-bold tracking-wider ${
+                    m.status === 'completed' || m.status === 'final' ? 'text-green-300' :
+                    m.status === 'rejected' ? 'text-red-300' : 'text-yellow-300'
+                  }`}>{m.status}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       </div>
 
-      {/* Feature tiles */}
-      <div className="mb-4 text-xs font-bold tracking-[0.25em] uppercase text-blue-300/70">
-        Quick Actions
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {QUICK_TILES.map((tile) => (
-          <Link
-            key={tile.href}
-            href={tile.href}
-            className="group relative p-5 rounded-xl bg-white/[0.03] hover:bg-blue-500/10 border border-white/10 hover:border-blue-400/50 transition-all hover:-translate-y-0.5 hover:shadow-[0_8px_30px_rgba(59,130,246,0.2)]"
-          >
-            <div className="text-3xl mb-3">{tile.icon}</div>
-            <div className="text-base font-bold text-white mb-0.5 group-hover:text-blue-200 transition-colors">
-              {tile.label}
-            </div>
-            <div className="text-xs text-blue-100/60">{tile.desc}</div>
-            <div className="absolute top-5 right-5 text-blue-400/50 group-hover:text-blue-300 group-hover:translate-x-1 transition-all">
-              →
-            </div>
-          </Link>
-        ))}
-      </div>
+      <section>
+        <h2 className="text-sm font-black text-white tracking-wide mb-3">Quick Links</h2>
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+          {QUICK_LINKS.map((link) => (
+            <Link key={link.href} href={link.href}
+              className="p-4 rounded-xl bg-white/[0.02] hover:bg-white/[0.05] border border-white/10 hover:border-blue-400/30 transition group"
+            >
+              <div className="text-sm font-bold text-white">{link.label}</div>
+              <div className="text-[11px] text-blue-100/50 mt-0.5">{link.desc}</div>
+            </Link>
+          ))}
+        </div>
+      </section>
     </div>
   )
 }
