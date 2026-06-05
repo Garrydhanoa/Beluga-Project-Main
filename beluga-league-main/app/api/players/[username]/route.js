@@ -100,23 +100,6 @@ export async function GET(_request, { params }) {
     ORDER BY s.season_number DESC NULLS LAST
   `, [discordId])
 
-  // Step 5: Match history from replays.
-  const matchesRes = await query(`
-    SELECT mrp.stats, mr.home_goals, mr.away_goals,
-      ms.home_score, ms.away_score, ms.week, ms.is_playoff,
-      ms.division, ms.created_at,
-      ht.name AS home, at.name AS away,
-      ms.home_team_id, ms.away_team_id
-    FROM match_replay_players mrp
-    JOIN match_replays mr ON mr.id = mrp.replay_id
-    JOIN match_series ms ON ms.id = mr.series_id
-    LEFT JOIN teams ht ON ht.id = ms.home_team_id
-    LEFT JOIN teams at ON at.id = ms.away_team_id
-    WHERE mrp.platform_id = $1
-    ORDER BY ms.created_at DESC
-    LIMIT 40
-  `, [discordId])
-
   // Transaction history for this player (public-safe fields only).
   const txRes = await query(`
     SELECT tx.id, tx.type, tx.team_name_snapshot, tx.paired_team_name_snapshot,
@@ -190,16 +173,6 @@ export async function GET(_request, { params }) {
       shots: Number(r.shots || 0),
       score: Number(r.score || 0),
     })),
-    matches: matchesRes.rows.map((r) => ({
-      week: r.week,
-      isPlayoff: r.is_playoff,
-      division: r.division,
-      home: r.home,
-      away: r.away,
-      homeScore: r.home_score,
-      awayScore: r.away_score,
-      stats: r.stats,
-      createdAt: r.created_at,
-    })),
+    matches: [],
   })
 }

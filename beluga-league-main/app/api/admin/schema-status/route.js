@@ -8,7 +8,6 @@ export const dynamic = 'force-dynamic'
 const EXPECTED_TABLES = [
   'seasons', 'teams', 'team_roster_members', 'roster_syncs',
   'schedule_matches', 'playoff_brackets', 'playoff_rounds', 'playoff_matchups',
-  'match_series', 'match_series_approvals', 'match_replays', 'match_replay_players',
   'team_records', 'player_records',
   'team_franchises', 'season_config',
   'season_champions', 'transactions',

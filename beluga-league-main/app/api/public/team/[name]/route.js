@@ -58,12 +58,10 @@ export async function GET(_request, { params }) {
       query(`SELECT * FROM team_records WHERE team_id = $1 AND season_id = $2 LIMIT 1`, [t.id, season.id]),
       query(`
         SELECT sm.id, sm.week, sm.home_team_id, sm.away_team_id,
-          ht.name AS home, at.name AS away,
-          ms.home_score, ms.away_score, ms.status AS series_status
+          ht.name AS home, at.name AS away
         FROM schedule_matches sm
         LEFT JOIN teams ht ON ht.id = sm.home_team_id
         LEFT JOIN teams at ON at.id = sm.away_team_id
-        LEFT JOIN match_series ms ON ms.schedule_match_id = sm.id
         WHERE sm.season_id = $1 AND (sm.home_team_id = $2 OR sm.away_team_id = $2)
           AND sm.is_published = TRUE
         ORDER BY sm.week, sm.id
@@ -111,9 +109,9 @@ export async function GET(_request, { params }) {
         home: r.home,
         away: r.away,
         isHome: r.home_team_id === t.id,
-        homeScore: r.home_score,
-        awayScore: r.away_score,
-        status: r.series_status,
+        homeScore: null,
+        awayScore: null,
+        status: null,
       })),
       playerStats: statsRes.rows.map((r) => ({
         playerName: r.player_name,

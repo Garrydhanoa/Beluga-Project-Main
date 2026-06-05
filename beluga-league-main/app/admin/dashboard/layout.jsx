@@ -10,7 +10,6 @@ const NAV = [
   { label: 'Seasons', href: '/admin/dashboard/seasons', icon: 'calendar' },
   { label: 'Teams & Franchises', href: '/admin/dashboard/teams', icon: 'flag' },
   { label: 'Schedule', href: '/admin/dashboard/schedule', icon: 'clock' },
-  { label: 'Match Results', href: '/admin/dashboard/matches', icon: 'swords' },
   { label: 'Players', href: '/admin/dashboard/players', icon: 'user' },
   { label: 'Transactions', href: '/admin/dashboard/transactions', icon: 'arrows' },
   { label: 'Stats Editor', href: '/admin/dashboard/stats', icon: 'chart' },

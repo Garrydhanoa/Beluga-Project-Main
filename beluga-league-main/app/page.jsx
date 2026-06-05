@@ -186,7 +186,7 @@ export default function Home() {
             </h1>
 
             <p className="text-lg sm:text-xl md:text-2xl text-blue-100/80 max-w-2xl mx-auto mb-10 leading-relaxed">
-              The premier Rocket League discord community for competitive play, camaraderie, and the game we love.
+              The home of the Beluga Rocket League. Here on our page we commit, provide, improve and support at a high and professional level. We appreciate your consideration in our competitive journey.
             </p>
 
             <div className="relative z-20 flex flex-col sm:flex-row items-center justify-center gap-4">
@@ -271,18 +271,18 @@ export default function Home() {
                   <path d="M9.333 8C5.467 8 2.667 11.067 2.667 14.933c0 3.867 2.8 6.667 6.666 6.667.667 0 1.2-.133 1.734-.267-.8 2.8-3.067 4.934-6 5.334l.666 1.866c4.534-.666 8.267-4.533 8.267-9.6V14.933C13.867 11.067 13.2 8 9.333 8zm13.334 0C18.8 8 16 11.067 16 14.933c0 3.867 2.8 6.667 6.667 6.667.666 0 1.2-.133 1.733-.267-.8 2.8-3.067 4.934-6 5.334l.667 1.866C23.6 27.867 27.333 24 27.333 18.933V14.933C27.2 11.067 26.533 8 22.667 8z" />
                 </svg>
                 <p className="relative text-2xl md:text-[1.75rem] font-semibold text-white leading-[1.3] tracking-tight">
-                  We didn&apos;t build Beluga to be another weekend tournament. We built it to be the place you come back to{' '}
+                  We built Beluga because every player deserves the opportunity to compete, be recognized, and feel like they&apos;re playing at{' '}
                   <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-200 to-blue-400">
-                    every season
+                    the highest level
                   </span>
-                  {' '}— the league that feels like home.
+                  , regardless of rank.
                 </p>
                 <div className="relative mt-6 flex items-center gap-3">
                   <div className="flex-shrink-0 w-11 h-11 rounded-full bg-gradient-to-br from-blue-400 to-blue-700 flex items-center justify-center text-white font-bold text-sm shadow-[0_0_20px_rgba(59,130,246,0.4)]">
-                    LD
+                    TR
                   </div>
                   <div>
-                    <div className="text-sm font-bold text-blue-100">League Director</div>
+                    <div className="text-sm font-bold text-blue-100">Tranq</div>
                     <div className="text-[10px] text-blue-300/70 tracking-[0.2em] uppercase">Beluga League</div>
                   </div>
                 </div>
@@ -367,18 +367,20 @@ export default function Home() {
                 Why Beluga
               </div>
               <h2 className="text-4xl md:text-5xl font-black mb-6 leading-[1.05]">
-                A league built{' '}
+                A League for Every Rank,{' '}
                 <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-200 to-blue-400">
-                  by players
+                  Every Player
                 </span>
-                , for players.
               </h2>
               <div className="space-y-4 text-lg text-blue-100/80 leading-relaxed">
                 <p>
-                  Beluga isn&apos;t a bracket thrown together on a weekend. We run full seasons with drafted rosters, casted matches, custom stats, and a community that actually sticks around between games.
+                  Beluga isn&apos;t just a regular discord league. We run full seasons with competitive rosters, casted matches, custom stats, and a community that&apos;s here for one another.
                 </p>
                 <p>
-                  Whether you&apos;re grinding for Grand Champion or just looking for your people, you&apos;ll find a home here.
+                  From first-time competitors to seasoned veterans, this is where players come to prove themselves.
+                </p>
+                <p>
+                  We strive for respect amongst all our members, and something we take very seriously. Everyone should feel welcome and excited to be a part of the community.
                 </p>
               </div>
               <div className="mt-8 flex flex-wrap gap-3">

@@ -117,9 +117,9 @@ export async function GET() {
     query(`SELECT COUNT(DISTINCT discord_id)::int AS n FROM team_roster_members`),
   ])
 
-  // Active players = EXACT count of everyone with roster, transaction, or match
-  // history, OR present in the salary sheet. Distinct Discord IDs across all
-  // those sources (the salary sheet is unioned in JS since it lives in Sheets).
+  // Active players = EXACT count of everyone with roster or transaction history,
+  // OR present in the salary sheet. Distinct Discord IDs across all those sources
+  // (the salary sheet is unioned in JS since it lives in Sheets).
   const activeIds = new Set()
   try {
     const r = await query(`
@@ -127,7 +127,6 @@ export async function GET() {
         SELECT discord_id AS id FROM team_roster_members
         UNION SELECT discord_id FROM transactions
         UNION SELECT discord_id FROM manual_salaries
-        UNION SELECT platform_id FROM match_replay_players WHERE platform_id IS NOT NULL
       ) u
       WHERE id IS NOT NULL
     `)

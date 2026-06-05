@@ -8,7 +8,6 @@ const QUICK_LINKS = [
   { label: 'Seasons', href: '/admin/dashboard/seasons', desc: 'Lifecycle, champions, teams' },
   { label: 'Teams & Franchises', href: '/admin/dashboard/teams', desc: 'Active teams + franchise registry' },
   { label: 'Schedule', href: '/admin/dashboard/schedule', desc: 'Generate + edit matchups' },
-  { label: 'Match Results', href: '/admin/dashboard/matches', desc: 'Series + replay status' },
   { label: 'Players', href: '/admin/dashboard/players', desc: 'Everyone who has ever played' },
   { label: 'Stats Editor', href: '/admin/dashboard/stats', desc: 'Manual standings + player stats' },
 ]
@@ -59,7 +58,7 @@ export default function DashboardOverview() {
   if (error) return <div className="text-red-300">Error: {error}</div>
   if (!data) return <div className="text-blue-200/60">Loading…</div>
 
-  const { season, counts, recentTransactions, recentMatches } = data
+  const { season, counts, recentTransactions } = data
 
   return (
     <div className="max-w-6xl">
@@ -79,10 +78,10 @@ export default function DashboardOverview() {
         <Tile value={season?.seasonNumber ?? '—'} label="Active Season" sub={`${counts.seasons} total`} href="/admin/dashboard/seasons" />
         <Tile value={counts.activeTeams} label="Active Teams" sub={`${counts.franchises} franchises`} href="/admin/dashboard/teams" />
         <Tile value={counts.roster} label="Roster Size" sub="distinct discord IDs" href="/admin/dashboard/players" />
-        <Tile value={counts.pendingMatches} label="Pending Matches" sub={`${counts.matches} total`} href="/admin/dashboard/matches" />
+        <Tile value={counts.transactions} label="Transactions" sub="all-time" href="/admin/dashboard/transactions" />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+      <div className="grid grid-cols-1 gap-6 mb-8">
         <section className="p-5 rounded-2xl bg-white/[0.02] border border-white/10">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-black text-white tracking-wide">Recent Transactions</h2>
@@ -98,32 +97,6 @@ export default function DashboardOverview() {
                   <span className="text-white truncate flex-1">{tx.displayName}</span>
                   {tx.teamName && <span className="text-white/50 truncate">→ {tx.teamName}</span>}
                   <span className="text-white/30 text-[10px] whitespace-nowrap">{fmtTime(tx.performedAt)}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        <section className="p-5 rounded-2xl bg-white/[0.02] border border-white/10">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-black text-white tracking-wide">Recent Matches</h2>
-            <Link href="/admin/dashboard/matches" className="text-[11px] text-blue-300 hover:text-blue-200">View all →</Link>
-          </div>
-          {recentMatches.length === 0 ? (
-            <div className="text-xs text-white/40 italic py-4 text-center">No matches yet this season.</div>
-          ) : (
-            <ul className="space-y-1.5">
-              {recentMatches.map((m) => (
-                <li key={m.id} className="flex items-center gap-3 text-xs px-2 py-1.5 rounded hover:bg-white/[0.03]">
-                  <span className="text-blue-200/70 font-bold w-12">{m.division}</span>
-                  <span className="text-white/50 w-12">W{m.week ?? '—'}</span>
-                  <span className="text-white truncate flex-1">
-                    {m.home || '?'} <span className="text-white/40 mx-1">{m.homeScore}-{m.awayScore}</span> {m.away || '?'}
-                  </span>
-                  <span className={`text-[10px] uppercase font-bold tracking-wider ${
-                    m.status === 'completed' || m.status === 'final' ? 'text-green-300' :
-                    m.status === 'rejected' ? 'text-red-300' : 'text-yellow-300'
-                  }`}>{m.status}</span>
                 </li>
               ))}
             </ul>

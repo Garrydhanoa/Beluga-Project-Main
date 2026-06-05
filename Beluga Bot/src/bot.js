@@ -212,15 +212,6 @@ class BelugaLeagueBot {
                     // Add debug logging for button interactions
                     Logger.info(`Button interaction received: ${interaction.customId} from ${interaction.user.tag}`);
 
-                    // Handle score report approval buttons
-                    if (interaction.customId.startsWith('sr:')) {
-                        const scoreReportCommand = this.commandHandler.getCommand('score-report');
-                        if (scoreReportCommand && scoreReportCommand.handleButton) {
-                            await scoreReportCommand.handleButton(interaction);
-                        }
-                        return;
-                    }
-
                     // Registration panel "Register" button → starts the register flow.
                     if (interaction.customId === 'panel_register_start') {
                         const panelRegister = this.commandHandler.getCommand('panel-register');

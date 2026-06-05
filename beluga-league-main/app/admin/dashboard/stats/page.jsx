@@ -26,7 +26,7 @@ export default function StatsEditorPage() {
         <div className="text-xs font-bold tracking-[0.25em] uppercase text-blue-300/70 mb-2">League</div>
         <h1 className="text-3xl font-black text-white mb-2">Stats Editor</h1>
         <p className="text-blue-100/60 text-sm max-w-3xl">
-          Manually edit team standings and per-player stats. Any save flips <code className="text-blue-300">manual_override</code> on that row so the bot's score-report processing won't overwrite it. Clear the override (toggle on a row) to let the bot resume populating.
+          Manually edit team standings and per-player stats. Any save flips <code className="text-blue-300">manual_override</code> on that row so automated stat processing won't overwrite it. Clear the override (toggle on a row) to let automated population resume.
         </p>
       </div>
 
@@ -124,7 +124,7 @@ function TeamRecordsView({ seasonId, division }) {
 
       {data.records.length === 0 ? (
         <div className="p-6 rounded-xl border border-dashed border-white/10 text-center text-white/50 text-sm">
-          No team records yet. Add one or wait for the bot to populate via score reports.
+          No team records yet. Add one manually here.
         </div>
       ) : (
         <div className="rounded-2xl bg-white/[0.02] border border-white/10 overflow-hidden">
@@ -346,7 +346,7 @@ function PlayerRecordsView({ seasonId, division }) {
 
       {filtered.length === 0 ? (
         <div className="p-6 rounded-xl border border-dashed border-white/10 text-center text-white/50 text-sm">
-          No player records yet. Bot populates these from score-report replays.
+          No player records yet. Add one manually here.
         </div>
       ) : (
         <div className="rounded-2xl bg-white/[0.02] border border-white/10 overflow-hidden">
