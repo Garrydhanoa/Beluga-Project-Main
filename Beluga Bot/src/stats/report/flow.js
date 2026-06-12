@@ -382,7 +382,9 @@ async function handleGroupModal(interaction, parts = []) {
         groupUrl, parsed,
         homeMatches: { slots: homeSlots, submitted: false, confirmed: false, page: 0 },
         awayMatches: { slots: awaySlots, submitted: false, confirmed: false, page: 0 },
-        state: assign.confident ? 'matching' : 'assign_sides',
+        // The reporter always confirms which cluster is which team — a wrong
+        // auto-guess here used to flip every score and logo downstream.
+        state: 'assign_sides',
         startedByDiscordId: interaction.user.id,
         messageIds: { homeName: ctx.homeTeam.name, awayName: ctx.awayTeam.name, homeIdx: assign.homeIdx },
     });
@@ -390,38 +392,12 @@ async function handleGroupModal(interaction, parts = []) {
     // Remove the "Report Series" panel while this report is in progress.
     await panel.hidePanel(interaction.client, threadId);
 
-    if (!assign.confident) {
-        const msg = await channel.send(matching.buildAssignMessage({
-            sessionId: session.id, parsed, homeName: ctx.homeTeam.name, awayName: ctx.awayTeam.name,
-        }));
-        await sessions.updateSession(session.id, { messageIds: { ...bag(session), assignMsgId: msg.id } });
-        return safeReply(interaction, '✅ Report started. First, confirm which group is which team in the panel above.');
-    }
-
-    await postMatchingPanels(interaction.client, session, { isSC, starterSide: authed });
-    return safeReply(interaction, '✅ Report started — match your players in the panel posted in the thread.');
-}
-
-/**
- * Post the matching panel(s). Salary crew sees both; a captain sees their side
- * first (the other is posted once they submit).
- */
-async function postMatchingPanels(client, session, { isSC, starterSide }) {
-    const channel = await client.channels.fetch(session.channel_id).catch(() => null);
-    if (!channel) return;
-    const newBag = { ...bag(session) };
-
-    if (isSC) {
-        const homeMsg = await channel.send(await renderSide(session, 'home'));
-        const awayMsg = await channel.send(await renderSide(session, 'away'));
-        newBag.homeMsgId = homeMsg.id;
-        newBag.awayMsgId = awayMsg.id;
-    } else {
-        const side = starterSide || 'home';
-        const msg = await channel.send(await renderSide(session, side));
-        newBag[side === 'home' ? 'homeMsgId' : 'awayMsgId'] = msg.id;
-    }
-    await sessions.updateSession(session.id, { messageIds: newBag });
+    const msg = await channel.send(matching.buildAssignMessage({
+        sessionId: session.id, parsed, homeName: ctx.homeTeam.name, awayName: ctx.awayTeam.name,
+        suggestedIdx: assign.homeIdx, confident: assign.confident,
+    }));
+    await sessions.updateSession(session.id, { messageIds: { ...bag(session), assignMsgId: msg.id } });
+    return safeReply(interaction, '✅ Report started. First, confirm which group is which team in the panel above.');
 }
 
 // ---- guards -----------------------------------------------------------------
@@ -482,9 +458,13 @@ async function handleAssign(interaction, parts) {
     });
     const updated = await sessions.getSession(session.id);
 
-    // Replace the assign message with the home matching panel; post away for SC.
-    await interaction.editReply(await renderSide(updated, 'home'));
-    const newBag = { ...bag(updated), homeMsgId: bag(updated).assignMsgId };
+    // Replace the assign message with the picker's own matching panel (salary
+    // crew sees home here and away below; the other captain's panel appears
+    // after this side submits).
+    const ownSide = auth.isSC ? 'home' : (auth.authed || 'home');
+    await interaction.editReply(await renderSide(updated, ownSide));
+    const newBag = { ...bag(updated) };
+    newBag[ownSide === 'home' ? 'homeMsgId' : 'awayMsgId'] = bag(updated).assignMsgId;
     if (auth.isSC) {
         const awayMsg = await interaction.channel.send(await renderSide(updated, 'away'));
         newBag.awayMsgId = awayMsg.id;
@@ -724,12 +704,16 @@ function buildCommitPayload(session, homeRosterIds, awayRosterIds) {
     const homeMap = new Map(home.slots.filter((s) => !s.skipped && s.discordId).map((s) => [s.pkey, s]));
     const awayMap = new Map(away.slots.filter((s) => !s.skipped && s.discordId).map((s) => [s.pkey, s]));
 
+    // Orientation comes from the session's confirmed homeIdx — the parser keeps
+    // every game in cluster order, so this single flag covers the whole series.
+    // (Re-detecting per game from matched slots flips games where all of a
+    // team's players were skipped/unmatched.)
+    const homeIsT0 = (bag(session).homeIdx ?? 0) === 0;
+
     const games = [];
     for (let i = 0; i < parsed.games.length; i += 1) {
         const g = parsed.games[i];
         const allPlayers = [...g.team0Players, ...g.team1Players];
-        // Which parser side is home in this game?
-        const homeIsT0 = g.team0Players.some((p) => homeMap.has(p.pkey));
         const homeGoals = homeIsT0 ? g.team0Goals : g.team1Goals;
         const awayGoals = homeIsT0 ? g.team1Goals : g.team0Goals;
         const players = [];
@@ -934,6 +918,7 @@ async function postConfirmation(client, session, result) {
 }
 
 module.exports = {
+    buildCommitPayload, // exported for the orientation test harness (tools/)
     startReport,
     startStaffReport,
     handleGroupModal,

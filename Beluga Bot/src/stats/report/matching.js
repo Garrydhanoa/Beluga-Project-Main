@@ -142,24 +142,29 @@ function buildSideMessage(o) {
     return { embeds: [embed], components };
 }
 
-/** Side-assignment message shown only when we can't auto-tell which cluster is which team. */
-function buildAssignMessage({ sessionId, parsed, homeName, awayName }) {
+/** Side-assignment message — always shown so the reporter confirms which cluster is which team. */
+function buildAssignMessage({ sessionId, parsed, homeName, awayName, suggestedIdx = null, confident = false }) {
     const group = (players) => players.map((p) => p.names?.[0] || p.platformId).slice(0, 5).join(', ');
+    const hasGuess = suggestedIdx === 0 || suggestedIdx === 1;
+    const guessLabel = hasGuess ? (suggestedIdx === 0 ? 'A' : 'B') : null;
+    const description = hasGuess
+        ? `Our best guess: **Group ${guessLabel}** is **${homeName}**${confident ? '' : ' (low confidence)'}. Confirm it below — or pick the other if we got it backwards.`
+        : `We couldn't auto-detect sides. Pick which replay group is **${homeName}**.`;
     const embed = new EmbedBuilder()
         .setTitle('🔀 Which group is which team?')
         .setColor(0x9B59B6)
-        .setDescription(`We couldn't auto-detect sides. Pick which replay group is **${homeName}**.`)
+        .setDescription(description)
         .addFields(
-            { name: 'Group A', value: truncate(group(parsed.teams[0].players), 1000) || '—' },
-            { name: 'Group B', value: truncate(group(parsed.teams[1].players), 1000) || '—' },
+            { name: suggestedIdx === 0 ? `Group A — looks like ${truncate(homeName, 200)}` : 'Group A', value: truncate(group(parsed.teams[0].players), 1000) || '—', inline: false },
+            { name: suggestedIdx === 1 ? `Group B — looks like ${truncate(homeName, 200)}` : 'Group B', value: truncate(group(parsed.teams[1].players), 1000) || '—', inline: false },
         );
     const row = new ActionRowBuilder().addComponents(
         new StringSelectMenuBuilder()
             .setCustomId(ids.build('assign', sessionId))
             .setPlaceholder(`Which group is ${homeName}?`)
             .addOptions(
-                new StringSelectMenuOptionBuilder().setLabel(truncate(`Group A is ${homeName}`, 100)).setValue('0'),
-                new StringSelectMenuOptionBuilder().setLabel(truncate(`Group B is ${homeName}`, 100)).setValue('1'),
+                new StringSelectMenuOptionBuilder().setLabel(truncate(`Group A is ${homeName}`, 100)).setValue('0').setDefault(suggestedIdx === 0),
+                new StringSelectMenuOptionBuilder().setLabel(truncate(`Group B is ${homeName}`, 100)).setValue('1').setDefault(suggestedIdx === 1),
             )
     );
     return { embeds: [embed], components: [row] };
