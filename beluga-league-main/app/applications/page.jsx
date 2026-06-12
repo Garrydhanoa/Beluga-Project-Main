@@ -16,8 +16,13 @@ export default function ApplicationsPage() {
   useEffect(() => {
     fetch('/api/applications', { cache: 'no-store' })
       .then((r) => r.json())
-      .then(setData)
-      .catch(() => {})
+      .then((d) => {
+        // Error responses have no forms array — still render the sign-in gate
+        // instead of sitting on "Loading…" forever.
+        if (!d || !Array.isArray(d.forms)) setData({ forms: [], signedIn: false, username: null, loadError: true })
+        else setData(d)
+      })
+      .catch(() => setData({ forms: [], signedIn: false, username: null, loadError: true }))
   }, [])
 
   return (
@@ -45,7 +50,9 @@ export default function ApplicationsPage() {
         <div className="text-center text-blue-200/60">Loading…</div>
       ) : data.forms.length === 0 ? (
         <div className="text-center py-16 text-white/40 rounded-2xl bg-white/[0.02] border border-dashed border-white/10">
-          No open applications right now — check back later.
+          {data.loadError
+            ? 'Applications couldn’t load right now — try refreshing in a minute.'
+            : 'No open applications right now — check back later.'}
         </div>
       ) : (
         <div className="space-y-3">

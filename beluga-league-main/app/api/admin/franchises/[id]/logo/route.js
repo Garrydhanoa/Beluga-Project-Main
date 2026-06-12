@@ -23,7 +23,8 @@ export async function GET(_request, { params }) {
     status: 200,
     headers: {
       'Content-Type': logo.mime || 'image/png',
-      'Cache-Control': 'public, max-age=300',
+      // no-store like /api/teams/logo — a 5-min cache made fresh uploads look broken
+      'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
     },
   })
 }

@@ -281,10 +281,11 @@ span.w-2.h-2.rounded-full.bg-blue-400,
   height: 0 !important;
 }
 
-/* Specifically target any small rounded blue elements */
-[class*="rounded-full"][class*="bg-blue"]:not(.w-8):not(.w-10):not(.w-12):not(.h-8):not(.h-10):not(.h-12) {
-  display: none !important;
-}
+/* (Removed) A catch-all here hid EVERY non-icon-sized element with
+   rounded-full + bg-blue* — including real buttons like the Applications
+   "Sign in with Discord" pill and blue badges on the new pages. The
+   indicator dots it was meant for are already covered by the specific
+   selectors above. */
 
 /* Target small rounded elements with specific positioning */
 .absolute.left-1\/2.-translate-x-1\/2:is([class*="bottom"]) {

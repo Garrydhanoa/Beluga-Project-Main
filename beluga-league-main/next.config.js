@@ -15,19 +15,10 @@ const nextConfig = {
       fullUrl: false,
     },
   },
-  async headers() {
-    return [
-      {
-        source: '/api/(.*)',
-        headers: [
-          {
-            key: 'Cache-Control',
-            value: 'public, max-age=3600, s-maxage=7200', // Cache for 1 hour client-side, 2 hours server-side
-          },
-        ],
-      },
-    ]
-  },
+  // NOTE: a blanket `Cache-Control: public, max-age=3600` on /api/(.*) used to
+  // live here. It overrode every route's own cache headers, so browsers served
+  // hour-old API data — admin edits and logo uploads looked broken. Routes set
+  // their own Cache-Control now; don't reintroduce a global one.
   // Configuration specific to Cloudflare builds
   ...(process.env.CLOUDFLARE_DEPLOY === 'true' ? { 
     output: 'export',
