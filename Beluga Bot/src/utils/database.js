@@ -261,7 +261,12 @@ async function initializeDatabase() {
                 UNIQUE (season_id, division, team_id, player_name, platform, platform_id)
             )
         `);
-        
+
+        // New Ballchasing-based stats system schema (series, per-game rows,
+        // player/team aggregates, identity map, report sessions, audit log).
+        const { ensureStatsSchema } = require('../stats/statsSchema');
+        await ensureStatsSchema(pool, Logger);
+
         Logger.success('Database tables initialized successfully');
         return true;
     } catch (error) {

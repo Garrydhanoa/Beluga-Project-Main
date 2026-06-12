@@ -1,0 +1,10 @@
+{
+  "label": "playoffs-sublunary-4-2-immortals-aaa",
+  "url": "https://ballchasing.com/group/sublunary-4-2-immortals-aaa-seas-2ds30yfmpe",
+  "groupId": "sublunary-4-2-immortals-aaa-seas-2ds30yfmpe",
+  "error": {
+    "code": "not_found",
+    "status": 404,
+    "message": "Ballchasing API 404 for /groups/sublunary-4-2-immortals-aaa-seas-2ds30yfmpe — {\"chat\":{\"Junker\":\"Nooo!\",\"YOU\":\"Wow!\"},\"error\":\"Group not found\",\"request_id\":\"D1591276:E9A7_A2379E0D:01BB_6A278B65_129EC188:E21BC\",\"server\":\"hzprod-front-2\"}"
+  }
+}

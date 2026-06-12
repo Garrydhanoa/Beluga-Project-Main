@@ -133,6 +133,92 @@ export default function PlayersAdminPage() {
   )
 }
 
+// In-game identity (Ballchasing accounts + name history) and the player's
+// per-season stats from the new stats system — every cell editable (saving
+// locks the row with manual_override so recomputes keep staff numbers).
+function IdentityStatsPanel({ discordId, data, onChanged }) {
+  const accounts = data.statsAccounts || []
+  const names = data.statsNameHistory || []
+  const seasons = data.statsSeasons || []
+  const games = data.statsRecentGames || []
+  const [edits, setEdits] = useState({})
+  const [msg, setMsg] = useState('')
+
+  async function saveRow(row) {
+    const e = edits[`${row.season_id}|${row.division}|${row.is_playoff}`] || {}
+    setMsg('Saving…')
+    const r = await fetch(`/api/admin/players/${encodeURIComponent(discordId)}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ seasonStat: { seasonId: row.season_id, division: row.division, isPlayoff: row.is_playoff, ...e } }),
+    })
+    setMsg(r.ok ? '✓ saved (row locked with manual override)' : '❌ failed')
+    setTimeout(() => setMsg(''), 2500)
+    onChanged?.()
+  }
+
+  const setCell = (row, key, value) => {
+    const k = `${row.season_id}|${row.division}|${row.is_playoff}`
+    setEdits({ ...edits, [k]: { ...edits[k], [key]: value } })
+  }
+  const COLS = [['games', 'GP'], ['score', 'Score'], ['goals', 'G'], ['assists', 'A'], ['saves', 'SV'], ['shots', 'SH'], ['mvps', 'MVP']]
+  const DB = { games: 'games', score: 'score', goals: 'goals', assists: 'assists', saves: 'saves', shots: 'shots', mvps: 'mvps' }
+
+  if (!accounts.length && !seasons.length) return null
+  return (
+    <Section title="Stats & Identity (new stats system)">
+      {msg && <div className="text-[11px] text-green-300 mb-2">{msg}</div>}
+      {accounts.length > 0 && (
+        <div className="mb-3">
+          <div className="text-[10px] uppercase tracking-wider text-blue-300/70 font-bold mb-1">Linked game accounts</div>
+          <div className="flex flex-wrap gap-1.5">
+            {accounts.map((a, i) => (
+              <span key={i} className="px-2 py-0.5 rounded bg-white/5 border border-white/10 text-white/80 text-[11px] font-mono">
+                {a.platform}:{String(a.platform_id).slice(0, 14)}…{a.current_name ? ` · ${a.current_name}` : ''}
+              </span>
+            ))}
+          </div>
+          {names.length > 0 && (
+            <div className="text-[10px] text-white/40 mt-1">Known as: {[...new Set(names.map((n) => n.name).filter(Boolean))].slice(0, 8).join(', ')}</div>
+          )}
+          <div className="text-[10px] text-white/30 mt-0.5">Wrong link? Fix it in Match Results → Player identity tools (re-map / merge).</div>
+        </div>
+      )}
+      {seasons.length > 0 && (
+        <table className="w-full text-[11px] mb-2">
+          <thead><tr className="text-[9px] uppercase tracking-wider text-white/40">
+            <th className="text-left py-1">Season</th>{COLS.map(([k, l]) => <th key={k} className="text-right py-1">{l}</th>)}<th />
+          </tr></thead>
+          <tbody>
+            {seasons.map((row) => (
+              <tr key={`${row.season_id}-${row.division}-${row.is_playoff}`} className="border-t border-white/5">
+                <td className="py-1 text-white">
+                  S{row.season_number} {row.division}{row.is_playoff ? ' (PO)' : ''}
+                  {row.manual_override && <span className="ml-1 text-[8px] text-yellow-300" title="Manually overridden — recompute keeps these numbers">🔒</span>}
+                </td>
+                {COLS.map(([k]) => (
+                  <td key={k} className="py-1 text-right">
+                    <input type="number" defaultValue={row[DB[k]] ?? 0}
+                      onChange={(e) => setCell(row, k, e.target.value)}
+                      className="w-12 px-1 py-0.5 bg-black/40 border border-white/10 rounded text-white text-right text-[11px]" />
+                  </td>
+                ))}
+                <td className="py-1 text-right">
+                  <button onClick={() => saveRow(row)} className="px-2 py-0.5 text-[10px] font-bold text-white bg-blue-500 hover:bg-blue-400 rounded">Save</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {games.length > 0 && (
+        <div className="text-[10px] text-white/40">
+          {games.length} recent game line(s) recorded — edit individual games in <span className="text-blue-300">Match Results</span> (per-cell editing there).
+        </div>
+      )}
+    </Section>
+  )
+}
+
 function PlayerDetailModal({ discordId, onClose }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -174,6 +260,10 @@ function PlayerDetailModal({ discordId, onClose }) {
               )}
             </div>
           </div>
+
+          <IdentityStatsPanel discordId={discordId} data={data} onChanged={() => {
+            fetch(`/api/admin/players/${encodeURIComponent(discordId)}`, { cache: 'no-store' }).then((r) => r.json()).then(setData)
+          }} />
 
           <Section title={`Roster History (${data.rosterHistory.length})`}>
             {data.rosterHistory.length === 0 ? (

@@ -186,6 +186,7 @@ export async function updateTeam(teamId, patch) {
   if (patch.discordGmRoleId !== undefined) addField('discord_gm_role_id', patch.discordGmRoleId || null)
   if (patch.discordCaptainRoleId !== undefined) addField('discord_captain_role_id', patch.discordCaptainRoleId || null)
   if (patch.discordNpRoleId !== undefined) addField('discord_np_role_id', patch.discordNpRoleId || null)
+  if (patch.slogan !== undefined) addField('slogan', patch.slogan || null)
 
   if (fields.length === 0) return null
 

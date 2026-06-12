@@ -26,6 +26,55 @@ function emptyBracket() {
   }
 }
 
+// Auto-bracket (top 8 from live standings) + playoff thread creation per round.
+function AutoBracketTools({ onStatus, onChanged }) {
+  const [division, setDivision] = useState('Majors')
+  const [round, setRound] = useState(1)
+  const [busy, setBusy] = useState(false)
+
+  async function post(payload, okMsg) {
+    setBusy(true)
+    try {
+      const r = await fetch('/api/admin/playoffs', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      })
+      const d = await r.json().catch(() => ({}))
+      onStatus(r.ok ? `✓ ${okMsg}${d.note ? ` — ${d.note}` : ''}${d.seeded ? ` — ${d.seeded.join(' · ')}` : ''}` : `❌ ${d.error || 'failed'}`)
+      if (r.ok) onChanged?.()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="mb-6 p-4 rounded-xl bg-white/[0.03] border border-white/10 flex flex-wrap items-center gap-2">
+      <span className="text-[10px] font-bold uppercase tracking-wider text-blue-300/70 mr-2">Auto tools</span>
+      <select value={division} onChange={(e) => setDivision(e.target.value)}
+        className="px-3 py-2 bg-black/40 border border-white/10 rounded-lg text-white text-sm">
+        {DIVISIONS.map((d) => <option key={d} value={d}>{d}</option>)}
+      </select>
+      <button disabled={busy}
+        onClick={() => confirm(`Replace the ${division} bracket with an auto-seeded top-8 from the current standings?`) && post({ action: 'auto-bracket', division }, `${division} bracket seeded from standings`)}
+        className="px-4 py-2 text-sm font-bold rounded-lg bg-purple-500/20 hover:bg-purple-500/30 border border-purple-400/40 text-purple-100">
+        ⚡ Auto bracket (top 8)
+      </button>
+      <span className="mx-2 h-6 w-px bg-white/10" />
+      <select value={round} onChange={(e) => setRound(Number(e.target.value))}
+        className="px-3 py-2 bg-black/40 border border-white/10 rounded-lg text-white text-sm">
+        <option value={1}>Round 1 (QF)</option>
+        <option value={2}>Round 2 (Semis)</option>
+        <option value={3}>Round 3 (Finals)</option>
+      </select>
+      <button disabled={busy}
+        onClick={() => post({ action: 'create-threads', division, roundNumber: round }, 'playoff threads queued')}
+        className="px-4 py-2 text-sm font-bold rounded-lg bg-blue-500/20 hover:bg-blue-500/30 border border-blue-400/40 text-blue-100">
+        🧵 Create playoff threads
+      </button>
+      <span className="text-[10px] text-white/40 basis-full">Threads are named “Playoffs QF/Semis/Finals: DIV: A vs B”. Captains report playoff series in them like normal (Bo7 auto-detected). Reporting the Finals records the division champions automatically.</span>
+    </div>
+  )
+}
+
 export default function PlayoffsAdminPage() {
   const [brackets, setBrackets] = useState([])
   const [teamsByDivision, setTeamsByDivision] = useState({})
@@ -231,6 +280,10 @@ export default function PlayoffsAdminPage() {
           {status}
         </div>
       )}
+
+      <AutoBracketTools onStatus={setStatus} onChanged={() => {
+        fetch('/api/admin/playoffs').then((r) => r.json()).then((d) => setBrackets(Array.isArray(d.brackets) ? d.brackets : []))
+      }} />
 
       <div className="space-y-5">
         {normalized.map((bracket, bIndex) => {

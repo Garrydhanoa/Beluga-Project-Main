@@ -4,6 +4,7 @@ import { ensureLeagueSchema } from '../../../../../lib/leagueSchema'
 import { getActiveSeason } from '../../../../../lib/leagueStore'
 import { getMemberMap } from '../../../../../lib/discordMembers'
 import { getSalaryMap } from '../../../../../lib/salarySheet'
+import { getTeamStatsBundle } from '../../../../../lib/belugaStats'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,7 +22,7 @@ export async function GET(_request, { params }) {
   // Find every active-season team row matching this name (one per division it plays in),
   // honoring the franchise active flag.
   const teamsRes = await query(`
-    SELECT t.id, t.name, t.division, t.roster_limit, t.franchise_id,
+    SELECT t.id, t.name, t.division, t.roster_limit, t.franchise_id, t.slogan,
       (t.logo_data IS NOT NULL OR f.logo_data IS NOT NULL) AS has_logo
     FROM teams t
     LEFT JOIN team_franchises f ON f.id = t.franchise_id
@@ -48,14 +49,13 @@ export async function GET(_request, { params }) {
 
   const byDivision = {}
   for (const t of teamsRes.rows) {
-    const [rosterRes, recordRes, schedRes, statsRes] = await Promise.all([
+    const [rosterRes, schedRes, statsBundle] = await Promise.all([
       query(`
         SELECT discord_id, discord_username, display_name, role
         FROM team_roster_members
         WHERE team_id = $1 AND season_id = $2 AND is_active = TRUE
         ORDER BY (role = 'gm') DESC, (role = 'captain') DESC, display_name
       `, [t.id, season.id]),
-      query(`SELECT * FROM team_records WHERE team_id = $1 AND season_id = $2 LIMIT 1`, [t.id, season.id]),
       query(`
         SELECT sm.id, sm.week, sm.home_team_id, sm.away_team_id,
           ht.name AS home, at.name AS away
@@ -66,15 +66,16 @@ export async function GET(_request, { params }) {
           AND sm.is_published = TRUE
         ORDER BY sm.week, sm.id
       `, [season.id, t.id]),
-      query(`
-        SELECT player_name, platform_id, games_played, goals, assists, saves, shots, score
-        FROM player_records
-        WHERE team_id = $1 AND season_id = $2
-        ORDER BY score DESC
-      `, [t.id, season.id]),
+      getTeamStatsBundle(season.id, t.id),
     ])
 
-    const rec = recordRes.rows[0]
+    // Confirmed series results by week (fills schedule scores + the results list).
+    const seriesByWeek = new Map()
+    for (const s of statsBundle.series) {
+      if (s.week != null && !seriesByWeek.has(s.week)) seriesByWeek.set(s.week, s)
+    }
+
+    const rec = statsBundle.record
     const capValue = onfieldCaps[t.division]
     byDivision[t.division] = {
       teamId: t.id,
@@ -82,15 +83,22 @@ export async function GET(_request, { params }) {
       division: t.division,
       rosterLimit: t.roster_limit,
       hasLogo: !!t.has_logo,
+      slogan: t.slogan || null,
       onfieldCap: typeof capValue === 'number' ? capValue : (capValue != null && capValue !== '' ? Number(capValue) : null),
       record: {
         wins: Number(rec?.wins || 0),
         losses: Number(rec?.losses || 0),
-        gameWins: Number(rec?.game_wins || 0),
-        gameLosses: Number(rec?.game_losses || 0),
-        goalsFor: Number(rec?.goals_for || 0),
-        goalsAgainst: Number(rec?.goals_against || 0),
+        gameWins: Number(rec?.gameWins || 0),
+        gameLosses: Number(rec?.gameLosses || 0),
+        goalsFor: Number(rec?.goalsFor || 0),
+        goalsAgainst: Number(rec?.goalsAgainst || 0),
       },
+      teamStats: rec
+        ? {
+            gamesPlayed: rec.gamesPlayed,
+            belugaScore: rec.belugaScore,
+          }
+        : null,
       roster: rosterRes.rows.map((r) => {
         const m = memberMap.get(String(r.discord_id)) || null
         const sheet = salaryMap.get(String(r.discord_id)) || null
@@ -103,25 +111,43 @@ export async function GET(_request, { params }) {
           salary: sheet?.salary ?? null,
         }
       }),
-      schedule: schedRes.rows.map((r) => ({
+      schedule: schedRes.rows.map((r) => {
+        const s = seriesByWeek.get(r.week) || null
+        const isHome = r.home_team_id === t.id
+        return {
+          id: r.id,
+          week: r.week,
+          home: r.home,
+          away: r.away,
+          isHome,
+          homeScore: s ? (isHome ? s.ourScore : s.theirScore) : null,
+          awayScore: s ? (isHome ? s.theirScore : s.ourScore) : null,
+          status: s ? 'confirmed' : null,
+        }
+      }),
+      playerStats: statsBundle.playerStats.map((p) => {
+        const m = memberMap.get(p.discordId) || null
+        return {
+          ...p,
+          playerName: m?.displayName || p.playerName,
+        }
+      }),
+      // Every confirmed series (won/lost + Ballchasing group link) — rendered at
+      // the bottom of the team page per the spec.
+      results: statsBundle.series,
+      // Roster-move history for this division team (same shape as player pages).
+      transactions: (await query(`
+        SELECT tx.id, tx.type, tx.display_name, tx.discord_username, tx.discord_id, tx.performed_at
+        FROM transactions tx
+        WHERE tx.team_id = $1
+        ORDER BY tx.performed_at DESC, tx.id DESC
+        LIMIT 50
+      `, [t.id]).catch(() => ({ rows: [] }))).rows.map((r) => ({
         id: r.id,
-        week: r.week,
-        home: r.home,
-        away: r.away,
-        isHome: r.home_team_id === t.id,
-        homeScore: null,
-        awayScore: null,
-        status: null,
-      })),
-      playerStats: statsRes.rows.map((r) => ({
-        playerName: r.player_name,
-        platformId: r.platform_id,
-        gamesPlayed: Number(r.games_played || 0),
-        goals: Number(r.goals || 0),
-        assists: Number(r.assists || 0),
-        saves: Number(r.saves || 0),
-        shots: Number(r.shots || 0),
-        score: Number(r.score || 0),
+        type: r.type,
+        playerName: r.display_name || r.discord_username || `User ${String(r.discord_id).slice(-4)}`,
+        discordId: r.discord_id,
+        performedAt: r.performed_at,
       })),
     }
   }

@@ -547,6 +547,343 @@ async function runMigrations() {
   `)
   await step('idx_power_rankings', `CREATE INDEX IF NOT EXISTS idx_power_rankings ON power_rankings(season_id, entity_type, division, rank)`)
 
+  // Franchise-level Discord wiring: a franchise has ONE GM and ONE NP role across
+  // all its division teams (operator rule), plus an invite link for /franchise.
+  await step('team_franchises.gm_role_id', `ALTER TABLE team_franchises ADD COLUMN IF NOT EXISTS gm_role_id TEXT`)
+  await step('team_franchises.np_role_id', `ALTER TABLE team_franchises ADD COLUMN IF NOT EXISTS np_role_id TEXT`)
+  await step('team_franchises.discord_invite_url', `ALTER TABLE team_franchises ADD COLUMN IF NOT EXISTS discord_invite_url TEXT`)
+  await step('team_franchises.color', `ALTER TABLE team_franchises ADD COLUMN IF NOT EXISTS color TEXT`)
+
+  // Shared bot+website key/value settings (e.g. stats_channel_id).
+  await step('app_config', `
+    CREATE TABLE IF NOT EXISTS app_config (
+      key TEXT PRIMARY KEY,
+      value TEXT,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+
+  // Staff quotes shown across the public site (+ optional per-player quotes).
+  await step('site_quotes', `
+    CREATE TABLE IF NOT EXISTS site_quotes (
+      id SERIAL PRIMARY KEY,
+      text TEXT NOT NULL,
+      author_discord_id TEXT NOT NULL,
+      player_discord_id TEXT,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+
+  // Configurable ticket system (bot reads these; reasons + queued panels).
+  await step('ticket_reasons', `
+    CREATE TABLE IF NOT EXISTS ticket_reasons (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      emoji TEXT,
+      description TEXT,
+      welcome_message TEXT,
+      staff_role_ids TEXT[] NOT NULL DEFAULT '{}',
+      questions JSONB NOT NULL DEFAULT '[]'::jsonb,
+      max_open_per_user INTEGER NOT NULL DEFAULT 1,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+  await step('ticket_panels', `
+    CREATE TABLE IF NOT EXISTS ticket_panels (
+      id SERIAL PRIMARY KEY,
+      channel_id TEXT NOT NULL,
+      message_id TEXT,
+      title TEXT NOT NULL DEFAULT 'Open a ticket',
+      description TEXT,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+
+  // Applications/forms system (website builder + bot bridge).
+  await step('app_forms', `
+    CREATE TABLE IF NOT EXISTS app_forms (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      channel_id TEXT,
+      require_in_server BOOLEAN NOT NULL DEFAULT TRUE,
+      allow_votes BOOLEAN NOT NULL DEFAULT TRUE,
+      vote_role_ids TEXT[] NOT NULL DEFAULT '{}',
+      decision_role_ids TEXT[] NOT NULL DEFAULT '{}',
+      ping_role_ids TEXT[] NOT NULL DEFAULT '{}',
+      dm_on_decision BOOLEAN NOT NULL DEFAULT TRUE,
+      accept_message TEXT,
+      deny_message TEXT,
+      questions JSONB NOT NULL DEFAULT '[]'::jsonb,
+      max_file_mb INTEGER NOT NULL DEFAULT 8,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+  await step('app_submissions', `
+    CREATE TABLE IF NOT EXISTS app_submissions (
+      id SERIAL PRIMARY KEY,
+      form_id INTEGER NOT NULL REFERENCES app_forms(id) ON DELETE CASCADE,
+      discord_id TEXT NOT NULL,
+      username TEXT,
+      display_name TEXT,
+      answers JSONB NOT NULL DEFAULT '[]'::jsonb,
+      status TEXT NOT NULL DEFAULT 'pending',
+      votes JSONB NOT NULL DEFAULT '{"up":[],"down":[]}'::jsonb,
+      message_id TEXT,
+      post_failed BOOLEAN NOT NULL DEFAULT FALSE,
+      decided_at TIMESTAMP,
+      decided_by TEXT,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+  await step('app_files', `
+    CREATE TABLE IF NOT EXISTS app_files (
+      id SERIAL PRIMARY KEY,
+      submission_id INTEGER NOT NULL REFERENCES app_submissions(id) ON DELETE CASCADE,
+      name TEXT,
+      mime TEXT,
+      size INTEGER,
+      data BYTEA,
+      keep_forever BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+  await step('site_logins', `
+    CREATE TABLE IF NOT EXISTS site_logins (
+      id SERIAL PRIMARY KEY,
+      discord_id TEXT NOT NULL,
+      username TEXT,
+      context TEXT,
+      logged_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+
+  // Unified error/edge log (bot writes everything that goes to the log channel).
+  await step('site_logs', `
+    CREATE TABLE IF NOT EXISTS site_logs (
+      id SERIAL PRIMARY KEY,
+      source TEXT NOT NULL DEFAULT 'bot',
+      level TEXT NOT NULL DEFAULT 'warn',
+      summary TEXT NOT NULL,
+      detail TEXT,
+      division TEXT,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+  await step('idx_site_logs_time', `CREATE INDEX IF NOT EXISTS idx_site_logs_time ON site_logs(created_at DESC)`)
+
+  // Snapshot of who holds the admin-configured award roles (bot-refreshed).
+  await step('award_role_holders', `
+    CREATE TABLE IF NOT EXISTS award_role_holders (
+      role_id TEXT NOT NULL,
+      discord_id TEXT NOT NULL,
+      synced_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (role_id, discord_id)
+    )
+  `)
+
+  // Homepage montage videos (YouTube links, admin-managed; max 2 shown).
+  await step('site_montage', `
+    CREATE TABLE IF NOT EXISTS site_montage (
+      id SERIAL PRIMARY KEY,
+      youtube_url TEXT NOT NULL,
+      title TEXT,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      display_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+
+  // ---- New Ballchasing-based stats system (written by the bot; mirrored here so
+  // website reads/admin never race the bot's boot). stats_game_players is the
+  // source of truth; *_season/_lifetime are derived aggregates.
+  await step('teams.slogan', `ALTER TABLE teams ADD COLUMN IF NOT EXISTS slogan TEXT`)
+  await step('stats_player_accounts', `
+    CREATE TABLE IF NOT EXISTS stats_player_accounts (
+      id SERIAL PRIMARY KEY,
+      discord_id TEXT NOT NULL,
+      platform TEXT NOT NULL,
+      platform_id TEXT NOT NULL,
+      current_name TEXT,
+      first_seen TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_seen TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      linked_by TEXT,
+      UNIQUE (platform, platform_id)
+    )
+  `)
+  await step('stats_name_history', `
+    CREATE TABLE IF NOT EXISTS stats_name_history (
+      id SERIAL PRIMARY KEY,
+      discord_id TEXT NOT NULL,
+      name TEXT,
+      platform TEXT,
+      platform_id TEXT,
+      source TEXT NOT NULL DEFAULT 'ballchasing',
+      observed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+  await step('stats_series', `
+    CREATE TABLE IF NOT EXISTS stats_series (
+      id SERIAL PRIMARY KEY,
+      season_id INTEGER REFERENCES seasons(id) ON DELETE CASCADE,
+      division TEXT NOT NULL,
+      week INTEGER,
+      is_playoff BOOLEAN NOT NULL DEFAULT FALSE,
+      playoff_series_id INTEGER,
+      schedule_match_id INTEGER,
+      thread_id TEXT,
+      home_team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL,
+      away_team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL,
+      home_score INTEGER NOT NULL DEFAULT 0,
+      away_score INTEGER NOT NULL DEFAULT 0,
+      winner_team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL,
+      format TEXT NOT NULL DEFAULT 'bo5',
+      is_forfeit BOOLEAN NOT NULL DEFAULT FALSE,
+      forfeit_kind TEXT,
+      ballchasing_group_id TEXT,
+      ballchasing_group_url TEXT,
+      ballchasing_group_name TEXT,
+      status TEXT NOT NULL DEFAULT 'confirmed',
+      reported_by_discord_id TEXT,
+      reported_via TEXT NOT NULL DEFAULT 'captain',
+      manual_override BOOLEAN NOT NULL DEFAULT FALSE,
+      confirmed_at TIMESTAMP,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+  await step('stats_games', `
+    CREATE TABLE IF NOT EXISTS stats_games (
+      id SERIAL PRIMARY KEY,
+      series_id INTEGER NOT NULL REFERENCES stats_series(id) ON DELETE CASCADE,
+      game_number INTEGER NOT NULL,
+      ballchasing_replay_id TEXT,
+      ballchasing_replay_url TEXT,
+      map TEXT,
+      duration_seconds INTEGER,
+      overtime BOOLEAN NOT NULL DEFAULT FALSE,
+      home_goals INTEGER NOT NULL DEFAULT 0,
+      away_goals INTEGER NOT NULL DEFAULT 0,
+      winner_team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL,
+      is_forfeit BOOLEAN NOT NULL DEFAULT FALSE,
+      played_at TIMESTAMP,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (series_id, ballchasing_replay_id)
+    )
+  `)
+  await step('stats_game_players', `
+    CREATE TABLE IF NOT EXISTS stats_game_players (
+      id SERIAL PRIMARY KEY,
+      game_id INTEGER NOT NULL REFERENCES stats_games(id) ON DELETE CASCADE,
+      series_id INTEGER NOT NULL REFERENCES stats_series(id) ON DELETE CASCADE,
+      season_id INTEGER,
+      division TEXT,
+      is_playoff BOOLEAN NOT NULL DEFAULT FALSE,
+      team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL,
+      discord_id TEXT,
+      platform TEXT,
+      platform_id TEXT,
+      ingame_name TEXT,
+      is_sub BOOLEAN NOT NULL DEFAULT FALSE,
+      score INTEGER NOT NULL DEFAULT 0,
+      goals INTEGER NOT NULL DEFAULT 0,
+      assists INTEGER NOT NULL DEFAULT 0,
+      saves INTEGER NOT NULL DEFAULT 0,
+      shots INTEGER NOT NULL DEFAULT 0,
+      shooting_pct NUMERIC,
+      demos_inflicted INTEGER NOT NULL DEFAULT 0,
+      demos_taken INTEGER NOT NULL DEFAULT 0,
+      mvp BOOLEAN NOT NULL DEFAULT FALSE,
+      played_seconds INTEGER,
+      manually_edited BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+  await step('stats_player_season', `
+    CREATE TABLE IF NOT EXISTS stats_player_season (
+      discord_id TEXT NOT NULL,
+      season_id INTEGER NOT NULL,
+      division TEXT NOT NULL,
+      is_playoff BOOLEAN NOT NULL DEFAULT FALSE,
+      team_id INTEGER,
+      games INTEGER NOT NULL DEFAULT 0,
+      score INTEGER NOT NULL DEFAULT 0,
+      goals INTEGER NOT NULL DEFAULT 0,
+      assists INTEGER NOT NULL DEFAULT 0,
+      saves INTEGER NOT NULL DEFAULT 0,
+      shots INTEGER NOT NULL DEFAULT 0,
+      demos_inflicted INTEGER NOT NULL DEFAULT 0,
+      demos_taken INTEGER NOT NULL DEFAULT 0,
+      mvps INTEGER NOT NULL DEFAULT 0,
+      beluga_score NUMERIC,
+      manual_override BOOLEAN NOT NULL DEFAULT FALSE,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (discord_id, season_id, division, is_playoff)
+    )
+  `)
+  await step('stats_player_lifetime', `
+    CREATE TABLE IF NOT EXISTS stats_player_lifetime (
+      discord_id TEXT NOT NULL,
+      is_playoff BOOLEAN NOT NULL DEFAULT FALSE,
+      games INTEGER NOT NULL DEFAULT 0,
+      seasons_played INTEGER NOT NULL DEFAULT 0,
+      score INTEGER NOT NULL DEFAULT 0,
+      goals INTEGER NOT NULL DEFAULT 0,
+      assists INTEGER NOT NULL DEFAULT 0,
+      saves INTEGER NOT NULL DEFAULT 0,
+      shots INTEGER NOT NULL DEFAULT 0,
+      demos_inflicted INTEGER NOT NULL DEFAULT 0,
+      demos_taken INTEGER NOT NULL DEFAULT 0,
+      mvps INTEGER NOT NULL DEFAULT 0,
+      beluga_score NUMERIC,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (discord_id, is_playoff)
+    )
+  `)
+  await step('stats_team_season', `
+    CREATE TABLE IF NOT EXISTS stats_team_season (
+      season_id INTEGER NOT NULL,
+      division TEXT NOT NULL,
+      team_id INTEGER NOT NULL,
+      is_playoff BOOLEAN NOT NULL DEFAULT FALSE,
+      series_wins INTEGER NOT NULL DEFAULT 0,
+      series_losses INTEGER NOT NULL DEFAULT 0,
+      game_wins INTEGER NOT NULL DEFAULT 0,
+      game_losses INTEGER NOT NULL DEFAULT 0,
+      goals_for INTEGER NOT NULL DEFAULT 0,
+      goals_against INTEGER NOT NULL DEFAULT 0,
+      games_played INTEGER NOT NULL DEFAULT 0,
+      score INTEGER NOT NULL DEFAULT 0,
+      goals INTEGER NOT NULL DEFAULT 0,
+      assists INTEGER NOT NULL DEFAULT 0,
+      saves INTEGER NOT NULL DEFAULT 0,
+      shots INTEGER NOT NULL DEFAULT 0,
+      demos_inflicted INTEGER NOT NULL DEFAULT 0,
+      demos_taken INTEGER NOT NULL DEFAULT 0,
+      beluga_score NUMERIC,
+      manual_override BOOLEAN NOT NULL DEFAULT FALSE,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (season_id, division, team_id, is_playoff)
+    )
+  `)
+  await step('stats_audit_log', `
+    CREATE TABLE IF NOT EXISTS stats_audit_log (
+      id SERIAL PRIMARY KEY,
+      series_id INTEGER,
+      action TEXT NOT NULL,
+      actor_discord_id TEXT,
+      actor_name TEXT,
+      actor_source TEXT NOT NULL DEFAULT 'bot',
+      detail JSONB,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+
   const elapsedMs = Date.now() - started
   lastReport = { ran, failed, elapsedMs, finishedAt: new Date().toISOString() }
   console.log(`[schema] migration complete in ${elapsedMs}ms — ${ran.length} ok, ${failed.length} failed`)

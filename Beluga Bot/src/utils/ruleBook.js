@@ -4,17 +4,23 @@ const path = require('path');
 const Logger = require('./logger');
 
 class RuleBookManager {
-    constructor() {
+    constructor(options = {}) {
         this.documentId = '1jKUtjoQIPY-MGhhq1EpctPqEzu_jrt9kmko8mbq6HiE';
         this.rules = new Map(); // Store parsed rules by section
         this.keywordIndex = new Map(); // Separate index for keyword search
         this.lastUpdate = null;
-        this.updateInterval = 60 * 60 * 1000; // 1 hour in milliseconds
+        this.updateInterval = 60 * 60 * 1000; // 1 hour - staleness window for lazy refresh
         this.credentials = null;
         this.isUpdating = false;
-        
-        // Initialize on construction
-        this.initialize();
+        this.lazy = options.lazy === true;
+        this._loadPromise = null;
+
+        // Eager mode keeps the old behaviour (load now + hourly refresh).
+        // Lazy mode does nothing until ensureLoaded() is first called, so we
+        // never pull the whole rulebook at startup just to let it sit unused.
+        if (!this.lazy) {
+            this.initialize();
+        }
     }
 
     async initialize() {
@@ -27,6 +33,32 @@ class RuleBookManager {
         } catch (error) {
             Logger.error('Failed to initialize RuleBook Manager:', error);
         }
+    }
+
+    /**
+     * Lazy loader: pulls the rulebook on first use and refreshes only when the
+     * cached copy is older than updateInterval. Concurrent callers share one
+     * fetch. Safe to call on every rules-related question.
+     */
+    async ensureLoaded() {
+        const isFresh = this.rules.size > 0 && this.lastUpdate &&
+            (Date.now() - this.lastUpdate.getTime()) < this.updateInterval;
+        if (isFresh) return;
+
+        if (this._loadPromise) return this._loadPromise;
+
+        this._loadPromise = (async () => {
+            try {
+                if (!this.credentials) await this.loadCredentials();
+                await this.updateRules();
+            } catch (error) {
+                Logger.warning('RuleBook lazy load failed:', error.message);
+            } finally {
+                this._loadPromise = null;
+            }
+        })();
+
+        return this._loadPromise;
     }
 
     async loadCredentials() {

@@ -302,7 +302,7 @@ export default function TeamPage() {
           aria-hidden="true"
         >
           <img
-            src={`/logos/${teamName}.png`}
+            src={`/api/teams/logo?name=${encodeURIComponent(teamName)}`}
             alt=""
             className="w-full h-full object-contain"
             onError={(e) => { e.currentTarget.style.display = 'none' }}
@@ -373,6 +373,7 @@ export default function TeamPage() {
               { key: 'roster', label: 'Roster' },
               { key: 'schedule', label: 'Schedule' },
               { key: 'stats', label: 'Stats' },
+              { key: 'history', label: 'History' },
             ].map((tab) => {
               const active = activeTab === tab.key
               return (
@@ -426,6 +427,90 @@ export default function TeamPage() {
           <ScheduleTab teamName={teamName} schedule={schedule} division={activeDivision} />
         )}
         {activeTab === 'stats' && <StatsTab stats={stats} />}
+        {activeTab === 'history' && <HistoryTab divData={divData} division={activeDivision} />}
+      </section>
+    </div>
+  )
+}
+
+// ====================================================================
+// HISTORY TAB — series results (with replay links) + roster transactions
+// ====================================================================
+
+function HistoryTab({ divData, division }) {
+  const results = divData?.results || []
+  const transactions = divData?.transactions || []
+  const slogan = divData?.slogan
+
+  const txLabel = (type) => ({
+    sign: 'Signed', drop: 'Dropped', release: 'Released', trade_in: 'Traded in', trade_out: 'Traded out',
+    ir_place: 'Placed on IR', ir_return: 'Returned from IR', suspend: 'Suspended', reinstate: 'Reinstated',
+    esub: 'Emergency sub', adminesub: 'Emergency sub (admin)', gm_assign: 'GM assigned', gm_remove: 'GM removed',
+    captain_assign: 'Captain assigned', captain_remove: 'Captain removed', rename: 'Renamed',
+  }[type] || type)
+
+  return (
+    <div className="space-y-12 max-w-4xl mx-auto">
+      {slogan && (
+        <p className="text-center text-blue-200/80 italic text-lg">“{slogan}”</p>
+      )}
+
+      <section>
+        <div className="flex items-center gap-3 mb-4">
+          <span className="text-[10px] font-bold tracking-[0.25em] uppercase text-blue-300/70">Series Results — {DIVISION_LABEL[division]}</span>
+          <div className="flex-1 h-px bg-gradient-to-r from-blue-400/30 to-transparent" />
+          <span className="text-[10px] font-bold text-blue-300/60">{results.length}</span>
+        </div>
+        {results.length === 0 ? (
+          <div className="text-center py-12 text-sm text-white/40 rounded-2xl bg-white/[0.02] border border-dashed border-white/10">No reported series yet.</div>
+        ) : (
+          <div className="rounded-2xl bg-white/[0.03] border border-white/10 overflow-hidden divide-y divide-white/5">
+            {results.map((r) => (
+              <div key={r.id} className="flex items-center gap-3 px-4 py-3 hover:bg-white/[0.03]">
+                <span className={`flex-shrink-0 w-8 h-8 rounded-md border flex items-center justify-center font-black text-xs ${r.won ? 'bg-blue-500/20 border-blue-400/50 text-blue-100' : 'bg-white/5 border-white/20 text-white/60'}`}>
+                  {r.won ? 'W' : 'L'}
+                </span>
+                <span className="text-white/50 text-xs w-16">{r.isPlayoff ? 'Playoffs' : `Week ${r.week ?? '—'}`}</span>
+                <Link href={`/teams/${encodeURIComponent(r.opponent || '')}`} className="flex-1 text-sm font-bold text-white hover:text-blue-200 truncate">
+                  vs {r.opponent}
+                </Link>
+                <span className={`font-mono font-black ${r.won ? 'text-blue-200' : 'text-white/70'}`}>{r.ourScore}–{r.theirScore}</span>
+                {r.isForfeit && <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-orange-500/15 text-orange-300 border border-orange-400/30">FF</span>}
+                {r.replayGroupUrl && (
+                  <a href={r.replayGroupUrl} target="_blank" rel="noreferrer"
+                    className="text-[10px] uppercase font-bold text-blue-200 hover:text-white px-2 py-1 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-400/30 rounded">
+                    Replays
+                  </a>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section>
+        <div className="flex items-center gap-3 mb-4">
+          <span className="text-[10px] font-bold tracking-[0.25em] uppercase text-blue-300/70">Transaction History</span>
+          <div className="flex-1 h-px bg-gradient-to-r from-blue-400/30 to-transparent" />
+          <span className="text-[10px] font-bold text-blue-300/60">{transactions.length}</span>
+        </div>
+        {transactions.length === 0 ? (
+          <div className="text-center py-12 text-sm text-white/40 rounded-2xl bg-white/[0.02] border border-dashed border-white/10">No transactions recorded.</div>
+        ) : (
+          <div className="rounded-2xl bg-white/[0.03] border border-white/10 overflow-hidden divide-y divide-white/5">
+            {transactions.map((t) => (
+              <div key={t.id} className="flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-white/[0.02]">
+                <span className="text-blue-300/80 font-bold text-xs w-32 truncate">{txLabel(t.type)}</span>
+                <Link href={`/players/${encodeURIComponent(t.discordId || t.playerName)}`} className="text-white flex-1 truncate hover:text-blue-200">
+                  {t.playerName}
+                </Link>
+                <span className="text-white/30 text-[10px] whitespace-nowrap">
+                  {t.performedAt ? new Date(t.performedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : ''}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
     </div>
   )
@@ -713,7 +798,7 @@ function MatchTicketCard({ ownTeam, opponent, isHome }) {
       <div className="relative px-5 pt-5 pb-9 overflow-hidden bg-gradient-to-br from-blue-600/15 via-blue-500/5 to-transparent">
         <div className="absolute -top-10 -right-10 w-44 h-44 opacity-[0.1] group-hover:opacity-[0.22] transition-opacity duration-700 pointer-events-none">
           <img
-            src={`/logos/${ownTeam}.png`}
+            src={`/api/teams/logo?name=${encodeURIComponent(ownTeam)}`}
             alt=""
             className="w-full h-full object-contain"
             onError={(e) => { e.currentTarget.style.display = 'none' }}
@@ -758,7 +843,7 @@ function MatchTicketCard({ ownTeam, opponent, isHome }) {
       >
         <div className="absolute -bottom-10 -left-10 w-44 h-44 opacity-[0.1] group-hover:opacity-[0.22] transition-opacity duration-700 pointer-events-none">
           <img
-            src={`/logos/${opponent}.png`}
+            src={`/api/teams/logo?name=${encodeURIComponent(opponent)}`}
             alt=""
             className="w-full h-full object-contain"
             onError={(e) => { e.currentTarget.style.display = 'none' }}

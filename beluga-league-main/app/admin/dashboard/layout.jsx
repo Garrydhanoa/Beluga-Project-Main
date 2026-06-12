@@ -10,13 +10,17 @@ const NAV = [
   { label: 'Seasons', href: '/admin/dashboard/seasons', icon: 'calendar' },
   { label: 'Teams & Franchises', href: '/admin/dashboard/teams', icon: 'flag' },
   { label: 'Schedule', href: '/admin/dashboard/schedule', icon: 'clock' },
+  { label: 'Match Results', href: '/admin/dashboard/matches', icon: 'swords' },
   { label: 'Players', href: '/admin/dashboard/players', icon: 'user' },
   { label: 'Transactions', href: '/admin/dashboard/transactions', icon: 'arrows' },
-  { label: 'Stats Editor', href: '/admin/dashboard/stats', icon: 'chart' },
   { label: 'Power Rankings', href: '/admin/dashboard/rankings', icon: 'trending' },
+  { label: 'Site Content', href: '/admin/dashboard/site-content', icon: 'grid' },
+  { label: 'Ticket Setup', href: '/admin/dashboard/ticket-setup', icon: 'alert' },
+  { label: 'Applications', href: '/admin/dashboard/applications', icon: 'user' },
   { label: 'Week Threads', href: '/admin/dashboard/weeks', icon: 'thread' },
   { label: 'Notification', href: '/admin/dashboard/notification', icon: 'bell' },
   { label: 'Tickets', href: '/admin/dashboard/tickets', icon: 'alert' },
+  { label: 'Logs', href: '/admin/dashboard/logs', icon: 'chart' },
 ]
 
 const ICON_PATHS = {

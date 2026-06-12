@@ -56,10 +56,20 @@ class CommandRegistrar {
         try {
             // Validate configuration
             validateConfig();
-            
+
             // Initialize REST client
             this.rest = new REST({ version: '10' }).setToken(config.discord.token);
-            
+
+            // Hydrate team constants from the database BEFORE loading commands,
+            // so slash-command team choices are built from the live team list.
+            try {
+                const { syncTeamConstants } = require('./src/utils/constantsSync');
+                const res = await syncTeamConstants();
+                Logger.info(`Team constants for registration: ${res.ok ? `DB (${res.teams} rows)` : `fallback constants (${res.note})`}`);
+            } catch (err) {
+                Logger.warning(`Constants sync failed (using hardcoded): ${err.message}`);
+            }
+
             // Load commands
             await this.commandHandler.loadCommands();
             

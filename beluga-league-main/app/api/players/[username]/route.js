@@ -3,6 +3,7 @@ import { query } from '../../../../lib/db'
 import { ensureLeagueSchema } from '../../../../lib/leagueSchema'
 import { getSalaryMap } from '../../../../lib/salarySheet'
 import { getMemberMap } from '../../../../lib/discordMembers'
+import { getPlayerStatsBundle } from '../../../../lib/belugaStats'
 
 export const dynamic = 'force-dynamic'
 
@@ -87,18 +88,24 @@ export async function GET(_request, { params }) {
     ORDER BY s.season_number DESC NULLS LAST, t.division, rm.updated_at DESC
   `, [discordId])
 
-  // Step 4: Per-season stats.
-  const statsRes = await query(`
-    SELECT pr.id, pr.season_id, s.season_number, pr.division,
-      pr.team_id, t.name AS team_name,
-      pr.player_name, pr.platform, pr.platform_id,
-      pr.games_played, pr.goals, pr.assists, pr.saves, pr.shots, pr.score
-    FROM player_records pr
-    LEFT JOIN seasons s ON s.id = pr.season_id
-    LEFT JOIN teams t ON t.id = pr.team_id
-    WHERE pr.platform_id = $1
-    ORDER BY s.season_number DESC NULLS LAST
-  `, [discordId])
+  // Step 4: Per-season stats — new Ballchasing-based stats system (keyed by
+  // discord id). Falls back to legacy player_records if the player has no new
+  // stats yet.
+  const belugaStats = await getPlayerStatsBundle(discordId)
+  let legacyStats = { rows: [] }
+  if (!belugaStats.seasons.length) {
+    legacyStats = await query(`
+      SELECT pr.id, pr.season_id, s.season_number, pr.division,
+        pr.team_id, t.name AS team_name,
+        pr.player_name, pr.platform, pr.platform_id,
+        pr.games_played, pr.goals, pr.assists, pr.saves, pr.shots, pr.score
+      FROM player_records pr
+      LEFT JOIN seasons s ON s.id = pr.season_id
+      LEFT JOIN teams t ON t.id = pr.team_id
+      WHERE pr.platform_id = $1
+      ORDER BY s.season_number DESC NULLS LAST
+    `, [discordId]).catch(() => ({ rows: [] }))
+  }
 
   // Transaction history for this player (public-safe fields only).
   const txRes = await query(`
@@ -162,17 +169,91 @@ export async function GET(_request, { params }) {
       rosterActive: r.roster_active,
       seasonStatus: r.season_status,
     })),
-    stats: statsRes.rows.map((r) => ({
+    stats: belugaStats.seasons.length
+      ? belugaStats.seasons
+          .filter((s) => !s.isPlayoff)
+          .map((s) => ({
+            seasonNumber: s.seasonNumber,
+            division: s.division,
+            teamName: s.teamName,
+            gamesPlayed: s.totals.games,
+            goals: s.totals.goals,
+            assists: s.totals.assists,
+            saves: s.totals.saves,
+            shots: s.totals.shots,
+            score: s.totals.score,
+            mvps: s.totals.mvps,
+            demosInflicted: s.totals.demosInflicted,
+            demosTaken: s.totals.demosTaken,
+            belugaScore: s.totals.belugaScore,
+            perGame: s.perGame,
+          }))
+      : legacyStats.rows.map((r) => ({
+          seasonNumber: r.season_number,
+          division: r.division,
+          teamName: r.team_name,
+          gamesPlayed: Number(r.games_played || 0),
+          goals: Number(r.goals || 0),
+          assists: Number(r.assists || 0),
+          saves: Number(r.saves || 0),
+          shots: Number(r.shots || 0),
+          score: Number(r.score || 0),
+        })),
+    // Full new-stats bundle: lifetime totals + per-game + per-season averages,
+    // playoff splits, name/account history, and recent game-by-game lines.
+    belugaStats,
+    // Admin-configured award roles this player holds (bot-synced snapshot).
+    awards: await (async () => {
+      try {
+        const cfg = await query(`SELECT value FROM app_config WHERE key = 'award_roles'`)
+        const list = JSON.parse(cfg.rows[0]?.value || '[]')
+        if (!list.length) return []
+        const held = await query(`SELECT role_id FROM award_role_holders WHERE discord_id = $1`, [discordId])
+        const heldSet = new Set(held.rows.map((r) => r.role_id))
+        return list.filter((r) => heldSet.has(r.roleId)).map((r) => ({ roleId: r.roleId, label: r.label }))
+      } catch { return [] }
+    })(),
+    // Championships: seasons where this player was on the champion team's roster.
+    championships: (await query(`
+      SELECT DISTINCT s.season_number, sc.division, t.name AS team_name
+      FROM season_champions sc
+      JOIN teams t ON t.id = sc.team_id
+      JOIN team_roster_members rm ON rm.team_id = sc.team_id AND rm.season_id = sc.season_id
+      LEFT JOIN seasons s ON s.id = sc.season_id
+      WHERE rm.discord_id = $1
+      ORDER BY s.season_number DESC
+    `, [discordId]).catch(() => ({ rows: [] }))).rows.map((r) => ({
       seasonNumber: r.season_number,
       division: r.division,
       teamName: r.team_name,
-      gamesPlayed: Number(r.games_played || 0),
-      goals: Number(r.goals || 0),
-      assists: Number(r.assists || 0),
-      saves: Number(r.saves || 0),
-      shots: Number(r.shots || 0),
-      score: Number(r.score || 0),
     })),
-    matches: [],
+    matches: belugaStats.recentGames.map((g) => {
+      // Everything from the PLAYER's perspective (their team vs the opponent),
+      // so the page never has to guess which side they were on.
+      const playerIsHome = g.playerTeam && g.playerTeam === g.home
+      const opponent = playerIsHome ? g.away : g.home
+      const ourScore = playerIsHome ? g.homeGoals : g.awayGoals
+      const oppScore = playerIsHome ? g.awayGoals : g.homeGoals
+      return {
+        week: g.week,
+        isPlayoff: g.isPlayoff,
+        division: g.division,
+        home: g.home,
+        away: g.away,
+        playerTeam: g.playerTeam,
+        opponent,
+        ourScore: Number(ourScore || 0),
+        oppScore: Number(oppScore || 0),
+        result: Number(ourScore || 0) > Number(oppScore || 0) ? 'W' : Number(ourScore || 0) < Number(oppScore || 0) ? 'L' : 'T',
+        homeScore: g.homeGoals,
+        awayScore: g.awayGoals,
+        stats: {
+          score: g.score, goals: g.goals, assists: g.assists, saves: g.saves,
+          shots: g.shots, mvp: g.mvp, demosInflicted: g.demosInflicted, demosTaken: g.demosTaken,
+        },
+        replayUrl: g.replayUrl,
+        createdAt: g.playedAt,
+      }
+    }),
   })
 }

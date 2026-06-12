@@ -343,7 +343,7 @@ module.exports = {
                 // Show salary if available
                 if (salSheetData.salary && salSheetData.salary !== 'N/A' && salSheetData.salary.trim() !== '') {
                     partialEmbed.addFields([
-                        { name: '� Salary', value: `$${salSheetData.salary}`, inline: true }
+                        { name: '- Salary', value: `$${salSheetData.salary}`, inline: true }
                     ]);
                 }
 
@@ -391,135 +391,96 @@ module.exports = {
                 return;
             }
 
-            // Build the main embed with player information (using SalSheet name as priority)
-            // Use targetMember for the display name (clickable profile in Discord)
+            // ---- Professional profile: identity -> team/salary -> status ->
+            // roles -> career stats -> trackers -> membership. Embed colored
+            // with the player's team color from the database.
             const clickableProfile = targetMember ? `${targetMember}` : `<@${targetUser.id}>`;
-            
+            const teamInfo = playerData.team !== 'N/A' ? playerData.team : null;
+            const leagueInfo = playerData.league !== 'N/A' ? playerData.league.toUpperCase() : null;
+
+            let embedColor = 0x2B6CB0;
+            let statsLine = null;
+            try {
+                const { findTeam, getTeamColorInt } = require('../utils/teamRoles');
+                if (teamInfo) {
+                    const dbTeam = await findTeam(teamInfo, leagueInfo === 'MAJORS' ? 'Majors' : leagueInfo);
+                    if (dbTeam) embedColor = await getTeamColorInt(dbTeam.id);
+                }
+                const { pool, isDatabaseAvailable } = require('../utils/database');
+                if (typeof isDatabaseAvailable === 'function' ? isDatabaseAvailable() : isDatabaseAvailable) {
+                    const s = await pool.query(
+                        `SELECT SUM(games)::int AS games, SUM(goals)::int AS goals, SUM(assists)::int AS assists,
+                                SUM(saves)::int AS saves, SUM(mvps)::int AS mvps
+                         FROM stats_player_lifetime WHERE discord_id = $1`,
+                        [String(targetUser.id)]
+                    );
+                    const st = s.rows[0];
+                    if (st && Number(st.games) > 0) {
+                        statsLine = `${st.games} games · ${st.goals} goals · ${st.assists} assists · ${st.saves} saves · ${st.mvps} MVPs`;
+                    }
+                }
+            } catch { /* profile renders without stats */ }
+
             const embed = new EmbedBuilder()
-                .setTitle(`📋 Player Profile: ${displayName}`)
-                .setColor(0x00D9FF)
+                .setAuthor({ name: 'Beluga League — Player Profile', iconURL: interaction.client.user.displayAvatarURL() })
+                .setTitle(displayName)
+                .setColor(embedColor)
                 .setThumbnail(targetUser.displayAvatarURL({ dynamic: true, size: 256 }))
                 .setTimestamp()
                 .setFooter({ text: `Requested by ${interaction.user.username}`, iconURL: interaction.user.displayAvatarURL() });
 
-            // Basic Information (show both username and display name)
-            embed.addFields([
-                { name: '👤 Username', value: `\`${username}\``, inline: true },
-                { name: '📛 Display Name', value: clickableProfile, inline: true },
-                { name: '🆔 Discord ID', value: `\`${playerData.userId}\``, inline: true },
-                { name: '💰 Salary', value: playerData.salary !== 'N/A' ? `${playerData.salary}` : 'N/A', inline: true },
-                { name: '\u200B', value: '\u200B', inline: true }, // Spacer
-                { name: '\u200B', value: '\u200B', inline: true }  // Spacer
-            ]);
+            embed.addFields(
+                { name: 'Player', value: `${clickableProfile}\n\`${username}\` · \`${playerData.userId}\``, inline: true },
+                { name: 'Team', value: teamInfo ? `**${teamInfo}**${leagueInfo ? `\n${leagueInfo}` : ''}` : '*Free agent*', inline: true },
+                { name: 'Salary', value: playerData.salary !== 'N/A' ? `$${String(playerData.salary).replace(/^\$/, '')}` : '—', inline: true },
+            );
 
-            // Team & League Information
-            const teamInfo = playerData.team !== 'N/A' ? playerData.team : 'No Team';
-            const leagueInfo = playerData.league !== 'N/A' ? playerData.league.toUpperCase() : 'N/A';
-            
-            embed.addFields([
-                { name: '🏆 League', value: leagueInfo, inline: true },
-                { name: '🎯 Team', value: teamInfo, inline: true },
-                { name: '\u200B', value: '\u200B', inline: true } // Spacer
-            ]);
-
-            // Status Badges (using SalSheet data as priority)
             const statusBadges = getStatusBadges(playerData, salSheetData);
-            if (statusBadges) {
-                embed.addFields([
-                    { name: '📊 Status', value: statusBadges, inline: false }
-                ]);
-            }
-
-            // IR Expiry Date (if in reserve)
+            const statusBits = [];
+            if (statusBadges) statusBits.push(statusBadges);
             if (salSheetData.inReserve && salSheetData.inReserve.toUpperCase() === 'YES' && salSheetData.irExpiry) {
-                const irExpiryDate = new Date(salSheetData.irExpiry);
-                const formattedIRDate = irExpiryDate.toLocaleDateString('en-US', { 
-                    month: 'short', 
-                    day: 'numeric', 
-                    year: 'numeric' 
-                });
-                embed.addFields([
-                    { name: '🏥 IR Release Date', value: `**${formattedIRDate}**`, inline: true }
-                ]);
+                const d = new Date(salSheetData.irExpiry);
+                statusBits.push(`IR until **${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}**`);
             }
-
-            // RFA Expiry Date (if RFA)
             if (salSheetData.rfa && salSheetData.rfa.toUpperCase() === 'YES' && salSheetData.rfaExpiry) {
-                // Display the stored date+time directly (already in EST format)
-                embed.addFields([
-                    { name: '🔒 RFA Release Date', value: `**${salSheetData.rfaExpiry}**`, inline: true }
-                ]);
+                statusBits.push(`RFA until **${salSheetData.rfaExpiry}**`);
             }
+            if (statusBits.length) embed.addFields({ name: 'Status', value: statusBits.join('\n'), inline: false });
 
-            // Captain Roles & GM
             const captainRoles = getCaptainRoles(playerData);
             const rolesList = [];
-            
-            if (playerData.isGM && playerData.isGM.trim() !== '') {
-                rolesList.push('⭐ **General Manager**');
-            }
-            if (captainRoles.length > 0) {
-                rolesList.push(`👑 **${captainRoles.join(', ')}**`);
-            }
-            
-            if (rolesList.length > 0) {
-                embed.addFields([
-                    { name: '🎖️ Roles', value: rolesList.join('\n'), inline: false }
-                ]);
-            }
+            if (playerData.isGM && playerData.isGM.trim() !== '') rolesList.push('**General Manager**');
+            if (captainRoles.length > 0) rolesList.push(`**${captainRoles.join(', ')}**`);
+            if (rolesList.length) embed.addFields({ name: 'League Roles', value: rolesList.join(' · '), inline: false });
 
-            // Tracker Information
+            if (statsLine) embed.addFields({ name: 'Career Stats', value: statsLine, inline: false });
+
+            const trackerLines = [];
             if (playerData.mainTracker && playerData.mainTracker.trim() !== '') {
-                const mainTrackerLink = shortenTrackerUrl(playerData.mainTracker);
-                if (mainTrackerLink) {
-                    embed.addFields([
-                        { name: '🎮 Main Tracker', value: mainTrackerLink, inline: false }
-                    ]);
-                }
+                const main = shortenTrackerUrl(playerData.mainTracker);
+                if (main) trackerLines.push(`Main: ${main}`);
             }
-
-            // Alt Trackers (shortened to links)
             if (playerData.altTrackers && playerData.altTrackers.trim() !== '') {
                 const altUrls = parseTrackerUrls(playerData.altTrackers);
-                
-                if (altUrls.length > 0) {
-                    const maxAltsToShow = Math.min(5, altUrls.length);
-                    const altLinks = [];
-                    
-                    for (let i = 0; i < maxAltsToShow; i++) {
-                        const shortLink = shortenTrackerUrl(altUrls[i]);
-                        if (shortLink) {
-                            altLinks.push(`${i + 1}. ${shortLink}`);
-                        }
-                    }
-                    
-                    if (altUrls.length > 5) {
-                        altLinks.push(`*...and ${altUrls.length - 5} more*`);
-                    }
-                    
-                    if (altLinks.length > 0) {
-                        embed.addFields([
-                            { name: `🔄 Alt Trackers (${altUrls.length})`, value: altLinks.join('\n'), inline: false }
-                        ]);
-                    }
-                }
+                altUrls.slice(0, 4).forEach((u, i) => {
+                    const link = shortenTrackerUrl(u);
+                    if (link) trackerLines.push(`Alt ${i + 1}: ${link}`);
+                });
+                if (altUrls.length > 4) trackerLines.push(`*…and ${altUrls.length - 4} more*`);
             }
+            if (trackerLines.length) embed.addFields({ name: 'Trackers', value: trackerLines.join('\n'), inline: false });
 
-            // Additional Info Section
-            const additionalInfo = [];
-            
-            if (targetMember) {
-                const joinedDate = targetMember.joinedAt ? `<t:${Math.floor(targetMember.joinedAt.getTime() / 1000)}:R>` : 'Unknown';
-                additionalInfo.push(`**Server Join Date:** ${joinedDate}`);
-            }
-            
-            const accountCreated = `<t:${Math.floor(targetUser.createdAt.getTime() / 1000)}:R>`;
-            additionalInfo.push(`**Account Created:** ${accountCreated}`);
-            
-            if (additionalInfo.length > 0) {
-                embed.addFields([
-                    { name: 'ℹ️ Additional Info', value: additionalInfo.join('\n'), inline: false }
-                ]);
+            const joined = targetMember?.joinedAt ? `<t:${Math.floor(targetMember.joinedAt.getTime() / 1000)}:R>` : null;
+            const created = `<t:${Math.floor(targetUser.createdAt.getTime() / 1000)}:R>`;
+            embed.addFields({
+                name: 'Discord',
+                value: `${joined ? `Joined server ${joined} · ` : ''}Account created ${created}`,
+                inline: false,
+            });
+
+            const site = process.env.RAILWAY_PUBLIC_DOMAIN;
+            if (site) {
+                embed.addFields({ name: 'Full profile', value: `https://${site}/players/${encodeURIComponent(String(targetUser.id))}`, inline: false });
             }
 
             await interaction.editReply({ embeds: [embed] });

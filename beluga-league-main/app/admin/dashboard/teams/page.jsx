@@ -398,36 +398,24 @@ function TeamCard({ team, onChanged }) {
 }
 
 function RoleIdRow({ team, onChanged }) {
+  // Per-team only carries the TEAM role. GM + NP roles live on the FRANCHISE
+  // (one each per franchise), and the captain role is a fixed per-division role.
   const [open, setOpen] = useState(false)
-  const [form, setForm] = useState({
-    discordRoleId: team.discordRoleId || '',
-    discordGmRoleId: team.discordGmRoleId || '',
-    discordCaptainRoleId: team.discordCaptainRoleId || '',
-    discordNpRoleId: team.discordNpRoleId || '',
-  })
+  const [form, setForm] = useState({ discordRoleId: team.discordRoleId || '' })
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
-    setForm({
-      discordRoleId: team.discordRoleId || '',
-      discordGmRoleId: team.discordGmRoleId || '',
-      discordCaptainRoleId: team.discordCaptainRoleId || '',
-      discordNpRoleId: team.discordNpRoleId || '',
-    })
-  }, [team.id, team.discordRoleId, team.discordGmRoleId, team.discordCaptainRoleId, team.discordNpRoleId])
+    setForm({ discordRoleId: team.discordRoleId || '' })
+  }, [team.id, team.discordRoleId])
 
-  const anySet = team.discordRoleId || team.discordGmRoleId || team.discordCaptainRoleId || team.discordNpRoleId
+  const anySet = Boolean(team.discordRoleId)
 
   async function save() {
     setBusy(true)
-    const payload = {}
-    for (const k of ['discordRoleId', 'discordGmRoleId', 'discordCaptainRoleId', 'discordNpRoleId']) {
-      payload[k] = form[k].trim() || null
-    }
     await fetch(`/api/admin/teams/${team.id}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ discordRoleId: form.discordRoleId.trim() || null }),
     })
     setBusy(false)
     setSaved(true)
@@ -441,33 +429,26 @@ function RoleIdRow({ team, onChanged }) {
         onClick={() => setOpen(!open)}
         className="text-[10px] font-bold uppercase tracking-wider text-blue-300/70 hover:text-blue-200 flex items-center gap-1"
       >
-        {open ? '▴' : '▾'} Discord role IDs
+        {open ? '▴' : '▾'} Team role ID
         {anySet && <span className="text-green-300 ml-1">✓</span>}
         {!anySet && <span className="text-yellow-300/70 ml-1">⚠ not set</span>}
       </button>
       {open && (
-        <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
-          {[
-            { key: 'discordRoleId', label: 'Team role ID' },
-            { key: 'discordGmRoleId', label: 'GM role ID' },
-            { key: 'discordCaptainRoleId', label: 'Captain role ID' },
-            { key: 'discordNpRoleId', label: 'NP (non-playing) role ID' },
-          ].map(({ key, label }) => (
-            <div key={key}>
-              <label className="block text-[9px] uppercase tracking-wider text-blue-300/70 mb-0.5">{label}</label>
-              <input
-                type="text"
-                value={form[key]}
-                onChange={(e) => setForm({ ...form, [key]: e.target.value })}
-                placeholder="role snowflake (or blank)"
-                className="w-full px-2 py-1 bg-black/40 border border-white/10 rounded text-white font-mono text-[11px]"
-              />
-            </div>
-          ))}
+        <div className="mt-2 grid grid-cols-1 gap-2 text-[11px]">
+          <div>
+            <label className="block text-[9px] uppercase tracking-wider text-blue-300/70 mb-0.5">Team role ID</label>
+            <input
+              type="text"
+              value={form.discordRoleId}
+              onChange={(e) => setForm({ discordRoleId: e.target.value })}
+              placeholder="role snowflake (or blank)"
+              className="w-full px-2 py-1 bg-black/40 border border-white/10 rounded text-white font-mono text-[11px]"
+            />
+          </div>
           <div className="col-span-full flex items-center gap-2 mt-1">
-            <button onClick={save} disabled={busy} className="px-2 py-1 text-[10px] font-bold text-white bg-blue-500 hover:bg-blue-400 disabled:opacity-50 rounded">{busy ? 'Saving…' : 'Save role IDs'}</button>
+            <button onClick={save} disabled={busy} className="px-2 py-1 text-[10px] font-bold text-white bg-blue-500 hover:bg-blue-400 disabled:opacity-50 rounded">{busy ? 'Saving…' : 'Save'}</button>
             {saved && <span className="text-[10px] text-green-300">✓ saved</span>}
-            <span className="text-[10px] text-white/40 ml-auto">Used by the bot when assigning/removing roles.</span>
+            <span className="text-[10px] text-white/40 ml-auto">GM + NP roles are set on the franchise. Captain roles are per-division (fixed).</span>
           </div>
         </div>
       )}
@@ -645,7 +626,10 @@ function FranchiseRow({ franchise, expanded, onToggle, onChanged }) {
             <button onClick={onToggle} className="text-left w-full">
               <div className="text-sm font-bold text-white truncate hover:text-blue-200">{franchise.name}</div>
               <div className="text-[11px] text-blue-200/50">
-                {franchise.defaultDivision || 'Any division'} · {franchise.seasonCount || 0} season{franchise.seasonCount === 1 ? '' : 's'}
+                {(franchise.currentDivisions && franchise.currentDivisions.length)
+                  ? `Fielding: ${['Majors', 'AAA', 'AA'].filter((d) => franchise.currentDivisions.includes(d)).join(' · ')}`
+                  : 'Not fielding this season'}
+                {` · ${franchise.seasonCount || 0} season${franchise.seasonCount === 1 ? '' : 's'}`}
                 {franchise.lastSeasonNumber ? ` · last S${franchise.lastSeasonNumber}` : ''}
                 {!franchise.isActive && <span className="text-red-300/80"> · Disabled</span>}
               </div>
@@ -673,7 +657,95 @@ function FranchiseRow({ franchise, expanded, onToggle, onChanged }) {
         </div>
       </div>
 
-      {expanded && <FranchiseHistory franchiseId={franchise.id} />}
+      {expanded && (
+        <>
+          <FranchiseDiscordRow franchise={franchise} onChanged={onChanged} />
+          <FranchiseHistory franchiseId={franchise.id} />
+        </>
+      )}
+    </div>
+  )
+}
+
+function FranchiseDiscordRow({ franchise, onChanged }) {
+  // One GM role + one NP role per franchise (covers all its division teams),
+  // plus the franchise's Discord invite link (used by the bot's /franchise).
+  const [form, setForm] = useState({
+    gmRoleId: franchise.gmRoleId || '',
+    npRoleId: franchise.npRoleId || '',
+    discordInviteUrl: franchise.discordInviteUrl || '',
+    color: franchise.color || '#3498DB',
+  })
+  const [busy, setBusy] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    setForm({
+      gmRoleId: franchise.gmRoleId || '',
+      npRoleId: franchise.npRoleId || '',
+      discordInviteUrl: franchise.discordInviteUrl || '',
+      color: franchise.color || '#3498DB',
+    })
+  }, [franchise.id, franchise.gmRoleId, franchise.npRoleId, franchise.discordInviteUrl, franchise.color])
+
+  async function save() {
+    setBusy(true)
+    await fetch(`/api/admin/franchises/${franchise.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
+      body: JSON.stringify({
+        gmRoleId: form.gmRoleId.trim() || null,
+        npRoleId: form.npRoleId.trim() || null,
+        discordInviteUrl: form.discordInviteUrl.trim() || null,
+        color: form.color || null,
+      }),
+    })
+    setBusy(false)
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
+    onChanged?.()
+  }
+
+  return (
+    <div className="bg-black/10 border-t border-white/5 px-4 py-3">
+      <div className="text-[10px] font-bold uppercase tracking-wider text-blue-300/70 mb-2">
+        Discord (franchise-wide)
+        {(franchise.gmRoleId && franchise.npRoleId) ? <span className="text-green-300 ml-1">✓</span> : <span className="text-yellow-300/70 ml-1">⚠ incomplete</span>}
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
+        {[
+          { key: 'gmRoleId', label: 'GM role ID', ph: 'role snowflake' },
+          { key: 'npRoleId', label: 'NP (non-playing) role ID', ph: 'role snowflake' },
+          { key: 'discordInviteUrl', label: 'Discord invite link', ph: 'https://discord.gg/…' },
+        ].map(({ key, label, ph }) => (
+          <div key={key}>
+            <label className="block text-[9px] uppercase tracking-wider text-blue-300/70 mb-0.5">{label}</label>
+            <input
+              type="text"
+              value={form[key]}
+              onChange={(e) => setForm({ ...form, [key]: e.target.value })}
+              placeholder={ph}
+              className="w-full px-2 py-1 bg-black/40 border border-white/10 rounded text-white font-mono text-[11px]"
+            />
+          </div>
+        ))}
+        <div>
+          <label className="block text-[9px] uppercase tracking-wider text-blue-300/70 mb-0.5">Team color (embeds/cards)</label>
+          <div className="flex items-center gap-2">
+            <input
+              type="color"
+              value={/^#[0-9a-fA-F]{6}$/.test(form.color) ? form.color : '#3498DB'}
+              onChange={(e) => setForm({ ...form, color: e.target.value })}
+              className="w-10 h-7 bg-black/40 border border-white/10 rounded cursor-pointer"
+            />
+            <span className="text-[11px] font-mono text-white/70">{form.color}</span>
+          </div>
+        </div>
+      </div>
+      <div className="flex items-center gap-2 mt-2">
+        <button onClick={save} disabled={busy} className="px-2 py-1 text-[10px] font-bold text-white bg-blue-500 hover:bg-blue-400 disabled:opacity-50 rounded">{busy ? 'Saving…' : 'Save Discord settings'}</button>
+        {saved && <span className="text-[10px] text-green-300">✓ saved</span>}
+        <span className="text-[10px] text-white/40 ml-auto">Applies to all of this franchise's division teams.</span>
+      </div>
     </div>
   )
 }

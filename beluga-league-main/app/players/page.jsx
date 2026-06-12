@@ -59,7 +59,12 @@ function adaptApiPlayer(p) {
     isFreeAgent: !!p.isFreeAgent,
     role: p.role || null,
     rank: 0,
-    goals: 0, assists: 0, saves: 0, mvps: 0,
+    // Season stat chips from the new stats system (zeros until they play).
+    goals: p.stats?.goals || 0,
+    assists: p.stats?.assists || 0,
+    saves: p.stats?.saves || 0,
+    mvps: p.stats?.mvps || 0,
+    games: p.stats?.games || 0,
     salary: Number(p.salary) || 0,
     eligible: p.eligible,
     achievements: [],

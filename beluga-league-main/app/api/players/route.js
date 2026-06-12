@@ -42,6 +42,24 @@ export async function GET() {
     ORDER BY last_seen DESC NULLS LAST
   `)
 
+  // Season stat chips (new stats system) for directory cards.
+  const statsByDiscord = new Map()
+  if (activeSeasonId) {
+    const sr = await query(`
+      SELECT discord_id, SUM(games)::int AS games, SUM(goals)::int AS goals,
+        SUM(assists)::int AS assists, SUM(saves)::int AS saves, SUM(mvps)::int AS mvps
+      FROM stats_player_season
+      WHERE season_id = $1 AND is_playoff = FALSE
+      GROUP BY discord_id
+    `, [activeSeasonId]).catch(() => ({ rows: [] }))
+    for (const row of sr.rows) {
+      statsByDiscord.set(String(row.discord_id), {
+        games: Number(row.games || 0), goals: Number(row.goals || 0),
+        assists: Number(row.assists || 0), saves: Number(row.saves || 0), mvps: Number(row.mvps || 0),
+      })
+    }
+  }
+
   // Current rosters for the active season (if any).
   const currentByDiscord = new Map()
   if (activeSeasonId) {
@@ -128,8 +146,10 @@ export async function GET() {
     return (a.displayName || '').localeCompare(b.displayName || '')
   })
 
+  const playersWithStats = players.map((p) => ({ ...p, stats: statsByDiscord.get(String(p.discordId)) || null }))
+
   return NextResponse.json({
-    players,
+    players: playersWithStats,
     seasonId: activeSeasonId,
     season: season || null,
     fromCache: false,

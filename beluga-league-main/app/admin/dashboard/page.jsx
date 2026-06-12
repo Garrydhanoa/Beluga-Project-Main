@@ -8,8 +8,8 @@ const QUICK_LINKS = [
   { label: 'Seasons', href: '/admin/dashboard/seasons', desc: 'Lifecycle, champions, teams' },
   { label: 'Teams & Franchises', href: '/admin/dashboard/teams', desc: 'Active teams + franchise registry' },
   { label: 'Schedule', href: '/admin/dashboard/schedule', desc: 'Generate + edit matchups' },
+  { label: 'Match Results', href: '/admin/dashboard/matches', desc: 'Reported series + stat edits' },
   { label: 'Players', href: '/admin/dashboard/players', desc: 'Everyone who has ever played' },
-  { label: 'Stats Editor', href: '/admin/dashboard/stats', desc: 'Manual standings + player stats' },
 ]
 
 function Tile({ value, label, sub, href }) {

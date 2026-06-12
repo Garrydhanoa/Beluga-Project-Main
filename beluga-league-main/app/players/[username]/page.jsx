@@ -164,7 +164,22 @@ export default function PlayerProfilePage() {
       eligible: apiData.player.eligible,
       shootingPct: totalStats.shots > 0 ? Math.round((totalStats.goals / totalStats.shots) * 100) : 0,
       ranks: { goals: 0, assists: 0, saves: 0, shots: 0, mvps: 0 },
-      achievements: [],
+      // Championships (from season_champions × roster) render as gold badges;
+      // MVP totals from the new stats system get a badge too.
+      achievements: [
+        ...(apiData.championships || []).map((c) => ({
+          key: `champ-s${c.seasonNumber}-${c.division}`,
+          label: `🏆 S${c.seasonNumber} ${c.division} Champion`,
+        })),
+        ...(apiData.awards || []).map((a) => ({
+          key: `award-${a.roleId}`,
+          label: `🏅 ${a.label}`,
+        })),
+        ...(() => {
+          const mvps = Number(apiData.belugaStats?.lifetime?.regular?.totals?.mvps || 0)
+          return mvps > 0 ? [{ key: 'mvps', label: `⭐ ${mvps} MVP${mvps === 1 ? '' : 's'}` }] : []
+        })(),
+      ],
     }
   }, [apiData])
 
@@ -172,13 +187,20 @@ export default function PlayerProfilePage() {
 
   const history = useMemo(() => {
     if (!apiData?.matches) return []
-    return apiData.matches.map((m) => ({
-      result: (m.homeScore || 0) > (m.awayScore || 0) ? 'W' : ((m.homeScore || 0) < (m.awayScore || 0) ? 'L' : 'T'),
-      opponent: m.home && m.away ? `${m.home} vs ${m.away}` : '—',
-      ownScore: m.homeScore,
-      oppScore: m.awayScore,
-      weekLabel: m.isPlayoff ? 'Playoffs' : `Week ${m.week ?? '—'}`,
-    }))
+    return apiData.matches.map((m) => {
+      // Prefer the API's player-perspective fields; fall back for old payloads.
+      const opponent = m.opponent || (m.playerTeam && m.home === m.playerTeam ? m.away : m.home) || '—'
+      const ownScore = m.ourScore ?? m.homeScore ?? 0
+      const oppScore = m.oppScore ?? m.awayScore ?? 0
+      return {
+        result: m.result || (ownScore > oppScore ? 'W' : ownScore < oppScore ? 'L' : 'T'),
+        opponent,
+        ownScore,
+        oppScore,
+        mvp: Boolean(m.stats?.mvp),
+        weekLabel: m.isPlayoff ? 'Playoffs' : `Week ${m.week ?? '—'}`,
+      }
+    })
   }, [apiData])
 
   const recentForm = useMemo(() => history.slice(0, 5).map((h) => h.result), [history])
@@ -507,13 +529,13 @@ export default function PlayerProfilePage() {
               </div>
             </div>
 
-            {/* Record stat row */}
+            {/* Record stat row (per-game, from the player's match history) */}
             <div className="grid grid-cols-3 sm:grid-cols-6 gap-3 pt-5 border-t border-white/10">
-              <RecordStat label="Record" value={`${wins}-${losses}-0`} />
+              <RecordStat label="Game Record" value={`${wins}-${losses}`} />
               <RecordStat label="Win Rate" value={`${winRate}%`} />
-              <RecordStat label="GF" value={goalsFor} />
-              <RecordStat label="GA" value={goalsAgainst} />
-              <RecordStat label="GD" value={goalDiff >= 0 ? `+${goalDiff}` : `${goalDiff}`} highlight={goalDiff >= 0} />
+              <RecordStat label="Goals For" value={goalsFor} />
+              <RecordStat label="Goals Against" value={goalsAgainst} />
+              <RecordStat label="Goal Diff" value={goalDiff >= 0 ? `+${goalDiff}` : `${goalDiff}`} highlight={goalDiff >= 0} />
               <RecordStat label="Streak" value={streakCount > 0 ? `${streakCount}${streakType}` : '—'} highlight={streakType === 'W'} />
             </div>
           </div>
@@ -609,8 +631,75 @@ export default function PlayerProfilePage() {
             </div>
           )}
         </FadeIn>
+
+        {/* ============ IDENTITY & QUOTES ============ */}
+        <PlayerExtras
+          discordId={player.discordId}
+          nameHistory={apiData?.belugaStats?.nameHistory || []}
+          accounts={apiData?.belugaStats?.accounts || []}
+        />
       </section>
     </div>
+  )
+}
+
+// In-game identity (account/name history from the stats system) + any quotes
+// staff pinned to this player (admin → Site Content).
+function PlayerExtras({ discordId, nameHistory, accounts }) {
+  const [quotes, setQuotes] = useState([])
+  useEffect(() => {
+    if (!discordId) return
+    fetch(`/api/public/site-content?player=${encodeURIComponent(discordId)}`, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((d) => setQuotes(d.playerQuotes || []))
+      .catch(() => {})
+  }, [discordId])
+
+  const seenNames = [...new Set(nameHistory.map((n) => n.name).filter(Boolean))].slice(0, 8)
+  if (!seenNames.length && !accounts.length && !quotes.length) return null
+
+  return (
+    <FadeIn delay={0.38}>
+      <div className="mt-10 grid grid-cols-1 md:grid-cols-2 gap-6">
+        {(seenNames.length > 0 || accounts.length > 0) && (
+          <div className="p-5 rounded-2xl bg-white/[0.02] border border-white/10">
+            <div className="text-[10px] font-bold tracking-[0.25em] uppercase text-blue-300/70 mb-3">In-Game Identity</div>
+            {seenNames.length > 0 && (
+              <div className="mb-3">
+                <div className="text-[10px] text-white/40 uppercase mb-1">Known as</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {seenNames.map((n) => (
+                    <span key={n} className="px-2 py-0.5 rounded bg-blue-500/10 border border-blue-400/25 text-blue-100 text-xs">{n}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {accounts.length > 0 && (
+              <div>
+                <div className="text-[10px] text-white/40 uppercase mb-1">Linked accounts</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {accounts.map((a, i) => (
+                    <span key={i} className="px-2 py-0.5 rounded bg-white/5 border border-white/10 text-white/70 text-[11px] font-mono">
+                      {a.platform}{a.current_name ? ` · ${a.current_name}` : ''}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+        {quotes.length > 0 && (
+          <div className="p-5 rounded-2xl bg-white/[0.02] border border-white/10">
+            <div className="text-[10px] font-bold tracking-[0.25em] uppercase text-blue-300/70 mb-3">Quotes</div>
+            <div className="space-y-2">
+              {quotes.map((q, i) => (
+                <p key={i} className="text-sm text-blue-100/80 italic">“{q.text}” <span className="not-italic text-xs text-blue-300/70">— {q.author}</span></p>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </FadeIn>
   )
 }
 
@@ -763,6 +852,7 @@ function MatchRow({ match }) {
         className="flex-1 min-w-0 text-sm font-bold text-white hover:text-blue-200 transition-colors truncate"
       >
         vs {match.opponent}
+        {match.mvp && <span className="ml-2 text-[10px] text-yellow-300 font-black" title="MVP of this game">⭐ MVP</span>}
       </Link>
 
       {/* Score */}

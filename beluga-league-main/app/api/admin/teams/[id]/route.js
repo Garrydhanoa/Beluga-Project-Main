@@ -37,6 +37,7 @@ export async function PATCH(request, { params }) {
   if (body.discordGmRoleId !== undefined) patch.discordGmRoleId = body.discordGmRoleId ? String(body.discordGmRoleId).trim() : null
   if (body.discordCaptainRoleId !== undefined) patch.discordCaptainRoleId = body.discordCaptainRoleId ? String(body.discordCaptainRoleId).trim() : null
   if (body.discordNpRoleId !== undefined) patch.discordNpRoleId = body.discordNpRoleId ? String(body.discordNpRoleId).trim() : null
+  if (body.slogan !== undefined) patch.slogan = body.slogan ? String(body.slogan).trim() : null
 
   const team = await updateTeam(teamId, patch)
   return NextResponse.json({ ok: true, team })

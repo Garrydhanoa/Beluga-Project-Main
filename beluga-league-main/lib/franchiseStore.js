@@ -9,11 +9,16 @@ function mapFranchise(row) {
     defaultDivision: row.default_division,
     isActive: row.is_active,
     hasLogo: Boolean(row.logo_mime && row.logo_data),
+    gmRoleId: row.gm_role_id || null,
+    npRoleId: row.np_role_id || null,
+    discordInviteUrl: row.discord_invite_url || null,
+    color: row.color || null,
     logoMime: row.logo_mime || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     lastSeasonNumber: row.last_season_number ?? null,
     seasonCount: row.season_count != null ? Number(row.season_count) : null,
+    currentDivisions: Array.isArray(row.current_divisions) ? row.current_divisions : [],
   }
 }
 
@@ -24,7 +29,8 @@ export async function listFranchises({ activeOnly = false } = {}) {
     SELECT
       f.*,
       COALESCE(MAX(s.season_number), NULL) AS last_season_number,
-      COUNT(DISTINCT t.season_id) AS season_count
+      COUNT(DISTINCT t.season_id) AS season_count,
+      ARRAY_REMOVE(ARRAY_AGG(DISTINCT CASE WHEN s.status = 'active' AND t.is_active THEN t.division END), NULL) AS current_divisions
     FROM team_franchises f
     LEFT JOIN teams t ON t.franchise_id = f.id
     LEFT JOIN seasons s ON s.id = t.season_id
@@ -69,6 +75,10 @@ export async function updateFranchise(id, patch) {
   if (patch.name !== undefined) { fields.push(`name = $${i++}`); values.push(String(patch.name).trim()) }
   if (patch.defaultDivision !== undefined) { fields.push(`default_division = $${i++}`); values.push(patch.defaultDivision) }
   if (patch.isActive !== undefined) { fields.push(`is_active = $${i++}`); values.push(Boolean(patch.isActive)) }
+  if (patch.gmRoleId !== undefined) { fields.push(`gm_role_id = $${i++}`); values.push(patch.gmRoleId || null) }
+  if (patch.npRoleId !== undefined) { fields.push(`np_role_id = $${i++}`); values.push(patch.npRoleId || null) }
+  if (patch.discordInviteUrl !== undefined) { fields.push(`discord_invite_url = $${i++}`); values.push(patch.discordInviteUrl || null) }
+  if (patch.color !== undefined) { fields.push(`color = $${i++}`); values.push(patch.color || null) }
   if (!fields.length) return getFranchise(id)
   values.push(id)
   const result = await query(

@@ -106,6 +106,17 @@ export default function WeekThreadsPage() {
     await reload()
   }
 
+  async function deleteTranscripts(week) {
+    if (!data?.season?.id) return
+    if (!confirm(`Delete ALL saved transcripts for Week ${week}? The Discord threads are untouched - this only clears the website's stored messages/archives. Cannot be undone.`)) return
+    setBusy(true)
+    const r = await fetch(`/api/admin/transcripts?weekThreads=${week}&seasonId=${data.season.id}`, { method: 'DELETE' })
+    const d = await r.json().catch(() => ({}))
+    setBusy(false)
+    alert(r.ok ? `Deleted ${d.deletedMessages || 0} messages + ${d.deletedArchives || 0} archives across ${d.threads || 0} thread(s).` : 'Failed to delete transcripts.')
+    await reload()
+  }
+
   const threads = data?.threads || []
   // Group by week_number
   const byWeek = threads.reduce((acc, t) => {
@@ -167,7 +178,7 @@ export default function WeekThreadsPage() {
           ) : (
             <div className="space-y-4">
               {weekNumbers.map((week) => (
-                <WeekSection key={week} week={week} threads={byWeek[week]} currentWeek={data.currentWeek} onDeleteWeek={() => deleteWeek(week)} onViewTranscript={setTranscriptThread} />
+                <WeekSection key={week} week={week} threads={byWeek[week]} currentWeek={data.currentWeek} onDeleteWeek={() => deleteWeek(week)} onDeleteTranscripts={() => deleteTranscripts(week)} onViewTranscript={setTranscriptThread} />
               ))}
             </div>
           )}
@@ -326,7 +337,7 @@ function StartDateBar({ season, currentWeek, nextMondayIso, busy, onSave, onMate
   )
 }
 
-function WeekSection({ week, threads, currentWeek, onDeleteWeek, onViewTranscript }) {
+function WeekSection({ week, threads, currentWeek, onDeleteWeek, onDeleteTranscripts, onViewTranscript }) {
   const isCurrent = week === currentWeek
   const byDivision = threads.reduce((acc, t) => {
     if (!acc[t.division]) acc[t.division] = []
@@ -346,6 +357,10 @@ function WeekSection({ week, threads, currentWeek, onDeleteWeek, onViewTranscrip
           <button onClick={onDeleteWeek} title="Bot deletes the Discord thread(s) and saves each transcript on the website"
             className="px-2 py-1 text-[10px] uppercase font-bold text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded">
             Delete Week
+          </button>
+          <button onClick={onDeleteTranscripts} title="Delete this week's saved transcripts from the website (threads untouched)"
+            className="px-2 py-1 text-[10px] uppercase font-bold text-white/50 hover:text-red-300 bg-white/5 border border-white/10 rounded">
+            Delete Transcripts
           </button>
         </div>
       </div>

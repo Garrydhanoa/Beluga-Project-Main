@@ -134,6 +134,17 @@ export default function TicketsPage() {
                         >
                           View transcript
                         </button>
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation()
+                            if (!confirm(`Permanently delete the saved transcript for "${t.channelName}"?`)) return
+                            await fetch(`/api/admin/transcripts?ticket=${encodeURIComponent(t.channelId)}`, { method: 'DELETE' })
+                            reload()
+                          }}
+                          className="ml-1.5 px-2 py-1 text-[10px] uppercase font-bold text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded"
+                        >
+                          Delete
+                        </button>
                       </td>
                     </tr>
                   ))}

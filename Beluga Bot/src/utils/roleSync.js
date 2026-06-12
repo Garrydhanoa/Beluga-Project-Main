@@ -671,6 +671,16 @@ class RoleSyncManager {
 
 const roleSyncManager = new RoleSyncManager();
 
+function hasMeaningfulSalary(salary) {
+    if (salary === null || salary === undefined) return false;
+
+    const normalizedSalary = String(salary).trim();
+    if (normalizedSalary === '') return false;
+
+    const upperSalary = normalizedSalary.toUpperCase();
+    return !['0', 'N/A', 'NA', 'NONE', '-'].includes(upperSalary);
+}
+
 async function performRoleSync(client) {
     try {
         // ===== STEP 1: Salary Lock Update (runs first) =====
@@ -821,7 +831,7 @@ async function performRoleSync(client) {
                 }
 
                 // Check if player has salary (Column O)
-                const hasSalary = playerData.salary && playerData.salary.trim() !== '';
+                const hasSalary = hasMeaningfulSalary(playerData.salary);
 
                 if (!hasSalary) {
                     // No salary - remove all league-related roles and keep only NO_SALARY role
@@ -1089,6 +1099,22 @@ async function syncSuspendedRole(member, playerData) {
 }
 
 async function syncEligibleRole(member, playerData) {
+    const hasSalary = hasMeaningfulSalary(playerData.salary);
+
+    if (!hasSalary) {
+        if (member.roles.cache.has(ROLES.INELIGIBLE)) {
+            await member.roles.remove(ROLES.INELIGIBLE);
+            Logger.info(`Removed Ineligible role from ${member.user.username} (no salary)`);
+        }
+
+        if (!member.roles.cache.has(ROLES.NO_SALARY)) {
+            await member.roles.add(ROLES.NO_SALARY);
+            Logger.info(`Added No Salary role to ${member.user.username}`);
+        }
+
+        return;
+    }
+
     const shouldBeEligible = playerData.eligible === 'YES';
     const hasIneligible = member.roles.cache.has(ROLES.INELIGIBLE);
 

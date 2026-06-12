@@ -1,6 +1,8 @@
 const { SlashCommandBuilder, EmbedBuilder, ChannelType, PermissionFlagsBits, ThreadAutoArchiveDuration } = require('discord.js');
 const Logger = require('../utils/logger');
-const { ROLES, TEAM_ROLES, NP_ROLES } = require('../constants/roles');
+// Only the fixed roles remain from constants (division captains, salary crew).
+// Team/GM/NP roles are pulled from the database (teams + franchises).
+const { ROLES } = require('../constants/roles');
 const { pool, isDatabaseAvailable, LeagueDB } = require('../utils/database');
 
 // Channel ID for match threads
@@ -327,37 +329,48 @@ async function deleteWeekThreadRecords(weekNumber) {
  */
 async function createMatchThread(channel, weekNumber, matchNumber, team1, team2, division, guild) {
     try {
-        // Resolve role IDs DB-FIRST (teams.discord_* columns for this season),
-        // falling back to the hardcoded constants only when a team isn't in the DB.
+        // Week threads pull team/GM/NP roles from the DATABASE ONLY (operator
+        // rule): team role from teams.discord_role_id, GM/NP from the team's
+        // FRANCHISE (with the legacy team columns as a transition fallback).
+        // No constants here — a missing team role rejects the whole week
+        // upstream (see validateWeekRoles).
         const dbDiv = division === 'MAJORS' ? 'Majors' : division;
-        const dbRoles = {}; // teamName -> { team, gm, captain, np }
+        const dbRoles = {}; // teamName -> { team, gm, np }
         if (isDatabaseAvailable()) {
             const r = await pool.query(
-                `SELECT name, discord_role_id, discord_gm_role_id, discord_captain_role_id, discord_np_role_id
-                 FROM teams WHERE division = $1 AND name = ANY($2::text[])`,
+                `SELECT t.name, t.discord_role_id,
+                    COALESCE(f.gm_role_id, t.discord_gm_role_id) AS gm_role_id,
+                    COALESCE(f.np_role_id, t.discord_np_role_id) AS np_role_id
+                 FROM teams t
+                 LEFT JOIN team_franchises f ON f.id = t.franchise_id
+                 WHERE t.division = $1 AND t.is_active = TRUE AND t.name = ANY($2::text[])`,
                 [dbDiv, [team1, team2]]
             ).catch(() => ({ rows: [] }));
             for (const row of r.rows) {
                 dbRoles[row.name] = {
                     team: row.discord_role_id || null,
-                    gm: row.discord_gm_role_id || null,
-                    captain: row.discord_captain_role_id || null,
-                    np: row.discord_np_role_id || null,
+                    gm: row.gm_role_id || null,
+                    np: row.np_role_id || null,
                 };
             }
         }
-        const roleFor = (team, slot, constantVal) => (dbRoles[team] && dbRoles[team][slot]) || constantVal || null;
+        const roleFor = (team, slot) => (dbRoles[team] && dbRoles[team][slot]) || null;
 
-        const team1RoleId = roleFor(team1, 'team', TEAM_ROLES[division]?.[team1]);
-        const team2RoleId = roleFor(team2, 'team', TEAM_ROLES[division]?.[team2]);
+        const team1RoleId = roleFor(team1, 'team');
+        const team2RoleId = roleFor(team2, 'team');
 
         if (!team1RoleId || !team2RoleId) {
-            Logger.warning(`Could not find roles for ${team1} or ${team2} in ${division} (checked DB + constants)`);
+            const missing = [!team1RoleId ? team1 : null, !team2RoleId ? team2 : null].filter(Boolean).join(', ');
+            Logger.warning(`Team role ID missing in the database for: ${missing} (${dbDiv}) — thread not created`);
             return null;
         }
 
-        // Create the thread name with division at the front
-        const threadName = `Week ${weekNumber}: ${division}: ${team1} vs ${team2}`;
+        // Create the thread name with division at the front. week_number >= 90
+        // is the playoffs convention (90 + bracket round) → distinct naming.
+        const PLAYOFF_LABELS = { 91: 'Playoffs QF', 92: 'Playoffs Semis', 93: 'Playoffs Finals' };
+        const threadName = weekNumber >= 90
+            ? `${PLAYOFF_LABELS[weekNumber] || `Playoffs R${weekNumber - 90}`}: ${division}: ${team1} vs ${team2}`
+            : `Week ${weekNumber}: ${division}: ${team1} vs ${team2}`;
         
         // Create private thread with invites disabled
         const thread = await channel.threads.create({
@@ -372,8 +385,11 @@ async function createMatchThread(channel, weekNumber, matchNumber, team1, team2,
         // STEP 1: Add GMs to thread
         // GMs should be in ALL their team's division threads
         // ========================================
-        const team1GMRoleId = roleFor(team1, 'gm', ROLES.GM_ROLES[team1]);
-        const team2GMRoleId = roleFor(team2, 'gm', ROLES.GM_ROLES[team2]);
+        const team1GMRoleId = roleFor(team1, 'gm');
+        const team2GMRoleId = roleFor(team2, 'gm');
+        if (!team1GMRoleId || !team2GMRoleId) {
+            Logger.warning(`GM role missing on franchise for ${!team1GMRoleId ? team1 : ''} ${!team2GMRoleId ? team2 : ''} — GMs won't be auto-added to ${threadName}`);
+        }
 
         const gmsToAdd = new Set();
         
@@ -413,20 +429,26 @@ async function createMatchThread(channel, weekNumber, matchNumber, team1, team2,
             const captainRole = await guild.roles.fetch(captainRoleId).catch(() => null);
             
             if (captainRole) {
-                // Get NP role IDs for both teams (DB-first, constant fallback)
-                const team1NPRoleId = roleFor(team1, 'np', NP_ROLES[team1]);
-                const team2NPRoleId = roleFor(team2, 'np', NP_ROLES[team2]);
-                
-                // Get all team role IDs for team1 and team2 across ALL divisions
+                // NP role per franchise (DB).
+                const team1NPRoleId = roleFor(team1, 'np');
+                const team2NPRoleId = roleFor(team2, 'np');
+
+                // All of each team's division role IDs from the DATABASE (a
+                // captain of the franchise in any division gets thread access).
                 const team1AllRoleIds = new Set();
                 const team2AllRoleIds = new Set();
-                
-                // Add division team roles
-                for (const div of ['MAJORS', 'AAA', 'AA']) {
-                    if (TEAM_ROLES[div]?.[team1]) team1AllRoleIds.add(TEAM_ROLES[div][team1]);
-                    if (TEAM_ROLES[div]?.[team2]) team2AllRoleIds.add(TEAM_ROLES[div][team2]);
+                if (isDatabaseAvailable()) {
+                    const allDivs = await pool.query(
+                        `SELECT name, discord_role_id FROM teams
+                         WHERE is_active = TRUE AND discord_role_id IS NOT NULL AND name = ANY($1::text[])`,
+                        [[team1, team2]]
+                    ).catch(() => ({ rows: [] }));
+                    for (const row of allDivs.rows) {
+                        if (row.name === team1) team1AllRoleIds.add(row.discord_role_id);
+                        if (row.name === team2) team2AllRoleIds.add(row.discord_role_id);
+                    }
                 }
-                
+
                 // Add NP roles
                 if (team1NPRoleId) team1AllRoleIds.add(team1NPRoleId);
                 if (team2NPRoleId) team2AllRoleIds.add(team2NPRoleId);
@@ -691,7 +713,44 @@ async function processPendingWeekThreads(client) {
 
     if (rows.length === 0) return { processed: 0, errors: [] };
 
-    Logger.info(`processPendingWeekThreads: ${rows.length} pending thread(s) to create`);
+    // WEEK-LEVEL VALIDATION (operator rule): if ANY team in a pending week has
+    // no team role ID in the database, reject creating that ENTIRE week and say
+    // exactly which team is missing. The rows stay pending, so the week creates
+    // itself automatically once the role ID is filled in on the website.
+    const teamNames = [...new Set(rows.flatMap((r) => [r.team1, r.team2]))];
+    const roleRows = await pool.query(
+        `SELECT name, division, discord_role_id FROM teams
+         WHERE is_active = TRUE AND name = ANY($1::text[])`,
+        [teamNames]
+    ).catch(() => ({ rows: [] }));
+    const roleByTeamDiv = new Map(roleRows.rows.map((t) => [`${t.name}|${t.division}`, t.discord_role_id]));
+
+    const rejectedWeeks = new Set(); // `${season_id}|${week_number}`
+    const missingByWeek = new Map();
+    for (const row of rows) {
+        const dbDiv = row.division === 'MAJORS' ? 'Majors' : row.division;
+        for (const team of [row.team1, row.team2]) {
+            if (!roleByTeamDiv.get(`${team}|${dbDiv}`)) {
+                const weekKey = `${row.season_id}|${row.week_number}`;
+                rejectedWeeks.add(weekKey);
+                if (!missingByWeek.has(weekKey)) missingByWeek.set(weekKey, new Set());
+                missingByWeek.get(weekKey).add(`${team} (${dbDiv})`);
+            }
+        }
+    }
+    for (const [weekKey, missing] of missingByWeek) {
+        const [, weekNum] = weekKey.split('|');
+        const msg = `Week ${weekNum} NOT created — team role ID missing in the database for: ${[...missing].join(', ')}. Set it in the website admin (Teams) and the week will create itself on the next check.`;
+        Logger.warning(msg);
+        try {
+            const { logEdge } = require('../stats/report/logChannel');
+            await logEdge(client, { summary: msg, pingInThread: false });
+        } catch { /* log channel optional */ }
+    }
+    const creatable = rows.filter((r) => !rejectedWeeks.has(`${r.season_id}|${r.week_number}`));
+    if (creatable.length === 0) return { processed: 0, errors: [...missingByWeek.keys()].map((k) => `week ${k.split('|')[1]} missing team roles`) };
+
+    Logger.info(`processPendingWeekThreads: ${creatable.length} pending thread(s) to create`);
 
     let channel;
     try {
@@ -707,7 +766,7 @@ async function processPendingWeekThreads(client) {
     let processed = 0;
     const errors = [];
 
-    for (const row of rows) {
+    for (const row of creatable) {
         // Normalize division to bot's expected form.
         const div = row.division === 'Majors' ? 'MAJORS' : row.division;
         const matchNum = row.match_number || 1;

@@ -1,7 +1,14 @@
 const { EmbedBuilder, AttachmentBuilder } = require('discord.js');
 const Logger = require('./logger');
 const { RosterDB, LeagueDB, isDatabaseAvailable } = require('./database');
-const { ROLES, TEAM_ROLES, TEAM_NAMES, TEAM_COLORS, CHANNELS } = require('../constants/roles');
+const { CHANNELS } = require('../constants/roles');
+const {
+    getActiveTeams,
+    getTeamDiscordRoles,
+    getTeamColorInt,
+    getTeamLogoBuffer,
+    getCaptainRoleId,
+} = require('./teamRoles');
 const fs = require('fs');
 const path = require('path');
 
@@ -19,7 +26,8 @@ const DIVISION_LABELS = {
 };
 
 /**
- * Find team logo path
+ * Legacy local logo path (kept only as a last-resort fallback; logos live in
+ * the database now — teams.logo_data / team_franchises.logo_data).
  */
 function findTeamLogo(teamName) {
     const normalizedName = teamName.replace(/\s+/g, ' ').trim();
@@ -27,69 +35,80 @@ function findTeamLogo(teamName) {
     return logoPath;
 }
 
+/** Logo attachment for a team — DB first, local file fallback. */
+async function getLogoAttachment(teamId, teamName) {
+    try {
+        const buf = await getTeamLogoBuffer(teamId);
+        if (buf) return new AttachmentBuilder(buf, { name: 'team_logo.png' });
+    } catch { /* fall through */ }
+    const logoPath = findTeamLogo(teamName);
+    if (fs.existsSync(logoPath)) return new AttachmentBuilder(logoPath, { name: 'team_logo.png' });
+    return null;
+}
+
 /**
  * Generate a hash for roster data to detect changes
  */
 function generateRosterHash(rosterData) {
     const { teamName, division, gm, captain, players } = rosterData;
-    
+
     const gmId = gm ? gm.id : 'none';
     const captainId = captain ? captain.id : 'none';
     const playerIds = players
         .map(p => p.id)
         .sort()
         .join(',');
-    
+
     return `${teamName}|${division}|${gmId}|${captainId}|${playerIds}`;
 }
 
 /**
- * Get team roster data for a specific division
+ * Get team roster data for a DB team row ({ id, name, division }) — all role
+ * IDs come from the database (team role on the team, GM on the franchise);
+ * the captain role is the fixed per-division role.
  */
-async function getTeamRoster(guild, teamName, division) {
+async function getTeamRoster(guild, team, division) {
     try {
-        const teamRoleId = TEAM_ROLES[division][teamName];
-        if (!teamRoleId) return null;
+        const roles = await getTeamDiscordRoles(team.id);
+        if (!roles.teamRoleId) {
+            Logger.warning(`No team role ID in the database for ${team.name} (${team.division}) — roster skipped`);
+            return null;
+        }
 
-        const teamRole = await guild.roles.fetch(teamRoleId);
+        const teamRole = await guild.roles.fetch(roles.teamRoleId).catch(() => null);
         if (!teamRole) return null;
 
         const members = teamRole.members;
-        const captainRoleId = ROLES.CAPTAINS[division];
-        const gmRoleId = ROLES.GM_ROLES[teamName];
+        const captainRoleId = getCaptainRoleId(division);
 
-        // Find captain
+        // Captain = member of this team holding the division captain role.
         let captain = null;
         if (captainRoleId) {
-            const captainRole = await guild.roles.fetch(captainRoleId);
-            if (captainRole) {
-                for (const [memberId, member] of members) {
-                    if (member.roles.cache.has(captainRoleId)) {
-                        captain = member;
-                        break;
-                    }
+            for (const [, member] of members) {
+                if (member.roles.cache.has(captainRoleId)) {
+                    captain = member;
+                    break;
                 }
             }
         }
 
-        // Find GM
+        // GM from the franchise role.
         let gm = null;
-        if (gmRoleId) {
-            const gmRole = await guild.roles.fetch(gmRoleId);
+        if (roles.gmRoleId) {
+            const gmRole = await guild.roles.fetch(roles.gmRoleId).catch(() => null);
             if (gmRole && gmRole.members.size > 0) {
                 gm = gmRole.members.first();
             }
         }
 
-        // Get all players (excluding captain from regular list)
         const players = [];
-        for (const [memberId, member] of members) {
-            // Include all players in the list
+        for (const [, member] of members) {
             players.push(member);
         }
 
         return {
-            teamName,
+            teamId: team.id,
+            teamName: team.name,
             division,
             gm,
             captain,
@@ -97,32 +116,29 @@ async function getTeamRoster(guild, teamName, division) {
             totalPlayers: members.size
         };
     } catch (error) {
-        Logger.error(`Failed to get roster for ${teamName} ${division}`, error);
+        Logger.error(`Failed to get roster for ${team?.name} ${division}`, error);
         return null;
     }
 }
 
 /**
- * Create roster embed for a team
+ * Create roster embed for a team (color from the DB franchise color).
  */
-function createRosterEmbed(rosterData) {
+function createRosterEmbed(rosterData, { colorInt = 0x3498DB, seasonNumber = null } = {}) {
     const { teamName, division, gm, captain, players, totalPlayers } = rosterData;
 
     const embed = new EmbedBuilder()
-        .setTitle(`${teamName} - ${division}`)
-        .setColor(TEAM_COLORS[teamName] || 0x3498DB)
+        .setTitle(`${teamName} — ${DIVISION_LABELS[division] || division}${seasonNumber != null ? ` · Season ${seasonNumber}` : ''}`)
+        .setColor(colorInt)
         .setThumbnail('attachment://team_logo.png')
         .setTimestamp();
 
-    // Add GM field
     const gmText = gm ? (gm.nickname || gm.user.username) : '*No GM assigned*';
     embed.addFields({ name: '👑 General Manager', value: gmText, inline: false });
 
-    // Add Captain field
     const captainText = captain ? (captain.nickname || captain.user.username) : '*No captain assigned*';
     embed.addFields({ name: '⭐ Captain', value: captainText, inline: false });
 
-    // Add Players field
     if (players.length > 0) {
         const playersList = players
             .sort((a, b) => {
@@ -132,7 +148,7 @@ function createRosterEmbed(rosterData) {
             })
             .map(p => p.nickname || p.user.username)
             .join('\n');
-        
+
         embed.addFields({ name: `👥 Players (${totalPlayers})`, value: playersList, inline: false });
     } else {
         embed.addFields({ name: `👥 Players (${totalPlayers})`, value: '*No players*', inline: false });
@@ -171,15 +187,13 @@ function buildRosterMembers(rosterData) {
 }
 
 /**
- * Update roster for a specific division
+ * Update roster for a specific division — the team list comes from the
+ * DATABASE (active teams in the active season), not constants.
  */
 async function updateDivisionRoster(client, division) {
     try {
-        // Check if database is available
         if (!isDatabaseAvailable()) {
             Logger.warning(`Database not available, skipping ${division} roster update`);
-            
-            // Send skip message to Majors channel only
             if (division === 'MAJORS') {
                 try {
                     const majorsChannel = await client.channels.fetch(CHANNELS.MAJORS);
@@ -195,7 +209,7 @@ async function updateDivisionRoster(client, division) {
 
         const channelId = ROSTER_CHANNELS[division];
         const channel = await client.channels.fetch(channelId);
-        
+
         if (!channel) {
             Logger.error(`Roster channel not found for ${division}: ${channelId}`);
             return false;
@@ -204,115 +218,65 @@ async function updateDivisionRoster(client, division) {
         Logger.info(`Updating ${division} roster...`);
 
         const divisionLabel = DIVISION_LABELS[division] || division;
-        let activeSeason = null;
-        let teamMap = null;
-
-        activeSeason = await LeagueDB.getActiveSeason();
-        if (activeSeason) {
-            const teams = await LeagueDB.getTeams(activeSeason.id);
-            teamMap = new Map();
-            teams.forEach((team) => {
-                teamMap.set(`${team.division}|${team.name}`, team);
-            });
-        } else {
-            Logger.warning('No active season found; skipping roster sync to league tables');
+        const activeSeason = await LeagueDB.getActiveSeason();
+        if (!activeSeason) {
+            Logger.warning('No active season found; skipping roster updates');
+            return false;
         }
+        const seasonNumber = activeSeason.season_number ?? activeSeason.seasonNumber ?? null;
 
-        for (const teamName of TEAM_NAMES) {
-            // Check if team exists in this division
-            if (!TEAM_ROLES[division][teamName]) {
-                continue; // Skip teams that don't have this division
-            }
+        // DB team list for this division.
+        const divisionTeams = (await getActiveTeams()).filter((t) => t.division === divisionLabel);
 
-            const rosterData = await getTeamRoster(channel.guild, teamName, division);
+        for (const team of divisionTeams) {
+            const rosterData = await getTeamRoster(channel.guild, team, division);
             if (!rosterData) continue;
 
-            if (activeSeason && teamMap) {
-                const teamKey = `${divisionLabel}|${teamName}`;
-                const team = teamMap.get(teamKey);
-                if (!team) {
-                    Logger.warning(`Team not found in DB for roster sync: ${teamKey}`);
-                } else {
-                    const members = buildRosterMembers(rosterData);
-                    await LeagueDB.syncTeamRoster(activeSeason.id, team.id, members);
-                }
-            }
+            // Sync to the league roster tables (powers the website).
+            const members = buildRosterMembers(rosterData);
+            await LeagueDB.syncTeamRoster(activeSeason.id, team.id, members);
 
-            // Generate hash of current roster
             const currentHash = generateRosterHash(rosterData);
+            const savedMessage = await RosterDB.get(team.name, division);
 
-            // Check if roster has changed
-            const savedMessage = await RosterDB.get(teamName, division);
-            
-            // If we have a saved message, verify it still exists
             let messageExists = false;
             if (savedMessage && savedMessage.messageId) {
                 try {
                     await channel.messages.fetch(savedMessage.messageId);
                     messageExists = true;
-                } catch (error) {
-                    // Message was deleted
+                } catch {
                     messageExists = false;
-                    Logger.warning(`Roster message for ${teamName} ${division} was deleted, will recreate`);
+                    Logger.warning(`Roster message for ${team.name} ${division} was deleted, will recreate`);
                 }
             }
-            
-            // Skip update only if message exists AND hash hasn't changed
+
             if (messageExists && savedMessage.rosterHash === currentHash) {
-                Logger.info(`No changes for ${teamName} ${division}, skipping update`);
-                continue;
+                continue; // no changes
             }
 
-            const embed = createRosterEmbed(rosterData);
-
-            // Get team logo
-            const logoPath = findTeamLogo(teamName);
-            const logoAttachment = fs.existsSync(logoPath) 
-                ? new AttachmentBuilder(logoPath, { name: 'team_logo.png' })
-                : null;
+            const colorInt = await getTeamColorInt(team.id);
+            const embed = createRosterEmbed(rosterData, { colorInt, seasonNumber });
+            const logoAttachment = await getLogoAttachment(team.id, team.name);
+            const messageOptions = { embeds: [embed] };
+            if (logoAttachment) messageOptions.files = [logoAttachment];
 
             try {
-                if (savedMessage && savedMessage.messageId) {
-                    // Try to fetch and edit existing message
-                    try {
-                        const message = await channel.messages.fetch(savedMessage.messageId);
-                        if (logoAttachment) {
-                            await message.edit({ embeds: [embed], files: [logoAttachment] });
-                        } else {
-                            await message.edit({ embeds: [embed] });
-                        }
-                        await RosterDB.save(teamName, division, channelId, message.id, currentHash);
-                        Logger.info(`Updated roster message for ${teamName} ${division}`);
-                    } catch (fetchError) {
-                        // Message was deleted, create new one
-                        Logger.warning(`Roster message deleted for ${teamName} ${division}, creating new one`);
-                        const messageOptions = { embeds: [embed] };
-                        if (logoAttachment) {
-                            messageOptions.files = [logoAttachment];
-                        }
-                        const newMessage = await channel.send(messageOptions);
-                        await RosterDB.save(teamName, division, channelId, newMessage.id, currentHash);
-                        Logger.success(`Created new roster message for ${teamName} ${division}`);
-                    }
+                if (messageExists) {
+                    const message = await channel.messages.fetch(savedMessage.messageId);
+                    await message.edit(messageOptions);
+                    await RosterDB.save(team.name, division, channelId, message.id, currentHash);
+                    Logger.info(`Updated roster message for ${team.name} ${division}`);
                 } else {
-                    // Create new message
-                    const messageOptions = { embeds: [embed] };
-                    if (logoAttachment) {
-                        messageOptions.files = [logoAttachment];
-                    }
                     const newMessage = await channel.send(messageOptions);
-                    await RosterDB.save(teamName, division, channelId, newMessage.id, currentHash);
-                    Logger.success(`Created new roster message for ${teamName} ${division}`);
+                    await RosterDB.save(team.name, division, channelId, newMessage.id, currentHash);
+                    Logger.success(`Created roster message for ${team.name} ${division}`);
                 }
             } catch (error) {
-                // Outer catch for any other unexpected errors
-                Logger.error(`Failed to create/update roster for ${teamName} ${division}`, error);
+                Logger.error(`Failed to create/update roster for ${team.name} ${division}`, error);
             }
         }
 
-        if (activeSeason) {
-            await LeagueDB.recordRosterSync(activeSeason.id, divisionLabel);
-        }
+        await LeagueDB.recordRosterSync(activeSeason.id, divisionLabel);
 
         Logger.success(`${division} roster updated successfully`);
         return true;
@@ -328,11 +292,11 @@ async function updateDivisionRoster(client, division) {
 async function updateAllRosters(client) {
     try {
         Logger.info('Starting full roster update...');
-        
+
         await updateDivisionRoster(client, 'MAJORS');
         await updateDivisionRoster(client, 'AAA');
         await updateDivisionRoster(client, 'AA');
-        
+
         Logger.success('All rosters updated successfully');
         return true;
     } catch (error) {

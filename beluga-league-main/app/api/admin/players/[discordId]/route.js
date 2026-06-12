@@ -7,6 +7,7 @@ import { resolveMember } from '../../../../../lib/discordMembers'
 export const dynamic = 'force-dynamic'
 
 function badRequest(msg) {
+
   return NextResponse.json({ error: msg }, { status: 400 })
 }
 
@@ -91,6 +92,22 @@ export async function GET(_request, { params }) {
     ORDER BY tx.performed_at DESC, tx.id DESC
   `, [id])
 
+  // New stats system: identity links, name history, per-season aggregates,
+  // recent per-game lines (editable in Match Results).
+  const accountsRes = await query(`SELECT platform, platform_id, current_name, last_seen FROM stats_player_accounts WHERE discord_id = $1 ORDER BY last_seen DESC`, [id]).catch(() => ({ rows: [] }))
+  const namesRes = await query(`SELECT name, platform, observed_at FROM stats_name_history WHERE discord_id = $1 ORDER BY observed_at DESC LIMIT 20`, [id]).catch(() => ({ rows: [] }))
+  const seasonStatsRes = await query(`
+    SELECT ps.*, s.season_number, t.name AS team_name FROM stats_player_season ps
+    LEFT JOIN seasons s ON s.id = ps.season_id LEFT JOIN teams t ON t.id = ps.team_id
+    WHERE ps.discord_id = $1 ORDER BY s.season_number DESC NULLS LAST, ps.division
+  `, [id]).catch(() => ({ rows: [] }))
+  const recentGamesRes = await query(`
+    SELECT gp.id, gp.series_id, gp.score, gp.goals, gp.assists, gp.saves, gp.shots, gp.mvp,
+      gp.demos_inflicted, gp.demos_taken, gp.ingame_name, ser.division, ser.week
+    FROM stats_game_players gp JOIN stats_series ser ON ser.id = gp.series_id
+    WHERE gp.discord_id = $1 ORDER BY gp.id DESC LIMIT 25
+  `, [id]).catch(() => ({ rows: [] }))
+
   return NextResponse.json({
     player: {
       discordId: identity.discord_id,
@@ -115,6 +132,10 @@ export async function GET(_request, { params }) {
       franchiseId: r.franchise_id,
       franchiseName: r.franchise_name,
     })),
+    statsAccounts: accountsRes.rows,
+    statsNameHistory: namesRes.rows,
+    statsSeasons: seasonStatsRes.rows,
+    statsRecentGames: recentGamesRes.rows,
     stats: statsRes.rows.map((r) => ({
       id: r.id,
       seasonId: r.season_id,
@@ -149,4 +170,37 @@ export async function GET(_request, { params }) {
       performedAt: r.performed_at,
     })),
   })
+}
+
+// Edit a player's per-season aggregate (new stats system). Sets manual_override
+// so the recompute engine preserves the staff numbers.
+export async function PATCH(request, { params }) {
+  const auth = await requireAdmin()
+  if (!auth.ok) return auth.response
+  const { discordId } = await params
+  const id = String(discordId)
+  let body
+  try { body = await request.json() } catch { return badRequest('Invalid JSON') }
+  const e = body.seasonStat || {}
+  if (!e.seasonId || !e.division) return badRequest('seasonId + division required')
+  const num = (v, d = 0) => (v === undefined || v === null || v === '' ? d : Number(v))
+  await query(`
+    UPDATE stats_player_season SET
+      games = COALESCE($1, games), score = COALESCE($2, score), goals = COALESCE($3, goals),
+      assists = COALESCE($4, assists), saves = COALESCE($5, saves), shots = COALESCE($6, shots),
+      demos_inflicted = COALESCE($7, demos_inflicted), demos_taken = COALESCE($8, demos_taken),
+      mvps = COALESCE($9, mvps), manual_override = TRUE, updated_at = CURRENT_TIMESTAMP
+    WHERE discord_id = $10 AND season_id = $11 AND division = $12 AND is_playoff = COALESCE($13, FALSE)
+  `, [
+    e.games !== undefined ? num(e.games) : null, e.score !== undefined ? num(e.score) : null,
+    e.goals !== undefined ? num(e.goals) : null, e.assists !== undefined ? num(e.assists) : null,
+    e.saves !== undefined ? num(e.saves) : null, e.shots !== undefined ? num(e.shots) : null,
+    e.demosInflicted !== undefined ? num(e.demosInflicted) : null, e.demosTaken !== undefined ? num(e.demosTaken) : null,
+    e.mvps !== undefined ? num(e.mvps) : null,
+    id, Number(e.seasonId), String(e.division), Boolean(e.isPlayoff),
+  ])
+  if (body.clearOverride) {
+    await query(`UPDATE stats_player_season SET manual_override = FALSE WHERE discord_id = $1 AND season_id = $2 AND division = $3`, [id, Number(e.seasonId), String(e.division)])
+  }
+  return NextResponse.json({ ok: true })
 }

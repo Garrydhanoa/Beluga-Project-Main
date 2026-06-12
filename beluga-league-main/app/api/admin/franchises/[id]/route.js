@@ -36,6 +36,10 @@ export async function PATCH(request, { params }) {
   if (body.name !== undefined) patch.name = body.name
   if (body.defaultDivision !== undefined) patch.defaultDivision = body.defaultDivision
   if (body.isActive !== undefined) patch.isActive = body.isActive
+  if (body.gmRoleId !== undefined) patch.gmRoleId = body.gmRoleId ? String(body.gmRoleId).trim() : null
+  if (body.npRoleId !== undefined) patch.npRoleId = body.npRoleId ? String(body.npRoleId).trim() : null
+  if (body.discordInviteUrl !== undefined) patch.discordInviteUrl = body.discordInviteUrl ? String(body.discordInviteUrl).trim() : null
+  if (body.color !== undefined) patch.color = body.color ? String(body.color).trim() : null
 
   const franchise = await updateFranchise(fid, patch)
   return NextResponse.json({ ok: true, franchise })

@@ -15,7 +15,6 @@ export async function POST(request) {
   const formData = await request.formData()
   const teamId = Number(formData.get('teamId'))
   const file = formData.get('file')
-  const propagate = formData.get('propagate') !== 'false' // default ON
 
   if (!Number.isInteger(teamId)) {
     return NextResponse.json({ error: 'Invalid teamId' }, { status: 400 })
@@ -33,28 +32,25 @@ export async function POST(request) {
   const buffer = Buffer.from(arrayBuffer)
   const mime = file.type || 'application/octet-stream'
 
-  // Save on the per-season team row.
-  const team = await setTeamLogo(teamId, { mime, data: buffer })
+  // The FRANCHISE logo is the single source of truth (one logo per franchise,
+  // served everywhere via the franchise fallback in /api/teams/logo). Uploading
+  // on any team card updates the franchise and CLEARS stale per-team overrides —
+  // stale overrides were why a team could show another/old logo and re-uploads
+  // "didn't fix" it.
+  const r = await query('SELECT franchise_id FROM teams WHERE id = $1', [teamId])
+  const franchiseId = r.rows[0]?.franchise_id || null
 
-  // Cross-cut: also save on the franchise (the global identity) so the logo
-  // shows up automatically on past/future-season teams of the same franchise,
-  // schedule pages, public-site, etc. — without having to re-upload per team.
-  let franchiseId = null
-  if (propagate) {
-    const r = await query('SELECT franchise_id FROM teams WHERE id = $1', [teamId])
-    franchiseId = r.rows[0]?.franchise_id || null
-    if (franchiseId) {
-      await setFranchiseLogo(franchiseId, { mime, data: buffer })
-      // Also push the new logo to every other per-season team that shares the franchise
-      // but doesn't have its own logo yet. (Existing team logos are NOT overwritten —
-      // admin can override per-season if they want, by uploading on that team card.)
-      await query(
-        `UPDATE teams
-         SET logo_mime = $1, logo_data = $2, updated_at = CURRENT_TIMESTAMP
-         WHERE franchise_id = $3 AND id <> $4 AND logo_data IS NULL`,
-        [mime, buffer, franchiseId, teamId]
-      )
-    }
+  let team = null
+  if (franchiseId) {
+    await setFranchiseLogo(franchiseId, { mime, data: buffer })
+    await query(
+      `UPDATE teams SET logo_data = NULL, logo_mime = NULL, updated_at = CURRENT_TIMESTAMP
+       WHERE franchise_id = $1 AND logo_data IS NOT NULL`,
+      [franchiseId]
+    )
+  } else {
+    // Team without a franchise: store on the team row itself.
+    team = await setTeamLogo(teamId, { mime, data: buffer })
   }
 
   return NextResponse.json({ ok: true, team, franchiseId, propagated: !!franchiseId })

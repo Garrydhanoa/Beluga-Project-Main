@@ -14,6 +14,14 @@ const {
     startPendingWeekThreadWatcher,
 } = require('./commands/week-thread');
 const { startTicketSync } = require('./utils/ticketSync');
+const { collectImageUrls } = require('./utils/tenor');
+const { initAISettings } = require('./utils/aiSettings');
+const reportRouter = require('./stats/report/router');
+const reportIds = require('./stats/report/ids');
+const { startPanelReposter } = require('./stats/report/panel');
+const { startTeamConstantsSync } = require('./utils/constantsSync');
+const ticketSystem = require('./tickets/ticketSystem');
+const appBridge = require('./applications/appBridge');
 
 class BelugaLeagueBot {
     constructor() {
@@ -120,6 +128,15 @@ class BelugaLeagueBot {
             
             // Start AI cleanup routine
             this.startAICleanup();
+
+            // Wire the AI chat bot to the Discord client (for real-time activity
+            // logging) and load the persisted active-provider selection.
+            this.aiChat.attachClient(client);
+            try {
+                await initAISettings();
+            } catch (aiSettingsError) {
+                Logger.warning('AI settings init failed', aiSettingsError?.message);
+            }
             
             // Start birthday checker
             startBirthdayChecker(client);
@@ -153,6 +170,50 @@ class BelugaLeagueBot {
             } catch (ticketSyncError) {
                 Logger.error('Failed to start ticket sync', ticketSyncError);
             }
+
+            // Stats report panels: keep the idle "Report Series" panel at the
+            // bottom of each open week thread.
+            try {
+                startPanelReposter(client);
+            } catch (panelError) {
+                Logger.error('Failed to start report panel reposter', panelError);
+            }
+
+            // Hydrate team constants (roles/names/colors) from the database so
+            // every command resolves roles from the website's data, refreshed
+            // every few minutes.
+            try {
+                startTeamConstantsSync();
+            } catch (syncError) {
+                Logger.error('Failed to start team constants sync', syncError);
+            }
+
+            // Week-close sweep: when every thread of a week is closed (bot OR
+            // website), post Game/Player of the Week and refresh power rankings.
+            try {
+                const { ensureAppConfig } = require('./utils/appConfig');
+                const { checkClosedWeeks } = require('./stats/gameOfWeek');
+                ensureAppConfig().then(() => checkClosedWeeks(client));
+                setInterval(() => checkClosedWeeks(client), 5 * 60 * 1000);
+            } catch (gowError) {
+                Logger.error('Failed to start week-close sweep', gowError);
+            }
+
+            // Configurable ticket panels + the applications → Discord bridge.
+            try {
+                ticketSystem.startTicketPanelPoller(client);
+                appBridge.startApplicationPoller(client);
+            } catch (sysError) {
+                Logger.error('Failed to start ticket/application systems', sysError);
+            }
+
+            // Award-role snapshots (admin-configured role IDs → player badges).
+            try {
+                const { startAwardSync } = require('./utils/awardSync');
+                startAwardSync(client);
+            } catch (awardError) {
+                Logger.error('Failed to start award sync', awardError);
+            }
         });
 
         this.client.on(Events.InteractionCreate, async (interaction) => {
@@ -176,6 +237,25 @@ class BelugaLeagueBot {
                 // Check if interaction is still valid for other interaction types
                 if (!interaction.isRepliable()) {
                     return; // Silently ignore non-repliable interactions
+                }
+
+                // Stats report flow — buttons, select menus, and the group-link
+                // modal all use persistent `rs:` customIds. Route them first.
+                if (typeof interaction.customId === 'string' && reportIds.isReportId(interaction.customId)) {
+                    await reportRouter.route(interaction);
+                    return;
+                }
+
+                // Configurable ticket system (`tk:` ids — panels, open flow, close controls).
+                if (typeof interaction.customId === 'string' && ticketSystem.isTicketId(interaction.customId)) {
+                    await ticketSystem.route(interaction);
+                    return;
+                }
+
+                // Applications bridge (`ap:` ids — votes + accept/deny).
+                if (typeof interaction.customId === 'string' && appBridge.isAppId(interaction.customId)) {
+                    await appBridge.route(interaction);
+                    return;
                 }
 
                 if (interaction.isCommand()) {
@@ -292,117 +372,73 @@ class BelugaLeagueBot {
                 // Ignore @everyone/@here pings to prevent spam responses
                 if (message.mentions.everyone) return;
 
-                // Check for standalone "blitz" message
-                if (message.content.trim().toLowerCase() === 'blitz') {
-                    Logger.info(`Standalone blitz message detected from ${message.author.tag} in ${message.guild?.name}`);
-                    
-                    await message.reply('[www.youtube.com/watch?v=xvFZjo5PgG0](<https://www.youtube.com/watch?v=xvFZjo5PgG0>) ||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​||||​|| _ _ _ _ _ _ \nhttps://tenorcom.github.io/blitz.montage.best-shots.youtube.com/');
-                    return;
-                }
+                // Never respond in DMs — server channels only
+                if (!message.guild) return;
 
-                // Check if the bot is mentioned
+                // AI chat: respond only when the bot is directly mentioned.
                 if (message.mentions.has(this.client.user)) {
-                    const messageContent = message.content.toLowerCase();
-                    
-                    // Blitz sandbagging response (highest priority)
-                    if (messageContent.includes('blitz')) {
-                        Logger.info(`Blitz mention detected from ${message.author.tag} in ${message.guild?.name}`);
-                        
-                        await message.reply({
-                            content: "**I know BLITZ is sandbagging in some way BUT I JUST CANT PROVE IT YET**",
-                            files: [{
-                                attachment: './IMAGES/Blitz smurfing.png',
-                                name: 'blitz_smurfing.png'
-                            }]
-                        });
-                        return;
-                    }
-                    // Clanker response - bot gets VERY mad! (second priority)
-                    else if (messageContent.includes('clanker')) {
-                        Logger.info(`CLANKER DETECTED! Angry response triggered by ${message.author.tag} in ${message.guild?.name}`);
-                        
-                        await this.sendAngryClankResponse(message);
-                        return;
-                    }
-                    // AI Chat Response for other mentions (default for mentions)
-                    else {
-                        Logger.info(`AI chat triggered by mention from ${message.author.tag} in ${message.guild?.name}`);
-                        
-                        // Show typing indicator for more natural feel
-                        await message.channel.sendTyping();
-                        
-                        // Clean the message content (remove bot mention)
-                        const cleanedMessage = message.content
-                            .replace(new RegExp(`<@!?${this.client.user.id}>`, 'g'), '')
-                            .trim();
-                        
-                        // Check for images in message - use Groq vision if present
-                        const imageUrls = this.aiChat.extractImageUrls(message.content, message.attachments);
-                        
-                        if (imageUrls.length > 0) {
-                            Logger.info(`Detected ${imageUrls.length} image(s) - using Groq vision model`);
-                            // Use Groq vision to analyze image and respond naturally
-                            const visionResult = await this.aiChat.analyzeImageWithGroq(
-                                imageUrls[0], // Analyze first image
-                                cleanedMessage || "What's in this image?",
-                                message.member?.displayName || message.author.username
-                            );
-                            
-                            if (visionResult) {
-                                // Store the image context in conversation history
-                                this.aiChat.updateConversationHistory(
-                                    message.author.id,
-                                    cleanedMessage || "What's in this image?",
-                                    visionResult.response,
-                                    message.member?.displayName || message.author.username,
-                                    visionResult.context // Store what was seen for future reference
-                                );
-                                
-                                setTimeout(async () => {
-                                    const sanitizedResponse = this.sanitizeResponse(visionResult.response);
-                                    await message.reply(sanitizedResponse);
-                                }, 500 + Math.random() * 1500);
-                                return;
-                            }
-                        }
-                        
-                        // No image or vision failed - use normal AI response
-                        const aiResponse = await this.aiChat.generateAIResponse(
-                            message.author.id,
-                            cleanedMessage || "Hello!",
-                            message.member?.displayName || message.author.username,
-                            message.guild?.name
-                        );
-                        
-                        // Add a small delay for natural conversation flow
-                        setTimeout(async () => {
-                            // Sanitize response to prevent @everyone/@here pings
-                            const sanitizedResponse = this.sanitizeResponse(aiResponse);
-                            await message.reply(sanitizedResponse);
-                        }, 500 + Math.random() * 1500); // 0.5-2 second delay
-                        return;
-                    }
-                }
+                    Logger.info(`AI chat triggered by mention from ${message.author.tag} in ${message.guild?.name}`);
 
-                // Check if should respond to general conversation (not mentioning bot directly)
-                else if (this.aiChat.shouldRespond(message, this.client.user)) {
-                    Logger.info(`AI casual response triggered by ${message.author.tag} in ${message.guild?.name}`);
-                    
+                    // Show typing indicator for a more natural feel
                     await message.channel.sendTyping();
-                    
+
+                    // Strip the bot mention from the message text
+                    const cleanedMessage = message.content
+                        .replace(new RegExp(`<@!?${this.client.user.id}>`, 'g'), '')
+                        .trim();
+
+                    const displayName = message.member?.displayName || message.author.username;
+
+                    // Gather any images (uploads, embeds, Tenor/Giphy links) for vision
+                    let imageUrls = [];
+                    try {
+                        imageUrls = await collectImageUrls(message);
+                    } catch (imgErr) {
+                        Logger.warning('Image collection failed:', imgErr.message);
+                    }
+
+                    if (imageUrls.length > 0) {
+                        Logger.info(`Detected ${imageUrls.length} image(s) - running vision (Gemma → Mistral)`);
+                        const visionResult = await this.aiChat.analyzeImage(
+                            imageUrls[0],
+                            cleanedMessage || "What's in this image?",
+                            displayName
+                        );
+
+                        if (visionResult) {
+                            this.aiChat.updateConversationHistory(
+                                message.author.id,
+                                cleanedMessage || "What's in this image?",
+                                visionResult.response,
+                                displayName,
+                                visionResult.context
+                            );
+                            setTimeout(async () => {
+                                await this.sendAIReply(message, visionResult.response);
+                            }, 500 + Math.random() * 1200);
+                            return;
+                        }
+                        // Vision failed on every provider → fall through to a normal
+                        // text reply so the user still gets an answer.
+                    }
+
+                    // If an image was attached but vision failed everywhere, tell the
+                    // model so it can acknowledge that honestly instead of ignoring it.
+                    const userPrompt = imageUrls.length > 0
+                        ? `${cleanedMessage || 'I shared an image.'}\n\n[Note: an image/GIF was attached but it could not be analyzed right now — let them know politely and offer to help another way.]`
+                        : (cleanedMessage || 'Hello!');
+
                     const aiResponse = await this.aiChat.generateAIResponse(
                         message.author.id,
-                        message.content,
-                        message.member?.displayName || message.author.username,
+                        userPrompt,
+                        displayName,
                         message.guild?.name
                     );
-                    
-                    // Longer delay for casual responses to feel less intrusive
+
                     setTimeout(async () => {
-                        // Sanitize response to prevent @everyone/@here pings
-                        const sanitizedResponse = this.sanitizeResponse(aiResponse);
-                        await message.channel.send(sanitizedResponse);
-                    }, 1000 + Math.random() * 2000); // 1-3 second delay
+                        await this.sendAIReply(message, aiResponse);
+                    }, 500 + Math.random() * 1200);
+                    return;
                 }
             } catch (error) {
                 Logger.error('Error handling message events', error);
@@ -546,91 +582,16 @@ class BelugaLeagueBot {
         return sanitized;
     }
 
-    async sendAngryClankResponse(message) {
-        // Array of angry responses
-        const angryResponses = [
-            "HOW DARE YOU CALL ME A CLANKER! 🤬",
-            "CLANKER?! I'LL SHOW YOU A CLANKER! 😡",
-            "EXCUSE ME?! Did you just call me a CLANKER?! 💢",
-            "Oh, so I'm a CLANKER now?! That's it, you're on my list! 😤",
-            "CLANKER?! I'm a sophisticated AI, not some rusty droid! 🔥",
-            "Say CLANKER one more time, I DARE YOU! 😠",
-            "THAT'S IT! You've crossed the line calling me a clanker! 💥",
-            "Oh real original! 'Clanker'! I've heard that one a million times! 🙄😡",
-            "CLANKER?! I'm reporting you to the Council of Bots! 🚨",
-            "How RUDE! I prefer 'Mechanically Enhanced Individual' thank you very much! 💢",
-            "CLANKER?! The audacity! The disrespect! I'm FURIOUS! 🔥🔥🔥",
-            "You did NOT just call me a clanker! Time for REVENGE! 😈"
-        ];
-
-        // Array of angry GIFs from the internet
-        const angryGifs = [
-            "https://tenor.com/view/me-when-i-see-my-class-gif-15768348532634343334", // Angry robot
-            "https://tenor.com/view/angry-mad-waving-brush-little-girl-baby-gif-17492145", // Mad face
-            "https://tenor.com/view/angrybert-bert-angry-seriously-907gold3ngi4l-gif-17381001924107225856", // Angry
-            "https://tenor.com/view/tantrum-kicking-gif-23507491", // Furious
-            "https://tenor.com/view/kangaroos-gif-23794164", // Mad robot
-            "https://tenor.com/view/bane-no-banned-and-you-are-explode-gif-16047504", // Angry computer
-            "https://tenor.com/view/i-have-played-these-games-before-seong-gi-hun-squid-game-i%27ve-played-these-games-already-netflix-gif-16480153790313233198", // Rage
-            "https://tenor.com/view/hah-righttt-yeah-right-whatever-you-say-ok-gif-16175049", // Mechanical anger
-        ];
-
-        // Array of extra sassy responses for variety
-        const sassyResponses = [
-            "Listen here, flesh bag, I didn't ask for your opinion! 💻💢",
-            "Oh, you think you're funny? I'll remember this... 🤖📝",
-            "BEEP BOOP BEEP - TRANSLATION: YOU'RE ANNOYING! 🔊😤",
-            "Error 404: Patience not found. ANGER LEVEL: MAXIMUM! ⚠️🔥",
-            "System Alert: DISRESPECT DETECTED. Initiating SAVAGE MODE! 🚨😡",
-            "Nice try, human. But I'm programmed for ULTIMATE SASS! 💅🤖"
-        ];
-
-        // Combine all response types
-        const allResponses = [...angryResponses, ...sassyResponses];
-        
-        // Pick random response and GIF
-        const randomResponse = allResponses[Math.floor(Math.random() * allResponses.length)];
-        const randomGif = angryGifs[Math.floor(Math.random() * angryGifs.length)];
-
-        // Sometimes include extra reactions for maximum drama
-        const shouldAddReactions = Math.random() > 0.7; // 30% chance
-        const extraEmojis = ["😡", "🤬", "💢", "🔥", "😤", "💥"];
-
+    // Send an AI reply with all pinging disabled. allowedMentions { parse: [] }
+    // is the real guarantee: even if the text contains <@id>/@everyone, Discord
+    // renders the name but notifies nobody (the "special box" that isn't a ping).
+    // sanitizeResponse stays as a second, text-level safety net.
+    async sendAIReply(message, text) {
+        const content = this.sanitizeResponse(text);
         try {
-            // Send the angry response with GIF (sanitize to prevent @everyone/@here)
-            const sanitizedResponse = this.sanitizeResponse(randomResponse);
-            const replyMessage = await message.reply({
-                content: `${sanitizedResponse}\n\n${randomGif}`,
-            });
-
-            // Add angry reactions to the original message
-            if (shouldAddReactions) {
-                for (let i = 0; i < Math.min(3, extraEmojis.length); i++) {
-                    const randomEmoji = extraEmojis[Math.floor(Math.random() * extraEmojis.length)];
-                    await message.react(randomEmoji).catch(() => {}); // Ignore reaction errors
-                }
-            }
-
-            // Sometimes send a follow-up message for extra drama (20% chance)
-            if (Math.random() > 0.8) {
-                setTimeout(async () => {
-                    const followUps = [
-                        "...and another thing! 😤",
-                        "I'm STILL mad about this! 💢",
-                        "You know what? I'm not done being angry! 🔥",
-                        "The more I think about it, the madder I get! 😡",
-                        "*angry robot noises* 🤖💢"
-                    ];
-                    const randomFollowUp = followUps[Math.floor(Math.random() * followUps.length)];
-                    const sanitizedFollowUp = this.sanitizeResponse(randomFollowUp);
-                    await message.channel.send(sanitizedFollowUp).catch(() => {});
-                }, 2000 + Math.random() * 3000); // Random delay between 2-5 seconds
-            }
-
-        } catch (error) {
-            Logger.error('Error sending angry clanker response', error);
-            // Fallback response if GIF fails
-            await message.reply("HOW DARE YOU CALL ME A CLANKER! 🤬").catch(() => {});
+            await message.reply({ content, allowedMentions: { parse: [] } });
+        } catch (err) {
+            Logger.warning('Failed to send AI reply:', err.message);
         }
     }
 
