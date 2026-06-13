@@ -17,7 +17,6 @@ const { Pool } = require('pg');
 const SERIES_ID = 16;
 const HOME_ID = 92; // InTraCate AA
 const AWAY_ID = 93; // Kingdom AA
-const SEASON_ID = 6;
 
 const pool = new Pool({
     connectionString: process.env.DATABASE_PUBLIC_URL || process.env.DATABASE_URL,
@@ -30,6 +29,15 @@ const pool = new Pool({
     const s = (await pool.query('SELECT home_score, away_score, winner_team_id FROM stats_series WHERE id=$1', [SERIES_ID])).rows[0];
     const games = (await pool.query('SELECT id, game_number, home_goals, away_goals, winner_team_id FROM stats_games WHERE series_id=$1 ORDER BY game_number', [SERIES_ID])).rows;
     const players = (await pool.query('SELECT count(*)::int c FROM stats_game_players WHERE series_id=$1', [SERIES_ID])).rows[0].c;
+
+    // Idempotency guard: this is a one-off, non-idempotent swap. If it already shows the
+    // corrected result (Kingdom won, away_score > home_score), refuse so a re-run can't
+    // flip it back. (Applied + verified 2026-06-13.)
+    if (s.winner_team_id === AWAY_ID) {
+        console.log('✅ Series #16 already shows the corrected result (winner Kingdom 2-3). Nothing to do.');
+        await pool.end();
+        return;
+    }
 
     console.log(`Series #${SERIES_ID} now: home ${s.home_score}-${s.away_score} away, winner ${s.winner_team_id}, player rows: ${players}`);
     console.log(`After repair:      home ${s.away_score}-${s.home_score} away, winner ${s.winner_team_id === HOME_ID ? AWAY_ID : HOME_ID}`);
@@ -52,7 +60,7 @@ const pool = new Pool({
         );
         await client.query(
             `UPDATE stats_games SET home_goals = away_goals, away_goals = home_goals,
-                winner_team_id = CASE WHEN away_goals > home_goals THEN $2 ELSE $3 END
+                winner_team_id = CASE WHEN away_goals > home_goals THEN $2::int ELSE $3::int END
              WHERE series_id = $1`, [SERIES_ID, HOME_ID, AWAY_ID]
         );
         // (away_goals/home_goals in the CASE refer to pre-update values per SQL semantics.)
@@ -68,10 +76,17 @@ const pool = new Pool({
     } finally {
         client.release();
     }
-    console.log('✅ series + games updated. Recomputing season aggregates…');
+    console.log('✅ series + games updated. Recomputing aggregates…');
 
+    // statsStore -> src/utils/database.js builds its pool from DATABASE_URL, which on a
+    // local machine is the internal Railway host (unreachable). Point it at the public
+    // URL before requiring statsStore.
+    if (process.env.DATABASE_PUBLIC_URL) process.env.DATABASE_URL = process.env.DATABASE_PUBLIC_URL;
     const statsStore = require('../src/stats/statsStore');
-    await statsStore.recomputeAllForSeason(SEASON_ID);
+    // recomputeForSeries derives both teams from the series row, so it rebuilds standings
+    // even though this series has 0 player rows. recomputeAllForSeason(SEASON_ID) would
+    // NOT — it only visits teams found in stats_game_players, so it skips this series.
+    await statsStore.recomputeForSeries(SERIES_ID);
     console.log('✅ recompute done.');
 
     const after = (await pool.query('SELECT home_score, away_score, winner_team_id FROM stats_series WHERE id=$1', [SERIES_ID])).rows[0];
