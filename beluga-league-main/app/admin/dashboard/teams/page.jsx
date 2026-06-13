@@ -291,16 +291,16 @@ function TeamCard({ team, onChanged }) {
           className="relative w-12 h-12 rounded-lg bg-white/5 border border-white/10 hover:border-blue-400/40 flex items-center justify-center text-[10px] text-white/40 overflow-hidden flex-shrink-0"
           title="Click to upload logo"
         >
-          {team.hasLogo || logoBust ? (
-            <img
-              src={`/api/teams/logo?teamId=${team.id}&v=${logoBust || team.updatedAt || team.id}`}
-              alt=""
-              className="w-full h-full object-cover"
-              onError={(e) => { e.currentTarget.style.display = 'none' }}
-            />
-          ) : (
-            <span>no logo</span>
-          )}
+          {/* Always try the logo endpoint — it falls back to the franchise logo,
+              which is what serves site-wide now that per-team logos are cleared.
+              Only show "no logo" if even that 404s. */}
+          <span className="absolute inset-0 flex items-center justify-center">no logo</span>
+          <img
+            src={`/api/teams/logo?teamId=${team.id}&v=${logoBust || team.updatedAt || team.id}`}
+            alt=""
+            className="relative w-full h-full object-cover"
+            onError={(e) => { e.currentTarget.style.display = 'none' }}
+          />
           <input
             ref={fileRef}
             type="file"
@@ -589,13 +589,13 @@ function FranchiseRow({ franchise, expanded, onToggle, onChanged }) {
       <div className="flex items-center gap-3 p-3">
         <button
           onClick={() => fileRef.current?.click()}
-          className="w-10 h-10 rounded-lg bg-white/5 border border-white/10 hover:border-blue-400/40 flex items-center justify-center text-[9px] text-white/40 overflow-hidden flex-shrink-0"
+          className="relative w-10 h-10 rounded-lg bg-white/5 border border-white/10 hover:border-blue-400/40 flex items-center justify-center text-[9px] text-white/40 overflow-hidden flex-shrink-0"
           title="Upload logo"
         >
-          {franchise.hasLogo ? (
-            <img src={`/api/admin/franchises/${franchise.id}/logo?v=${logoBust}`} alt="" className="w-full h-full object-cover" />
-          ) : (
-            <span>logo</span>
+          {/* Render after upload too (logoBust), even if it had no logo before. */}
+          <span className="absolute inset-0 flex items-center justify-center">logo</span>
+          {(franchise.hasLogo || logoBust) && (
+            <img src={`/api/admin/franchises/${franchise.id}/logo?v=${logoBust || franchise.id}`} alt="" className="relative w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none' }} />
           )}
           <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => uploadLogo(e.target.files?.[0])} />
         </button>
