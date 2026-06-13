@@ -354,8 +354,12 @@ async function handleGroupModal(interaction, parts = []) {
         return safeReply(interaction, '❌ Something went wrong reading that group. Salary crew has been notified.');
     }
 
-    if (parsed.fatal || !parsed.ok) {
-        const reject = (parsed.issues || []).find((i) => i.severity === 'reject');
+    if (parsed.fatal || !parsed.ok || !parsed.complete) {
+        // !complete with no reject = extra games beyond a clean Bo5/Bo7 (the
+        // TOO_MANY_GAMES warn). No cherry-picking allowed (operator B3), so the
+        // group must be fixed or handled by salary crew.
+        const reject = (parsed.issues || []).find((i) => i.severity === 'reject')
+            || (parsed.issues || []).find((i) => i.code === 'TOO_MANY_GAMES');
         const reason = reject ? reject.message : 'The series could not be validated.';
         await logEdge(interaction.client, {
             summary: `Report rejected (${reject?.code || 'unknown'}) in ${ctx.division}: ${reason}`,
@@ -761,6 +765,13 @@ async function commitFromSession(interaction, session, { via }) {
             awayPlayers: g.players.filter((p) => p.teamId === session.away_team_id).map((p) => ({ discordId: p.discordId, name: p.ingameName })),
         }));
         const cap = checkSeriesCaps({ division: session.division, caps, games: capGames, salaryOf, sourceOk, teamNames: { home: b.homeName, away: b.awayName } });
+        if (!cap.canVerify) {
+            // Salary source down or no cap configured — operator rule: warn, don't block.
+            await logEdge(interaction.client, {
+                summary: `Salary cap NOT verified for this ${session.division} report (source ${sourceOk ? 'ok' : 'down'}, cap ${cap.cap ?? 'unset'}) — recorded anyway.`,
+                division: session.division, groupUrl: session.group_url, thread: interaction.channel, pingInThread: false,
+            });
+        }
         if (cap.blocked) {
             const lines = [];
             for (const v of cap.violations) lines.push(`• ${v.team} game ${v.game}: $${v.total} (cap $${v.cap}, over by $${v.over})`);

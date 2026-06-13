@@ -83,6 +83,11 @@ async function postWeekHighlights(client, seasonId, division, week) {
     const channelId = await getConfig('stats_channel_id');
     if (!channelId) {
         Logger.warning('GotW skipped: stats_channel_id not set in app_config (set it in the website admin Settings).');
+        // Surface it where staff actually look (log channel + Admin → Logs).
+        await logEdge(client, {
+            summary: `Week ${week} ${division} highlights SKIPPED — no stats channel configured. Set it in website Admin → Site Content.`,
+            division, pingSalaryCrew: false, pingInThread: false,
+        });
         return;
     }
     const channel = await client.channels.fetch(channelId).catch(() => null);

@@ -35,7 +35,7 @@ export async function getStatsStandings(seasonId, division) {
   if (teams.length === 1) return teams.map((t, i) => ({ ...t, rank: i + 1 }))
 
   const seriesRes = await query(
-    `SELECT home_team_id, away_team_id, winner_team_id
+    `SELECT home_team_id, away_team_id, winner_team_id, home_score, away_score
      FROM stats_series
      WHERE season_id = $1 AND division = $2 AND is_playoff = FALSE
        AND status = 'confirmed' AND is_forfeit = FALSE`,
@@ -43,19 +43,25 @@ export async function getStatsStandings(seasonId, division) {
   ).catch(() => ({ rows: [] }))
   const series = seriesRes.rows
 
+  // Operator rule D4: tied teams rank by H2H record; if still tied, by game
+  // differential WITHIN the H2H matchups (must stay in sync with the bot's
+  // statsStore.getStandings).
   const h2hWithin = (teamId, group) => {
     const ids = new Set(group.map((t) => t.teamId))
     let wins = 0
     let losses = 0
+    let gameDiff = 0
     for (const s of series) {
-      const involves =
-        (s.home_team_id === teamId && ids.has(s.away_team_id)) ||
-        (s.away_team_id === teamId && ids.has(s.home_team_id))
-      if (!involves) continue
+      const isHome = s.home_team_id === teamId && ids.has(s.away_team_id)
+      const isAway = s.away_team_id === teamId && ids.has(s.home_team_id)
+      if (!isHome && !isAway) continue
       if (s.winner_team_id === teamId) wins += 1
       else if (s.winner_team_id != null) losses += 1
+      const own = Number(isHome ? s.home_score : s.away_score) || 0
+      const opp = Number(isHome ? s.away_score : s.home_score) || 0
+      gameDiff += own - opp
     }
-    return { wins, losses }
+    return { wins, losses, gameDiff }
   }
 
   const cmpBase = (a, b) => b.wins - a.wins || a.losses - b.losses
@@ -70,7 +76,10 @@ export async function getStatsStandings(seasonId, division) {
     const cluster = teams.slice(i, j)
     if (cluster.length > 1) {
       const withH2H = cluster.map((t) => ({ ...t, _h2h: h2hWithin(t.teamId, cluster) }))
-      withH2H.sort((a, b) => (b._h2h.wins - b._h2h.losses) - (a._h2h.wins - a._h2h.losses) || cmpFallback(a, b))
+      withH2H.sort((a, b) =>
+        (b._h2h.wins - b._h2h.losses) - (a._h2h.wins - a._h2h.losses)
+        || b._h2h.gameDiff - a._h2h.gameDiff
+        || cmpFallback(a, b))
       out.push(...withH2H.map(({ _h2h, ...t }) => t))
     } else {
       out.push(cluster[0])
