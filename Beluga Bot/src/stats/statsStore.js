@@ -402,9 +402,22 @@ async function recomputeTeamSeason(seasonId, division, teamId, isPlayoff) {
 /** Full rebuild for a season (the staff "recalculate" button). */
 async function recomputeAllForSeason(seasonId) {
     if (!db()) return;
+    // Discover teams from BOTH the per-player rows AND the series themselves, so a team
+    // whose only series has no player rows (all-skipped, or FF-only — /report-ff makes a
+    // synthetic game with no player rows) still gets its standings rebuilt. Discovering
+    // only via stats_game_players silently skips such teams. recomputeForSeries already
+    // derives teams from the series row; this keeps "Recalculate all" consistent with it.
     const teams = await pool.query(
-        `SELECT DISTINCT season_id, division, team_id, is_playoff FROM stats_game_players
-         WHERE season_id=$1 AND team_id IS NOT NULL`, [seasonId]
+        `SELECT DISTINCT season_id, division, team_id, is_playoff FROM (
+            SELECT season_id, division, team_id, is_playoff
+              FROM stats_game_players WHERE season_id=$1 AND team_id IS NOT NULL
+            UNION
+            SELECT season_id, division, home_team_id AS team_id, is_playoff
+              FROM stats_series WHERE season_id=$1 AND status='confirmed' AND home_team_id IS NOT NULL
+            UNION
+            SELECT season_id, division, away_team_id AS team_id, is_playoff
+              FROM stats_series WHERE season_id=$1 AND status='confirmed' AND away_team_id IS NOT NULL
+        ) u`, [seasonId]
     );
     for (const r of teams.rows) {
         // eslint-disable-next-line no-await-in-loop
