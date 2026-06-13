@@ -55,7 +55,18 @@ async function main() {
       const slug = route === '/' ? 'home' : route.replace(/^\//, '').replace(/[^a-z0-9-]+/gi, '_')
       try {
         const res = await page.goto(baseUrl + route, { waitUntil: 'networkidle2', timeout: 60000 })
-        await new Promise((r) => setTimeout(r, 1200)) // let client fetches paint
+        await new Promise((r) => setTimeout(r, 5000)) // let client DB fetches resolve + paint
+        // Scroll through to trigger framer-motion whileInView sections (otherwise
+        // off-screen content stays at opacity 0 and looks like empty space).
+        await page.evaluate(async () => {
+          const step = window.innerHeight * 0.8
+          for (let y = 0; y < document.body.scrollHeight; y += step) {
+            window.scrollTo(0, y)
+            await new Promise((r) => setTimeout(r, 150))
+          }
+          window.scrollTo(0, 0)
+        })
+        await new Promise((r) => setTimeout(r, 600))
         await page.screenshot({ path: path.join(outDir, `${slug}.${viewport.name}.png`), fullPage: true })
         const status = res ? res.status() : '???'
         const errNote = errors.length ? `  ⚠️ ${errors.length} js error(s): ${errors[0].slice(0, 160)}` : ''
