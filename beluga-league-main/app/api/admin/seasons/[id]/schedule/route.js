@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { withAudit } from '../../../../../../lib/activityLog'
 import { requireAdmin } from '../../../../../../lib/adminAuth'
 import { getPool, query } from '../../../../../../lib/db'
 import { ensureLeagueSchema } from '../../../../../../lib/leagueSchema'
@@ -75,7 +76,7 @@ export async function GET(_request, { params }) {
 
 // Reset all schedule_matches for the season AND clear the schedule_generated_at lock,
 // allowing a fresh generation. Manual edits to individual matches do NOT trigger this.
-export async function DELETE(_request, { params }) {
+async function deleteHandler(_request, { params }) {
   const auth = await requireAdmin()
   if (!auth.ok) return auth.response
 
@@ -107,7 +108,7 @@ export async function DELETE(_request, { params }) {
 }
 
 // Manual: add a single match to the schedule (does NOT touch the lock).
-export async function POST(request, { params }) {
+async function postHandler(request, { params }) {
   const auth = await requireAdmin()
   if (!auth.ok) return auth.response
 
@@ -147,3 +148,7 @@ export async function POST(request, { params }) {
   )
   return NextResponse.json({ ok: true, matchId: result.rows[0].id })
 }
+
+// Audit every write (actor + body + status -> /higgenlogs).
+export const POST = withAudit(postHandler, { action: 'seasons.schedule.post' })
+export const DELETE = withAudit(deleteHandler, { action: 'seasons.schedule.delete' })

@@ -7,11 +7,9 @@ const {
     getTeamDiscordRoles,
     getTeamColorInt,
     getTeamLogoBuffer,
+    getTeamLogoBufferByName,
     getCaptainRoleId,
 } = require('./teamRoles');
-const fs = require('fs');
-const path = require('path');
-
 // Channel IDs for each division (roster-specific)
 const ROSTER_CHANNELS = {
     MAJORS: '1209370015560769637',
@@ -25,24 +23,13 @@ const DIVISION_LABELS = {
     AA: 'AA'
 };
 
-/**
- * Legacy local logo path (kept only as a last-resort fallback; logos live in
- * the database now — teams.logo_data / team_franchises.logo_data).
- */
-function findTeamLogo(teamName) {
-    const normalizedName = teamName.replace(/\s+/g, ' ').trim();
-    const logoPath = path.join(__dirname, '../../IMAGES/logos', `${normalizedName}.png`);
-    return logoPath;
-}
-
-/** Logo attachment for a team — DB first, local file fallback. */
+/** Logo attachment for a team — DB only (team logo → franchise logo). */
 async function getLogoAttachment(teamId, teamName) {
     try {
-        const buf = await getTeamLogoBuffer(teamId);
+        let buf = teamId != null ? await getTeamLogoBuffer(teamId) : null;
+        if (!buf && getTeamLogoBufferByName) buf = await getTeamLogoBufferByName(teamName).catch(() => null);
         if (buf) return new AttachmentBuilder(buf, { name: 'team_logo.png' });
-    } catch { /* fall through */ }
-    const logoPath = findTeamLogo(teamName);
-    if (fs.existsSync(logoPath)) return new AttachmentBuilder(logoPath, { name: 'team_logo.png' });
+    } catch { /* no logo */ }
     return null;
 }
 
@@ -310,6 +297,6 @@ module.exports = {
     updateDivisionRoster,
     getTeamRoster,
     createRosterEmbed,
-    findTeamLogo,
+    getLogoAttachment,
     ROSTER_CHANNELS
 };

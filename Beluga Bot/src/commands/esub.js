@@ -6,6 +6,7 @@ const { config } = require('../config/config');
 const Logger = require('../utils/logger');
 const { ROLES, TEAM_ROLES, TEAM_NAMES } = require('../constants/roles');
 const { TransactionDB } = require('../utils/database');
+const { attachTeamLogo } = require('../utils/teamRoles');
 
 // Command-specific constants
 const TRANSACTION_REQUEST_CHANNEL_ID = '1178913188750823544';
@@ -27,12 +28,11 @@ const DIVISION_ROWS = {
 const pendingEsubTransactions = new Map();
 
 /**
- * Find team logo path
+ * Team logo for embeds — DB only (team→franchise logo). Returns an
+ * AttachmentBuilder named team_logo.png or null. (Was IMAGES/logos/*.png.)
  */
-function findTeamLogo(teamName) {
-    const normalizedName = teamName.replace(/\s+/g, ' ').trim();
-    const logoPath = path.join(__dirname, '../../IMAGES/logos', `${normalizedName}.png`);
-    return logoPath;
+async function teamLogoAttachment(teamName) {
+    return attachTeamLogo(null, teamName);
 }
 
 /**
@@ -277,12 +277,9 @@ module.exports = {
                 .setFooter({ text: 'React with ✅ to approve or ❌ to deny' })
                 .setTimestamp();
 
-            // Add team logo
-            const logoPath = findTeamLogo(initiatorTeam);
+            // Request is posted without a logo attachment.
             let esubMessage;
-            
-            // Send request without logo attachment
-            esubMessage = await transactionChannel.send({ 
+            esubMessage = await transactionChannel.send({
                 content: `<@&${ROLES.SALARY_CREW}> <@${player.id}>`,
                 embeds: [esubEmbed]
             });
@@ -378,19 +375,18 @@ module.exports = {
                 .setColor(0x00FF00)
                 .setTimestamp();
 
-            const logoPath = findTeamLogo(transaction.teamName);
-            if (logoPath && fs.existsSync(logoPath)) {
-                const logoAttachment = new AttachmentBuilder(logoPath, { name: 'team_logo.png' });
+            const logoAttachment = await teamLogoAttachment(transaction.teamName);
+            if (logoAttachment) {
                 confirmationEmbed.setThumbnail('attachment://team_logo.png');
-                await transactionChannel.send({ 
+                await transactionChannel.send({
                     content: `<@${transaction.playerId}>`,
-                    embeds: [confirmationEmbed], 
-                    files: [logoAttachment] 
+                    embeds: [confirmationEmbed],
+                    files: [logoAttachment]
                 });
             } else {
-                await transactionChannel.send({ 
+                await transactionChannel.send({
                     content: `<@${transaction.playerId}>`,
-                    embeds: [confirmationEmbed] 
+                    embeds: [confirmationEmbed]
                 });
             }
 
@@ -402,12 +398,12 @@ module.exports = {
                     .setColor(0xFF9900)
                     .setTimestamp();
 
-                if (logoPath && fs.existsSync(logoPath)) {
-                    const logoAttachment = new AttachmentBuilder(logoPath, { name: 'team_logo.png' });
+                const trackLogo = await teamLogoAttachment(transaction.teamName);
+                if (trackLogo) {
                     trackingEmbed.setThumbnail('attachment://team_logo.png');
-                    await esubChannel.send({ 
-                        embeds: [trackingEmbed], 
-                        files: [logoAttachment] 
+                    await esubChannel.send({
+                        embeds: [trackingEmbed],
+                        files: [trackLogo]
                     });
                 } else {
                     await esubChannel.send({ embeds: [trackingEmbed] });

@@ -191,7 +191,10 @@ async function createTicketChannel(interaction, reason, answers) {
         const guild = interaction.guild;
         const panelChannel = interaction.channel;
         const username = (interaction.member?.displayName || interaction.user.username);
-        const name = `${reason.name}-${username}`.toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').slice(0, 95);
+        // Discord rejects an empty channel name — fall back if sanitizing strips
+        // everything (e.g. emoji-only reason/username).
+        let name = `${reason.name}-${username}`.toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').slice(0, 95);
+        if (!name.replace(/-/g, '')) name = `ticket-${String(interaction.user.id).slice(-6)}`;
 
         const overwrites = [
             { id: guild.id, deny: [PermissionFlagsBits.ViewChannel] },
@@ -216,28 +219,54 @@ async function createTicketChannel(interaction, reason, answers) {
             createdBy: interaction.user.id,
             createdByUsername: interaction.user.username,
             userIds: [interaction.user.id],
+            // Must be set — TicketDB.create feeds this straight into a Postgres
+            // timestamp; without it `new Date(undefined)` is Invalid Date and the
+            // insert throws 22007 (the "made the ticket but didn't do the rest" crash).
+            createdAt: new Date().toISOString(),
         });
 
+        // Build the welcome embed defensively — Discord rejects empty embed
+        // field values and over-limit name/value/description, which would
+        // otherwise throw AFTER the channel + DB row exist (the "made the ticket
+        // but didn't do the rest" symptom). Limits: name ≤256, value ≤1024 (must
+        // be non-empty), description ≤4096.
+        const safe = (v, max, fallback) => {
+            const s = String(v == null ? '' : v).trim();
+            return (s ? s : fallback).slice(0, max);
+        };
         const embed = new EmbedBuilder()
-            .setTitle(`${reason.emoji ? `${reason.emoji} ` : ''}${reason.name}`)
+            .setTitle(safe(`${reason.emoji ? `${reason.emoji} ` : ''}${reason.name}`, 256, 'Ticket'))
             .setColor(0x3498DB)
-            .setDescription(reason.welcome_message || 'A staff member will be with you shortly.')
+            .setDescription(safe(reason.welcome_message, 4096, 'A staff member will be with you shortly.'))
             .setFooter({ text: 'Users can request a close — staff confirm it. Transcripts are saved on the website.' })
             .setTimestamp();
         if (answers.length) {
-            embed.addFields(answers.map((a) => ({ name: a.label.slice(0, 250), value: String(a.value).slice(0, 1000), inline: false })));
+            embed.addFields(answers.slice(0, 25).map((a) => ({
+                name: safe(a.label, 256, 'Question'),
+                value: safe(a.value, 1024, '—'),
+                inline: false,
+            })));
         }
         const controls = new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId(`tk:reqclose:${reason.id}`).setLabel('Request Close').setEmoji('🙋').setStyle(ButtonStyle.Secondary),
             new ButtonBuilder().setCustomId(`tk:close:${reason.id}`).setLabel('Close (staff)').setEmoji('🔒').setStyle(ButtonStyle.Danger),
             new ButtonBuilder().setCustomId(`tk:add:${reason.id}`).setLabel('Add member (staff)').setEmoji('➕').setStyle(ButtonStyle.Secondary),
         );
-        const pings = [...(reason.staff_role_ids || []).map((r) => `<@&${r}>`), `<@${interaction.user.id}>`].join(' ');
-        await channel.send({ content: pings, embeds: [embed], components: [controls] });
+        const pings = [...(reason.staff_role_ids || []).map((r) => `<@&${r}>`), `<@${interaction.user.id}>`].join(' ').slice(0, 2000);
+
+        // The channel + DB row already exist; don't let a send failure orphan the
+        // ticket or surface a generic error. Report success either way.
+        try {
+            await channel.send({ content: pings, embeds: [embed], components: [controls] });
+        } catch (sendErr) {
+            Logger.error(`ticket welcome message failed (channel created) [${sendErr?.code || '?'}] ${sendErr?.message || sendErr}`, sendErr?.rawError || '');
+        }
 
         await interaction.editReply(`✅ Ticket opened: ${channel}`);
     } catch (err) {
-        Logger.error('createTicketChannel failed', err);
+        // Log the REAL error (code + message + Discord rawError) so the actual
+        // cause shows up in Railway logs instead of a generic line.
+        Logger.error(`createTicketChannel failed [${err?.code || '?'}] ${err?.message || err}`, err?.rawError || err);
         await interaction.editReply('❌ Failed to open the ticket — ping staff directly.').catch(() => {});
     }
 }
@@ -274,6 +303,25 @@ async function handleConfirmClose(interaction, reasonId) {
         return interaction.reply({ content: '❌ Only staff can confirm a close.', flags: EPHEMERAL });
     }
     await interaction.reply({ content: `🔒 Closing — transcript is saved on the website. (by <@${interaction.user.id}>)` });
+    // Archive BEFORE deleting the row/channel so the closed ticket actually shows
+    // up in the website admin Tickets tab. Reuses the same backfill + archive path
+    // the old /openticket close uses (writes ticket_archives, which the website
+    // reads for closed tickets). Without this the new-system close only deleted the
+    // tickets row, leaving no transcript — closed tickets vanished from the panel.
+    try {
+        const { backfillTicketChannel, archiveTicket } = require('../commands/openticket');
+        const ticketData = (await TicketDB.get(interaction.channel.id).catch(() => null)) || {
+            channelId: interaction.channel.id,
+            channelName: interaction.channel.name,
+            reason: null,
+            createdByUsername: null,
+            createdAt: null,
+        };
+        await backfillTicketChannel(interaction.channel).catch(() => {});
+        await archiveTicket(ticketData, interaction.user.username);
+    } catch (err) {
+        Logger.error('Ticket archive on close failed', err.message || err);
+    }
     try {
         await TicketDB.delete(interaction.channel.id);
     } catch { /* row may already be gone */ }

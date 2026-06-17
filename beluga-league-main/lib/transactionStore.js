@@ -29,8 +29,11 @@ function map(row) {
     seasonId: row.season_id,
     seasonNumber: row.season_number ?? null,
     discordId: row.discord_id,
-    discordUsername: row.discord_username,
-    displayName: row.display_name,
+    // Names: prefer the snapshot stored at log time, then fall back to the live
+    // discord_members directory (so historical rows logged before name-stamping,
+    // or rows from a caller that didn't pass a name, still show a real name).
+    discordUsername: row.discord_username ?? row.member_username ?? null,
+    displayName: row.display_name ?? row.member_display_name ?? row.member_username ?? null,
     teamId: row.team_id,
     teamName: row.team_name ?? row.team_name_snapshot,
     teamNameSnapshot: row.team_name_snapshot,
@@ -53,12 +56,15 @@ const SELECT_BASE = `
     s.season_number,
     tm.name AS team_name,
     pt.name AS paired_team_name,
-    f.name AS franchise_name
+    f.name AS franchise_name,
+    dm.username AS member_username,
+    dm.display_name AS member_display_name
   FROM transactions t
   LEFT JOIN seasons s ON s.id = t.season_id
   LEFT JOIN teams tm ON tm.id = t.team_id
   LEFT JOIN teams pt ON pt.id = t.paired_team_id
   LEFT JOIN team_franchises f ON f.id = t.franchise_id
+  LEFT JOIN discord_members dm ON dm.discord_id = t.discord_id
 `
 
 export async function logTransaction(input) {
@@ -82,6 +88,22 @@ export async function logTransaction(input) {
 
   if (!discordId) throw new Error('logTransaction: discordId required')
   if (!type) throw new Error('logTransaction: type required')
+
+  // Always stamp a human-readable name so the admin Transactions list never shows
+  // a bare Discord ID. Fall back to the bot-populated discord_members directory
+  // when the caller didn't pass a name (the source of names site-wide).
+  let resolvedDisplayName = displayName
+  let resolvedUsername = discordUsername
+  if (!resolvedDisplayName || !resolvedUsername) {
+    const m = await query(
+      'SELECT display_name, username FROM discord_members WHERE discord_id = $1',
+      [String(discordId)]
+    ).catch(() => ({ rows: [] }))
+    if (m.rows.length) {
+      if (!resolvedDisplayName) resolvedDisplayName = m.rows[0].display_name || m.rows[0].username || null
+      if (!resolvedUsername) resolvedUsername = m.rows[0].username || null
+    }
+  }
 
   let resolvedTeamSnapshot = teamNameSnapshot
   if (teamId && !resolvedTeamSnapshot) {
@@ -108,7 +130,7 @@ export async function logTransaction(input) {
     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14)
     RETURNING *
   `, [
-    seasonId, String(discordId), discordUsername, displayName,
+    seasonId, String(discordId), resolvedUsername, resolvedDisplayName,
     teamId, resolvedTeamSnapshot, resolvedFranchiseId,
     pairedTeamId, resolvedPairedSnapshot,
     type, JSON.stringify(details || {}), performedByDiscordId, performedByUsername, source,

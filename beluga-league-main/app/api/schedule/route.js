@@ -26,7 +26,9 @@ function groupedRegular(matches) {
       out[divisionKey][weekLabel] = []
     }
 
-    out[divisionKey][weekLabel].push([match.homeTeam, match.awayTeam])
+    // [homeName, awayName, homeTeamId, awayTeamId] — ids let the UI request the
+    // exact DB logo (name-only lookups can miss when franchises share a name).
+    out[divisionKey][weekLabel].push([match.homeTeam, match.awayTeam, match.homeTeamId, match.awayTeamId])
   }
 
   return out

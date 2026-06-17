@@ -79,7 +79,7 @@ export default function SafeTeamLogo({
   return (
     <div className={containerClassName}>
       <Image
-        src={`/logos/${encodeURIComponent(teamName)}.png`}
+        src={`/api/teams/logo?name=${encodeURIComponent(teamName)}`}
         alt={teamName}
         width={size}
         height={size}

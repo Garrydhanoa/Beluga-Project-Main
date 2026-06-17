@@ -4,6 +4,7 @@ import { ensureLeagueSchema } from '../../../../lib/leagueSchema'
 import { query } from '../../../../lib/db'
 import { getActiveSeason } from '../../../../lib/leagueStore'
 import { getMemberMap } from '../../../../lib/discordMembers'
+import { getSalaryMap } from '../../../../lib/salarySheet'
 
 export const dynamic = 'force-dynamic'
 
@@ -137,6 +138,34 @@ export async function GET(request) {
     }
   })
 
+  // Fold in EVERY salary-sheet member (the registered-member list), even if they
+  // never appear in the DB sources above — so the admin directory matches the
+  // public player directory's full ~1200, not just the DB-touched subset.
+  const seen = new Set(players.map((p) => String(p.discordId)))
+  try {
+    const salaryMap = await getSalaryMap()
+    for (const [discordId, sheet] of salaryMap.entries()) {
+      const id = String(discordId)
+      if (seen.has(id)) continue
+      seen.add(id)
+      const member = memberMap.get(id) || null
+      const current = currentByDiscord.get(id) || null
+      players.push({
+        discordId: id,
+        discordUsername: member?.username || null,
+        displayName: member?.displayName || sheet.displayName || sheet.nickname || `User ${id.slice(-4)}`,
+        avatarUrl: member?.avatarUrl || null,
+        inGuild: member?.isInGuild ?? null,
+        seasonsPlayed: 0,
+        franchisesPlayed: 0,
+        lastSeen: null,
+        sources: ['sheet'],
+        current,
+        statusLabel: current ? 'rostered' : 'free_agent',
+      })
+    }
+  } catch { /* sheet optional — DB union still returns the bulk of players */ }
+
   if (search) {
     players = players.filter((p) =>
       (p.displayName || '').toLowerCase().includes(search) ||
@@ -148,9 +177,10 @@ export async function GET(request) {
   if (status === 'free_agent') players = players.filter((p) => !p.current)
   if (division && division !== 'all') players = players.filter((p) => p.current?.division === division)
 
+  // Raised from 1000: the full directory is ~1200, and the public page returns all.
   return NextResponse.json({
     activeSeasonId,
     total: players.length,
-    players: players.slice(0, 1000),
+    players: players.slice(0, 2000),
   })
 }

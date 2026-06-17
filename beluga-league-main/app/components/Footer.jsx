@@ -4,12 +4,15 @@ import Link from 'next/link';
 import ImageWithFallback from './ImageWithFallback';
 import { SOCIALS } from '../../lib/socials';
 
+// Kept in sync with the nav header (Navigation.jsx NAV_LINKS).
 const QUICK_LINKS = [
   { label: 'Home', href: '/' },
   { label: 'Schedules', href: '/schedules' },
   { label: 'Standings', href: '/standings' },
   { label: 'Power Rankings', href: '/power-rankings' },
-  { label: 'Player Directory', href: '/players' },
+  { label: 'Leaderboards', href: '/leaderboards' },
+  { label: 'Players', href: '/players' },
+  { label: 'Applications', href: '/applications' },
   { label: 'Rulebook', href: '/rulebook' },
 ];
 

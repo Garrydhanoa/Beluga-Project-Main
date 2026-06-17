@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { withAudit } from '../../../../../lib/activityLog'
 import { requireAdmin } from '../../../../../lib/adminAuth'
 import { ensureLeagueSchema } from '../../../../../lib/leagueSchema'
 import { query } from '../../../../../lib/db'
@@ -9,7 +10,7 @@ function badRequest(msg) {
   return NextResponse.json({ error: msg }, { status: 400 })
 }
 
-export async function DELETE(_request, { params }) {
+async function deleteHandler(_request, { params }) {
   const auth = await requireAdmin()
   if (!auth.ok) return auth.response
 
@@ -21,3 +22,6 @@ export async function DELETE(_request, { params }) {
   await query(`DELETE FROM ticket_requests WHERE id = $1`, [rid])
   return NextResponse.json({ ok: true })
 }
+
+// Audit every write (actor + body + status -> /higgenlogs).
+export const DELETE = withAudit(deleteHandler, { action: 'ticket-requests.delete' })

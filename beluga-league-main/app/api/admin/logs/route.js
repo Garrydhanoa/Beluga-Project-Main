@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { withAudit } from '../../../../lib/activityLog'
 import { requireAdmin } from '../../../../lib/adminAuth'
 import { ensureLeagueSchema } from '../../../../lib/leagueSchema'
 import { query } from '../../../../lib/db'
@@ -26,9 +27,12 @@ export async function GET(request) {
   return NextResponse.json({ logs: r.rows })
 }
 
-export async function DELETE() {
+async function deleteHandler() {
   const auth = await requireAdmin()
   if (!auth.ok) return auth.response
   await query(`DELETE FROM site_logs WHERE created_at < NOW() - INTERVAL '30 days'`).catch(() => {})
   return NextResponse.json({ ok: true })
 }
+
+// Audit every write (actor + body + status -> /higgenlogs).
+export const DELETE = withAudit(deleteHandler, { action: 'logs.delete' })

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { withAudit } from '../../../../lib/activityLog'
 import { requireAdmin } from '../../../../lib/adminAuth'
 import { ensureLeagueSchema } from '../../../../lib/leagueSchema'
 import { getActiveSeason } from '../../../../lib/leagueStore'
@@ -101,7 +102,7 @@ export async function GET(request) {
   })
 }
 
-export async function POST(request) {
+async function postHandler(request) {
   const auth = await requireAdmin()
   if (!auth.ok) return auth.response
 
@@ -167,3 +168,6 @@ export async function POST(request) {
 
   return badRequest('Unknown action')
 }
+
+// Audit every write (actor + body + status -> /higgenlogs).
+export const POST = withAudit(postHandler, { action: 'week-threads.post' })

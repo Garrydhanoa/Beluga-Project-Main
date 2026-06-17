@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { withAudit } from '../../../../../../lib/activityLog'
 import { requireAdmin } from '../../../../../../lib/adminAuth'
 import { getSeasonConfig, upsertSeasonConfig } from '../../../../../../lib/franchiseStore'
 
@@ -20,7 +21,7 @@ export async function GET(_request, { params }) {
   return NextResponse.json({ config })
 }
 
-export async function PATCH(request, { params }) {
+async function patchHandler(request, { params }) {
   const auth = await requireAdmin()
   if (!auth.ok) return auth.response
 
@@ -39,3 +40,6 @@ export async function PATCH(request, { params }) {
   })
   return NextResponse.json({ ok: true, config })
 }
+
+// Audit every write (actor + body + status -> /higgenlogs).
+export const PATCH = withAudit(patchHandler, { action: 'seasons.config.patch' })

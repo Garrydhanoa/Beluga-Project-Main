@@ -107,8 +107,8 @@ export default function TransactionsAdminPage() {
           No transactions match this filter.
         </div>
       ) : (
-        <div className="rounded-2xl bg-white/[0.02] border border-white/10 overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="rounded-2xl bg-white/[0.02] border border-white/10 overflow-x-auto">
+          <table className="w-full text-sm min-w-[640px]">
             <thead className="bg-black/30">
               <tr className="text-[10px] uppercase tracking-wider text-blue-300/70 font-bold">
                 <th className="px-3 py-2 text-left">When</th>

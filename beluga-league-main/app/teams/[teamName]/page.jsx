@@ -157,7 +157,7 @@ function FadeIn({ children, delay = 0, y = 30, className = '' }) {
   )
 }
 
-function TeamLogo({ name, size = 'md', link = true }) {
+function TeamLogo({ name, teamId, size = 'md', link = true }) {
   const sizes = {
     sm: 'w-12 h-12',
     md: 'w-16 h-16',
@@ -170,6 +170,7 @@ function TeamLogo({ name, size = 'md', link = true }) {
       <div className="absolute inset-0 rounded-full bg-blue-500/10 blur-xl" />
       <TeamLogoImg
         name={name}
+        teamId={teamId}
         className="relative w-full h-full text-3xl"
         imgClassName="relative w-full h-full object-contain drop-shadow-[0_0_20px_rgba(59,130,246,0.4)]"
       />
@@ -282,7 +283,10 @@ export default function TeamPage() {
         const key = `Week ${m.week}`
         if (!byWeek[key]) byWeek[key] = []
         byWeek[key].push({
+          ownTeam: m.isHome ? m.home : m.away,
           opponent: m.isHome ? m.away : m.home,
+          ownTeamId: m.ownTeamId ?? (m.isHome ? m.homeTeamId : m.awayTeamId),
+          opponentTeamId: m.opponentTeamId ?? (m.isHome ? m.awayTeamId : m.homeTeamId),
           isHome: m.isHome,
           matchup: `${m.home} vs ${m.away}`,
         })
@@ -322,7 +326,7 @@ export default function TeamPage() {
 
             {/* Logo */}
             <div className="mb-6 flex justify-center">
-              <TeamLogo name={teamName} size="xl" link={false} />
+              <TeamLogo name={teamName} teamId={divData?.teamId} size="xl" link={false} />
             </div>
 
             {/* Team name */}
@@ -768,20 +772,18 @@ function ScheduleTab({ teamName, schedule, division }) {
 
               {/* Match cards */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {matches.map((match, i) => {
-                  // Always render the current team on top (home half)
-                  const teamIsFirst = match[0] === teamName
-                  const ownTeam = teamIsFirst ? match[0] : match[1]
-                  const opponent = teamIsFirst ? match[1] : match[0]
-                  return (
-                    <MatchTicketCard
-                      key={`${week}-${i}`}
-                      ownTeam={ownTeam}
-                      opponent={opponent}
-                      isHome={teamIsFirst}
-                    />
-                  )
-                })}
+                {matches.map((match, i) => (
+                  // Schedule items are objects (own/opponent already resolved to
+                  // THIS team's perspective in the page's `schedule` memo).
+                  <MatchTicketCard
+                    key={`${week}-${i}`}
+                    ownTeam={match.ownTeam || teamName}
+                    opponent={match.opponent}
+                    isHome={match.isHome}
+                    ownTeamId={match.ownTeamId}
+                    opponentTeamId={match.opponentTeamId}
+                  />
+                ))}
               </div>
             </section>
           </FadeIn>
@@ -791,14 +793,21 @@ function ScheduleTab({ teamName, schedule, division }) {
   )
 }
 
-function MatchTicketCard({ ownTeam, opponent, isHome }) {
+function MatchTicketCard({ ownTeam, opponent, isHome, ownTeamId, opponentTeamId }) {
+  // Prefer exact DB logos by id; fall back to name lookup when an id is missing.
+  const ownLogoUrl = ownTeamId != null
+    ? `/api/teams/logo?teamId=${encodeURIComponent(ownTeamId)}`
+    : `/api/teams/logo?name=${encodeURIComponent(ownTeam)}`
+  const oppLogoUrl = opponentTeamId != null
+    ? `/api/teams/logo?teamId=${encodeURIComponent(opponentTeamId)}`
+    : `/api/teams/logo?name=${encodeURIComponent(opponent)}`
   return (
     <div className="group relative rounded-2xl border border-white/10 hover:border-blue-400/50 hover:shadow-[0_10px_40px_rgba(59,130,246,0.25)] hover:-translate-y-1 transition-all duration-500 overflow-hidden bg-black/20">
       {/* OWN TEAM half */}
       <div className="relative px-5 pt-5 pb-9 overflow-hidden bg-gradient-to-br from-blue-600/15 via-blue-500/5 to-transparent">
         <div className="absolute -top-10 -right-10 w-44 h-44 opacity-[0.1] group-hover:opacity-[0.22] transition-opacity duration-700 pointer-events-none">
           <img
-            src={`/api/teams/logo?name=${encodeURIComponent(ownTeam)}`}
+            src={ownLogoUrl}
             alt=""
             className="w-full h-full object-contain"
             onError={(e) => { e.currentTarget.style.display = 'none' }}
@@ -814,7 +823,7 @@ function MatchTicketCard({ ownTeam, opponent, isHome }) {
             </div>
           </div>
           <div className="flex-shrink-0 w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center">
-            <TeamLogoImg name={ownTeam} className="w-full h-full" imgClassName="w-full h-full object-contain drop-shadow-lg" />
+            <TeamLogoImg name={ownTeam} teamId={ownTeamId} className="w-full h-full" imgClassName="w-full h-full object-contain drop-shadow-lg" />
           </div>
         </div>
       </div>
@@ -843,7 +852,7 @@ function MatchTicketCard({ ownTeam, opponent, isHome }) {
       >
         <div className="absolute -bottom-10 -left-10 w-44 h-44 opacity-[0.1] group-hover:opacity-[0.22] transition-opacity duration-700 pointer-events-none">
           <img
-            src={`/api/teams/logo?name=${encodeURIComponent(opponent)}`}
+            src={oppLogoUrl}
             alt=""
             className="w-full h-full object-contain"
             onError={(e) => { e.currentTarget.style.display = 'none' }}
@@ -851,7 +860,7 @@ function MatchTicketCard({ ownTeam, opponent, isHome }) {
         </div>
         <div className="relative flex items-center gap-3">
           <div className="flex-shrink-0 w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center">
-            <TeamLogoImg name={opponent} className="w-full h-full" imgClassName="w-full h-full object-contain drop-shadow-lg" />
+            <TeamLogoImg name={opponent} teamId={opponentTeamId} className="w-full h-full" imgClassName="w-full h-full object-contain drop-shadow-lg" />
           </div>
           <div className="text-left">
             <div className="text-[9px] font-bold tracking-[0.25em] uppercase text-blue-300/60">

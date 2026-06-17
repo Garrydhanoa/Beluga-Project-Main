@@ -6,6 +6,7 @@ const { config } = require('../config/config');
 const Logger = require('../utils/logger');
 const { LeagueDB, TransactionDB, isDatabaseAvailable } = require('../utils/database');
 const { ROLES, TEAM_ROLES, NP_ROLES } = require('../constants/roles');
+const { attachTeamLogo } = require('../utils/teamRoles');
 
 // Command-specific constants
 const TRANSACTION_REQUEST_CHANNEL_ID = '1178913188750823544';
@@ -291,48 +292,10 @@ async function getRosterLimit(division, teamName) {
     return Number.isInteger(limit) ? limit : DEFAULT_ROSTER_LIMIT;
 }
 
-// Helper function to find team logo
-function findTeamLogo(teamName) {
-    try {
-        const logosDir = path.join(__dirname, '../../IMAGES/logos');
-        
-        if (!fs.existsSync(logosDir)) {
-            Logger.warning(`Logos directory not found: ${logosDir}`);
-            return null;
-        }
-        
-        const files = fs.readdirSync(logosDir);
-        const normalizedTeamName = teamName.toLowerCase().replace(/[^a-z0-9]/g, '');
-        
-        // Try exact match
-        for (const file of files) {
-            const fileNameWithoutExt = path.parse(file).name.toLowerCase();
-            if (fileNameWithoutExt === teamName.toLowerCase()) {
-                return path.join(logosDir, file);
-            }
-        }
-        
-        // Try fuzzy match
-        for (const file of files) {
-            const fileNameWithoutExt = path.parse(file).name.toLowerCase().replace(/[^a-z0-9]/g, '');
-            if (fileNameWithoutExt === normalizedTeamName) {
-                return path.join(logosDir, file);
-            }
-        }
-        
-        // Try partial match
-        for (const file of files) {
-            const fileNameWithoutExt = path.parse(file).name.toLowerCase();
-            if (fileNameWithoutExt.includes(normalizedTeamName) || normalizedTeamName.includes(fileNameWithoutExt.replace(/[^a-z0-9]/g, ''))) {
-                return path.join(logosDir, file);
-            }
-        }
-        
-        return null;
-    } catch (error) {
-        Logger.error(`Error finding team logo for ${teamName}`, error);
-        return null;
-    }
+// Team logo for embeds — DB only (team→franchise logo). Returns an
+// AttachmentBuilder named team_logo.png or null. (Was IMAGES/logos/*.png.)
+async function teamLogoAttachment(teamName) {
+    return attachTeamLogo(null, teamName);
 }
 
 module.exports = {
@@ -651,20 +614,19 @@ module.exports = {
                     .setColor(0xFFA500)
                     .setTimestamp();
                 
-                // Add team logo
-                const logoPath = findTeamLogo(irTransaction.teamName);
-                if (logoPath && fs.existsSync(logoPath)) {
-                    const logoAttachment = new AttachmentBuilder(logoPath, { name: 'team_logo.png' });
+                // Add team logo (from DB)
+                const logoAttachment = await teamLogoAttachment(irTransaction.teamName);
+                if (logoAttachment) {
                     confirmationEmbed.setThumbnail('attachment://team_logo.png');
-                    await transactionChannel.send({ 
+                    await transactionChannel.send({
                         content: `<@${irTransaction.playerId}>`,
-                        embeds: [confirmationEmbed], 
-                        files: [logoAttachment] 
+                        embeds: [confirmationEmbed],
+                        files: [logoAttachment]
                     });
                 } else {
-                    await transactionChannel.send({ 
+                    await transactionChannel.send({
                         content: `<@${irTransaction.playerId}>`,
-                        embeds: [confirmationEmbed] 
+                        embeds: [confirmationEmbed]
                     });
                 }
                 
@@ -717,20 +679,19 @@ module.exports = {
                     .setColor(0x00FF00)
                     .setTimestamp();
                 
-                // Add team logo
-                const logoPath = findTeamLogo(irTransaction.teamName);
-                if (logoPath && fs.existsSync(logoPath)) {
-                    const logoAttachment = new AttachmentBuilder(logoPath, { name: 'team_logo.png' });
+                // Add team logo (from DB)
+                const logoAttachment = await teamLogoAttachment(irTransaction.teamName);
+                if (logoAttachment) {
                     confirmationEmbed.setThumbnail('attachment://team_logo.png');
-                    await transactionChannel.send({ 
+                    await transactionChannel.send({
                         content: `<@${irTransaction.playerId}>`,
-                        embeds: [confirmationEmbed], 
-                        files: [logoAttachment] 
+                        embeds: [confirmationEmbed],
+                        files: [logoAttachment]
                     });
                 } else {
-                    await transactionChannel.send({ 
+                    await transactionChannel.send({
                         content: `<@${irTransaction.playerId}>`,
-                        embeds: [confirmationEmbed] 
+                        embeds: [confirmationEmbed]
                     });
                 }
                 

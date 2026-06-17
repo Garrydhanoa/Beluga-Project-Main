@@ -97,15 +97,16 @@ export default function Navigation() {
           </div>
         </Link>
 
-        {/* Desktop Links */}
-        <div className="hidden lg:flex items-center gap-1">
+        {/* Desktop Links — only at xl+ where all 8 links fit comfortably;
+            below that the hamburger menu takes over so they never cluster. */}
+        <div className="hidden xl:flex items-center gap-0.5">
           {NAV_LINKS.map((link) => {
             const active = isActive(link.href);
             return (
               <Link
                 key={link.href}
                 href={link.href}
-                className={`relative px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-300 ${
+                className={`relative px-3 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition-all duration-300 ${
                   active
                     ? 'text-blue-200 bg-blue-500/15 border border-blue-400/30'
                     : 'text-white/80 hover:text-blue-200 hover:bg-white/5 border border-transparent'
@@ -157,7 +158,7 @@ export default function Navigation() {
 
           {/* Mobile menu button */}
           <button
-            className="mobile-menu-btn lg:hidden p-2.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 hover:border-blue-400/40 text-white transition-all"
+            className="mobile-menu-btn xl:hidden p-2.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 hover:border-blue-400/40 text-white transition-all"
             onClick={(e) => {
               e.stopPropagation();
               setMobileMenuOpen(!mobileMenuOpen);
@@ -179,7 +180,7 @@ export default function Navigation() {
       {/* Mobile Menu */}
       {mobileMenuOpen && (
         <div
-          className="mobile-nav-container lg:hidden absolute top-full left-0 right-0 bg-black/95 backdrop-blur-xl border-b border-blue-500/20 shadow-2xl animate-fadeIn"
+          className="mobile-nav-container xl:hidden absolute top-full left-0 right-0 bg-black/95 backdrop-blur-xl border-b border-blue-500/20 shadow-2xl animate-fadeIn"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="container mx-auto px-4 py-5">

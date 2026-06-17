@@ -372,6 +372,9 @@ function ChampionsPanel({ seasonId }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [savingDivision, setSavingDivision] = useState(null)
+  const [suggestions, setSuggestions] = useState(null) // { division: {teamId, teamName, homeWins, awayWins} }
+  const [autoMsg, setAutoMsg] = useState('')
+  const [autoRunning, setAutoRunning] = useState(false)
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -400,6 +403,32 @@ function ChampionsPanel({ seasonId }) {
     }
   }
 
+  // Suggest champions from each division's playoff finals winner. Does NOT write —
+  // it pre-fills each card's dropdown so the operator reviews + clicks Set Champion.
+  async function autoFill() {
+    setAutoRunning(true)
+    setAutoMsg('')
+    try {
+      const r = await fetch(`/api/admin/seasons/${seasonId}/champions`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ autofill: true }),
+      })
+      const d = await r.json()
+      if (!r.ok) { setAutoMsg(`❌ ${d.error || 'Auto-fill failed'}`); return }
+      const byDiv = {}
+      for (const s of (d.suggestions || [])) byDiv[s.division] = s
+      setSuggestions(byDiv)
+      const n = (d.suggestions || []).length
+      setAutoMsg(n ? `✓ Suggested ${n} division${n === 1 ? '' : 's'} from playoff finals — review and Set Champion.`
+                   : 'No decided playoff finals yet (need a confirmed finals series).')
+    } catch (e) {
+      setAutoMsg(`❌ ${e.message}`)
+    } finally {
+      setAutoRunning(false)
+    }
+  }
+
   if (loading) return <div className="text-blue-200/60 text-sm">Loading champions…</div>
 
   const championByDivision = {}
@@ -412,7 +441,18 @@ function ChampionsPanel({ seasonId }) {
 
   return (
     <div>
-      <div className="text-xs font-bold uppercase tracking-wider text-blue-300/70 mb-3">Champions per Division</div>
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <div className="text-xs font-bold uppercase tracking-wider text-blue-300/70">Champions per Division</div>
+        <button
+          onClick={autoFill}
+          disabled={autoRunning}
+          title="Read the playoff finals winner per division and pre-fill the picker"
+          className="px-3 py-1.5 text-xs font-bold text-blue-100 bg-blue-500/15 hover:bg-blue-500/30 border border-blue-400/40 disabled:opacity-50 rounded-lg"
+        >
+          {autoRunning ? 'Determining…' : '🏆 Auto-fill from playoff finals'}
+        </button>
+      </div>
+      {autoMsg && <div className="mb-3 text-xs text-blue-200/80">{autoMsg}</div>}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {DIVISIONS.map((d) => {
           const champ = championByDivision[d]
@@ -423,6 +463,7 @@ function ChampionsPanel({ seasonId }) {
               division={d}
               champion={champ}
               teams={teams}
+              suggestion={suggestions?.[d] || null}
               saving={savingDivision === d}
               onSave={(payload) => setChampion(d, payload)}
               onClear={() => setChampion(d, { clear: true })}
@@ -434,7 +475,7 @@ function ChampionsPanel({ seasonId }) {
   )
 }
 
-function ChampionCard({ division, champion, teams, saving, onSave, onClear }) {
+function ChampionCard({ division, champion, teams, suggestion, saving, onSave, onClear }) {
   const [teamId, setTeamId] = useState(champion?.teamId ?? '')
   const [gmDisplayName, setGmDisplayName] = useState(champion?.gmDisplayName || '')
   const [gmDiscordId, setGmDiscordId] = useState(champion?.gmDiscordId || '')
@@ -464,6 +505,22 @@ function ChampionCard({ division, champion, teams, saving, onSave, onClear }) {
           <span className="text-[10px] uppercase font-bold tracking-wider text-white/40">Not set</span>
         )}
       </div>
+
+      {suggestion && suggestion.teamId && String(suggestion.teamId) !== String(teamId) && (
+        <div className="mb-1 flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-yellow-500/10 border border-yellow-400/30">
+          <span className="text-[11px] text-yellow-100/90 truncate">
+            Playoff finals winner: <span className="font-bold">{suggestion.teamName}</span>
+            <span className="text-yellow-200/60"> ({suggestion.homeWins}–{suggestion.awayWins})</span>
+          </span>
+          <button
+            type="button"
+            onClick={() => setTeamId(String(suggestion.teamId))}
+            className="flex-shrink-0 px-2 py-0.5 text-[10px] font-bold text-yellow-50 bg-yellow-500/30 hover:bg-yellow-500/50 rounded"
+          >
+            Apply
+          </button>
+        </div>
+      )}
 
       <Field label="Team">
         <select value={teamId} onChange={(e) => setTeamId(e.target.value)}

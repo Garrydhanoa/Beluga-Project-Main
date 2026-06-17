@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { withAudit } from '../../../../lib/activityLog'
 import { requireAdmin } from '../../../../lib/adminAuth'
 import {
   getActiveSeason,
@@ -27,7 +28,7 @@ export async function GET() {
   return NextResponse.json({ seasonId: season.id, brackets })
 }
 
-export async function POST(request) {
+async function postHandler(request) {
   const auth = await requireAdmin()
   if (!auth.ok) return auth.response
 
@@ -134,3 +135,6 @@ export async function POST(request) {
   await replacePlayoffBrackets(season.id, brackets, { published: true })
   return NextResponse.json({ ok: true })
 }
+
+// Audit every write (actor + body + status -> /higgenlogs).
+export const POST = withAudit(postHandler, { action: 'playoffs.post' })

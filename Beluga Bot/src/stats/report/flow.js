@@ -446,7 +446,9 @@ async function handleAssign(interaction, parts) {
     const auth = await authorize(interaction, session, null, { allowAnySide: true });
     if (!auth.ok) return;
 
-    const homeIdx = Number(interaction.values[0]) === 1 ? 1 : 0;
+    // The chosen home-group index now rides in the button's customId (parts[1]).
+    // (Was interaction.values[0] from a select that silently no-op'd on the guess.)
+    const homeIdx = Number(parts[1]) === 1 ? 1 : 0;
     await interaction.deferUpdate();
 
     const homeRoster = await tc.getTeamRoster(session.season_id, session.home_team_id);
@@ -705,8 +707,13 @@ function buildCommitPayload(session, homeRosterIds, awayRosterIds) {
     const parsed = session.parsed;
     const home = getMatches(session, 'home');
     const away = getMatches(session, 'away');
-    const homeMap = new Map(home.slots.filter((s) => !s.skipped && s.discordId).map((s) => [s.pkey, s]));
-    const awayMap = new Map(away.slots.filter((s) => !s.skipped && s.discordId).map((s) => [s.pkey, s]));
+    // FULL side maps (including skipped/unmatched slots) — the slot lists are
+    // already partitioned by team and keyed by pkey, so they tell us which side a
+    // parsed player is on even when they were skipped or never matched to a Discord
+    // ID. (homeMatch/awayMatch carry the resolved discordId; presence in homeSide/
+    // awaySide is enough to know the team.)
+    const homeSide = new Map(home.slots.map((s) => [s.pkey, s]));
+    const awaySide = new Map(away.slots.map((s) => [s.pkey, s]));
 
     // Orientation comes from the session's confirmed homeIdx — the parser keeps
     // every game in cluster order, so this single flag covers the whole series.
@@ -722,16 +729,24 @@ function buildCommitPayload(session, homeRosterIds, awayRosterIds) {
         const awayGoals = homeIsT0 ? g.team1Goals : g.team0Goals;
         const players = [];
         for (const p of allPlayers) {
-            const hs = homeMap.get(p.pkey);
-            const as = awayMap.get(p.pkey);
-            if (!hs && !as) continue; // ghost or skipped
+            const hs = homeSide.get(p.pkey);
+            const as = awaySide.get(p.pkey);
+            if (!hs && !as) continue; // true ghost (on neither roster panel) — no team, drop
             const isHome = Boolean(hs);
             const slot = hs || as;
+            // Skipped or unmatched → discordId stays NULL. The stat line is STILL
+            // recorded (against the team, with platform/platform_id/ingame_name) so
+            // it never disappears — it surfaces as an "unlinked player" and can be
+            // relinked to a Discord ID later (stats_player_accounts link moves these
+            // rows). Per-player aggregates already ignore NULL-discord rows.
+            const discordId = slot.skipped ? null : (slot.discordId || null);
+            const rosterIds = isHome ? homeRosterIds : awayRosterIds;
             players.push({
                 teamId: isHome ? session.home_team_id : session.away_team_id,
-                discordId: slot.discordId,
+                discordId,
                 platform: p.platform, platformId: p.platformId, ingameName: p.name,
-                isSub: isHome ? !homeRosterIds.has(slot.discordId) : !awayRosterIds.has(slot.discordId),
+                // Unlinked rows aren't on a roster, so they count as a sub.
+                isSub: discordId ? !rosterIds.has(discordId) : true,
                 score: p.score, goals: p.goals, assists: p.assists, saves: p.saves, shots: p.shots,
                 shootingPct: p.shootingPct, demosInflicted: p.demoInflicted, demosTaken: p.demoTaken,
                 mvp: p.mvp, playedSeconds: p.playedSeconds,
@@ -759,10 +774,15 @@ async function commitFromSession(interaction, session, { via }) {
     try {
         const caps = await tc.getOnfieldCaps(session.season_id);
         const { sourceOk, salaryOf } = await buildSalaryResolver();
+        // Only DISCORD-LINKED players count toward the on-field salary cap. Skipped/
+        // unmatched (NULL-discord, "unlinked") players have no roster salary, so
+        // including them would falsely flag "missing salary" and block the report —
+        // they're now recorded for stats but excluded from the cap math (operator
+        // rule: unverifiable salary warns, never blocks).
         const capGames = games.map((g) => ({
             gameNumber: g.gameNumber,
-            homePlayers: g.players.filter((p) => p.teamId === session.home_team_id).map((p) => ({ discordId: p.discordId, name: p.ingameName })),
-            awayPlayers: g.players.filter((p) => p.teamId === session.away_team_id).map((p) => ({ discordId: p.discordId, name: p.ingameName })),
+            homePlayers: g.players.filter((p) => p.teamId === session.home_team_id && p.discordId).map((p) => ({ discordId: p.discordId, name: p.ingameName })),
+            awayPlayers: g.players.filter((p) => p.teamId === session.away_team_id && p.discordId).map((p) => ({ discordId: p.discordId, name: p.ingameName })),
         }));
         const cap = checkSeriesCaps({ division: session.division, caps, games: capGames, salaryOf, sourceOk, teamNames: { home: b.homeName, away: b.awayName } });
         if (!cap.canVerify) {

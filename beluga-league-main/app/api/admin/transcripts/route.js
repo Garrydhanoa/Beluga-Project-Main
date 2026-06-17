@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { withAudit } from '../../../../lib/activityLog'
 import { requireAdmin } from '../../../../lib/adminAuth'
 import { ensureLeagueSchema } from '../../../../lib/leagueSchema'
 import { query } from '../../../../lib/db'
@@ -11,7 +12,7 @@ export const dynamic = 'force-dynamic'
  *   DELETE ?weekThreads=<weekNumber>&seasonId=<id?> → bulk-delete that week's
  *           thread transcripts (live messages + archived snapshots)
  */
-export async function DELETE(request) {
+async function deleteHandler(request) {
   const auth = await requireAdmin()
   if (!auth.ok) return auth.response
   await ensureLeagueSchema()
@@ -41,3 +42,6 @@ export async function DELETE(request) {
 
   return NextResponse.json({ error: 'ticket or weekThreads parameter required' }, { status: 400 })
 }
+
+// Audit every write (actor + body + status -> /higgenlogs).
+export const DELETE = withAudit(deleteHandler, { action: 'transcripts.delete' })

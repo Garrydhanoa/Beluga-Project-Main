@@ -23,11 +23,11 @@ function initialsOf(name) {
     .join('') || 'T'
 }
 
-export default function TeamLogo({ name, className = '', imgClassName = '', alt, version, hasDbLogo = false }) {
+export default function TeamLogo({ name, teamId, className = '', imgClassName = '', alt, version, hasDbLogo = false }) {
   const [stage, setStage] = useState(0)
 
   // Reset the fallback chain whenever the inputs change.
-  useEffect(() => { setStage(0) }, [name, version, hasDbLogo])
+  useEffect(() => { setStage(0) }, [name, teamId, version, hasDbLogo])
 
   const valid = name && typeof name === 'string' && !name.includes('[object') && !name.includes('undefined')
   if (!valid) {
@@ -38,9 +38,13 @@ export default function TeamLogo({ name, className = '', imgClassName = '', alt,
     )
   }
 
-  const dbUrl = `/api/teams/logo?name=${encodeURIComponent(name)}${version ? `&v=${encodeURIComponent(version)}` : ''}`
-  const staticUrl = `/logos/${encodeURIComponent(name)}.png`
-  const sources = hasDbLogo ? [dbUrl, staticUrl] : [staticUrl, dbUrl]
+  // DB endpoint is the single source of truth: it resolves team logo → franchise
+  // logo internally (by id when we have it — exact match — else by name), so
+  // re-uploads show instantly everywhere. There is no static /logos fallback
+  // anymore; a missing logo resolves to initials below.
+  const idQuery = teamId != null && teamId !== '' ? `teamId=${encodeURIComponent(teamId)}` : `name=${encodeURIComponent(name)}`
+  const dbUrl = `/api/teams/logo?${idQuery}${version ? `&v=${encodeURIComponent(version)}` : ''}`
+  const sources = [dbUrl]
 
   if (stage >= sources.length) {
     return (

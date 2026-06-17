@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { withAudit } from '../../../../../../lib/activityLog'
 import { requireAdmin } from '../../../../../../lib/adminAuth'
 import { ensureLeagueSchema } from '../../../../../../lib/leagueSchema'
 import { query } from '../../../../../../lib/db'
@@ -11,7 +12,7 @@ export const dynamic = 'force-dynamic'
  * row removed), then marks the request fulfilled. The website never mutates the
  * off-limits `tickets` table directly.
  */
-export async function POST(_request, { params }) {
+async function postHandler(_request, { params }) {
   const auth = await requireAdmin()
   if (!auth.ok) return auth.response
 
@@ -37,3 +38,6 @@ export async function POST(_request, { params }) {
   )
   return NextResponse.json({ ok: true, queued: true })
 }
+
+// Audit every write (actor + body + status -> /higgenlogs).
+export const POST = withAudit(postHandler, { action: 'tickets.close.post' })

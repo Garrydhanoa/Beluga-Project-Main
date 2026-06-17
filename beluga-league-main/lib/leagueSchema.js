@@ -676,6 +676,15 @@ async function runMigrations() {
     )
   `)
   await step('idx_site_logs_time', `CREATE INDEX IF NOT EXISTS idx_site_logs_time ON site_logs(created_at DESC)`)
+  // Audit-log extension (the hidden /higgenlogs page): who did what, on which surface.
+  //   kind   ∈ activity | error | login   (drives the page's sub-filter)
+  //   source ∈ website | bot               (drives the two tabs)
+  await step('site_logs.kind', `ALTER TABLE site_logs ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'error'`)
+  await step('site_logs.actor_name', `ALTER TABLE site_logs ADD COLUMN IF NOT EXISTS actor_name TEXT`)
+  await step('site_logs.actor_discord_id', `ALTER TABLE site_logs ADD COLUMN IF NOT EXISTS actor_discord_id TEXT`)
+  await step('site_logs.action', `ALTER TABLE site_logs ADD COLUMN IF NOT EXISTS action TEXT`)
+  await step('site_logs.target', `ALTER TABLE site_logs ADD COLUMN IF NOT EXISTS target TEXT`)
+  await step('idx_site_logs_source_kind', `CREATE INDEX IF NOT EXISTS idx_site_logs_source_kind ON site_logs(source, kind, created_at DESC)`)
 
   // Snapshot of who holds the admin-configured award roles (bot-refreshed).
   await step('award_role_holders', `

@@ -111,6 +111,7 @@ export default function PlayerProfilePage() {
   const [apiData, setApiData] = useState(null)
   const [notFound, setNotFound] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [headerQuote, setHeaderQuote] = useState(null)
 
   useEffect(() => {
     setLoading(true)
@@ -124,6 +125,18 @@ export default function PlayerProfilePage() {
       .catch(() => setNotFound(true))
       .finally(() => setLoading(false))
   }, [username])
+
+  // The player's pinned quote (shown small + italic right under their name).
+  useEffect(() => {
+    const id = apiData?.player?.discordId
+    if (!id) { setHeaderQuote(null); return }
+    let alive = true
+    fetch(`/api/public/site-content?player=${encodeURIComponent(id)}`, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((d) => { if (alive) setHeaderQuote((d.playerQuotes || [])[0] || null) })
+      .catch(() => { if (alive) setHeaderQuote(null) })
+    return () => { alive = false }
+  }, [apiData?.player?.discordId])
 
   // Adapt the API payload to the shape the existing UI expects (preserving the
   // dense visualization with achievements, stat bars, match history, etc.).
@@ -151,6 +164,7 @@ export default function PlayerProfilePage() {
       avatarUrl: apiData.player.avatarUrl || null,
       displayName: apiData.player.displayName,
       team: current?.teamName || apiData.player.currentTeam || null,
+      teamId: current?.teamId ?? apiData.player.currentTeamId ?? null,
       divisionLabel: divKey === 'major' ? 'Majors' : divKey.toUpperCase(),
       isCaptain: current?.role === 'captain',
       isFreeAgent: !current?.rosterActive,
@@ -266,7 +280,7 @@ export default function PlayerProfilePage() {
             aria-hidden="true"
           >
             <img
-              src={`/logos/${player.team}.png`}
+              src={player.teamId ? `/api/teams/logo?teamId=${player.teamId}` : `/api/teams/logo?name=${encodeURIComponent(player.team)}`}
               alt=""
               className="w-full h-full object-contain"
               onError={(e) => { e.currentTarget.style.display = 'none' }}
@@ -322,7 +336,7 @@ export default function PlayerProfilePage() {
                     }}
                   />
                   <img
-                    src={`/logos/${player.team}.png`}
+                    src={player.teamId ? `/api/teams/logo?teamId=${player.teamId}` : `/api/teams/logo?name=${encodeURIComponent(player.team)}`}
                     alt={player.team}
                     style={{
                       position: 'relative',
@@ -350,6 +364,54 @@ export default function PlayerProfilePage() {
           >
             {player.displayName}
           </h1>
+
+          {/* Pinned quote — centered, stands out, grows from the middle outward and
+              wraps to a new line when it runs past the page width. */}
+          {headerQuote?.text && (
+            <div
+              style={{
+                marginTop: '16px',
+                marginInline: 'auto',
+                maxWidth: 'min(760px, 92vw)',
+                width: 'fit-content',
+                padding: '10px 22px',
+                borderRadius: '14px',
+                background: 'linear-gradient(to bottom, rgba(34,211,238,0.08), rgba(59,130,246,0.05))',
+                border: '1px solid rgba(34,211,238,0.25)',
+                boxShadow: '0 0 24px rgba(34,211,238,0.10)',
+              }}
+            >
+              <p
+                style={{
+                  fontStyle: 'italic',
+                  fontSize: 'clamp(16px, 2.4vw, 22px)',
+                  lineHeight: 1.35,
+                  color: 'rgba(207,250,254,0.95)',
+                  textAlign: 'center',
+                  margin: 0,
+                  overflowWrap: 'anywhere',
+                }}
+              >
+                <span style={{ color: 'rgba(34,211,238,0.8)', fontWeight: 900, marginRight: '2px' }}>“</span>
+                {headerQuote.text}
+                <span style={{ color: 'rgba(34,211,238,0.8)', fontWeight: 900, marginLeft: '2px' }}>”</span>
+              </p>
+              {headerQuote.author ? (
+                <div
+                  style={{
+                    marginTop: '6px',
+                    textAlign: 'center',
+                    fontSize: 'clamp(11px, 1.3vw, 13px)',
+                    letterSpacing: '0.08em',
+                    textTransform: 'uppercase',
+                    color: 'rgba(125,211,252,0.7)',
+                  }}
+                >
+                  — {headerQuote.author}
+                </div>
+              ) : null}
+            </div>
+          )}
         </div>
       </section>
 
@@ -411,7 +473,7 @@ export default function PlayerProfilePage() {
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
                 {player.team && (
                   <img
-                    src={`/logos/${player.team}.png`}
+                    src={player.teamId ? `/api/teams/logo?teamId=${player.teamId}` : `/api/teams/logo?name=${encodeURIComponent(player.team)}`}
                     alt=""
                     style={{ width: '22px', height: '22px', objectFit: 'contain' }}
                     onError={(e) => { e.currentTarget.style.display = 'none' }}
@@ -723,7 +785,9 @@ function ColorStat({ label, value, rank, color }) {
     <div style={{ textAlign: 'center', padding: '6px 8px' }}>
       <div
         style={{
-          fontSize: '52px',
+          // Responsive: shrinks on narrow screens so a 5-up row of stats doesn't
+          // overflow on mobile (was a fixed 52px).
+          fontSize: 'clamp(30px, 9vw, 52px)',
           fontWeight: 900,
           lineHeight: 1,
           color: color.text,
@@ -839,7 +903,7 @@ function MatchRow({ match }) {
       {/* Opponent logo */}
       <div className="flex-shrink-0 w-8 h-8 flex items-center justify-center">
         <img
-          src={`/logos/${match.opponent}.png`}
+          src={`/api/teams/logo?name=${encodeURIComponent(match.opponent)}`}
           alt={match.opponent}
           className="w-full h-full object-contain"
           onError={(e) => { e.currentTarget.style.display = 'none' }}

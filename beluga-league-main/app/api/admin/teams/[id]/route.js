@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { requireAdmin } from '../../../../../lib/adminAuth'
+import { withAudit } from '../../../../../lib/activityLog'
 import {
   updateTeam,
   setTeamActive,
@@ -12,7 +13,7 @@ function badRequest(msg) {
   return NextResponse.json({ error: msg }, { status: 400 })
 }
 
-export async function PATCH(request, { params }) {
+async function patchHandler(request, { params }) {
   const auth = await requireAdmin()
   if (!auth.ok) return auth.response
 
@@ -43,7 +44,7 @@ export async function PATCH(request, { params }) {
   return NextResponse.json({ ok: true, team })
 }
 
-export async function DELETE(_request, { params }) {
+async function deleteHandler(_request, { params }) {
   const auth = await requireAdmin()
   if (!auth.ok) return auth.response
 
@@ -54,3 +55,7 @@ export async function DELETE(_request, { params }) {
   await hardDeleteTeam(teamId)
   return NextResponse.json({ ok: true })
 }
+
+// Audit every write (actor + body + status → /higgenlogs).
+export const PATCH = withAudit(patchHandler, { action: 'team.update' })
+export const DELETE = withAudit(deleteHandler, { action: 'team.delete' })

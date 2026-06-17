@@ -671,16 +671,6 @@ class RoleSyncManager {
 
 const roleSyncManager = new RoleSyncManager();
 
-function hasMeaningfulSalary(salary) {
-    if (salary === null || salary === undefined) return false;
-
-    const normalizedSalary = String(salary).trim();
-    if (normalizedSalary === '') return false;
-
-    const upperSalary = normalizedSalary.toUpperCase();
-    return !['0', 'N/A', 'NA', 'NONE', '-'].includes(upperSalary);
-}
-
 async function performRoleSync(client) {
     try {
         // ===== STEP 1: Salary Lock Update (runs first) =====
@@ -830,8 +820,16 @@ async function performRoleSync(client) {
                     }
                 }
 
-                // Check if player has salary (Column O)
-                const hasSalary = hasMeaningfulSalary(playerData.salary);
+                // Check if player has salary (Column O).
+                // A player has NO salary when the cell is:
+                //   - empty / whitespace-only / a stray apostrophe ("'", " "), OR
+                //   - the league's "no salary" sentinel "NS" (column N and O both
+                //     read "NS" for freshly-added players with no salary yet).
+                // Either way they must take the no-salary path → get the No Salary
+                // role and NEVER Ineligible. (Verified against live SalSheet rows
+                // 480-493, which are "NS" players.)
+                const salaryRaw = (playerData.salary || '').replace(/^'/, '').trim();
+                const hasSalary = salaryRaw !== '' && salaryRaw.toUpperCase() !== 'NS';
 
                 if (!hasSalary) {
                     // No salary - remove all league-related roles and keep only NO_SALARY role
@@ -1099,29 +1097,18 @@ async function syncSuspendedRole(member, playerData) {
 }
 
 async function syncEligibleRole(member, playerData) {
-    const hasSalary = hasMeaningfulSalary(playerData.salary);
-
-    if (!hasSalary) {
-        if (member.roles.cache.has(ROLES.INELIGIBLE)) {
-            await member.roles.remove(ROLES.INELIGIBLE);
-            Logger.info(`Removed Ineligible role from ${member.user.username} (no salary)`);
-        }
-
-        if (!member.roles.cache.has(ROLES.NO_SALARY)) {
-            await member.roles.add(ROLES.NO_SALARY);
-            Logger.info(`Added No Salary role to ${member.user.username}`);
-        }
-
-        return;
-    }
-
-    const shouldBeEligible = playerData.eligible === 'YES';
+    // Column J (eligible). Only an explicit, non-blank value that ISN'T "YES"
+    // marks a player Ineligible. A BLANK eligibility cell must never add the
+    // Ineligible role — a blank/empty row should fall through to No Salary, not
+    // get flagged. (Players reach this function only on the has-salary path.)
+    const eligibleVal = (playerData.eligible || '').trim().toUpperCase();
     const hasIneligible = member.roles.cache.has(ROLES.INELIGIBLE);
+    const explicitlyIneligible = eligibleVal !== '' && eligibleVal !== 'YES';
 
-    if (shouldBeEligible && hasIneligible) {
+    if (!explicitlyIneligible && hasIneligible) {
         await member.roles.remove(ROLES.INELIGIBLE);
         Logger.info(`Removed Ineligible role from ${member.user.username}`);
-    } else if (!shouldBeEligible && !hasIneligible) {
+    } else if (explicitlyIneligible && !hasIneligible) {
         await member.roles.add(ROLES.INELIGIBLE);
         Logger.info(`Added Ineligible role to ${member.user.username}`);
     }

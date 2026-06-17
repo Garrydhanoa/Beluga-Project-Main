@@ -1,8 +1,8 @@
-const { SlashCommandBuilder, AttachmentBuilder } = require('discord.js');
-const { getTeamRoster, createRosterEmbed, findTeamLogo } = require('../utils/rosterManager');
+const { SlashCommandBuilder } = require('discord.js');
+const { getTeamRoster, createRosterEmbed, getLogoAttachment } = require('../utils/rosterManager');
+const { findTeam } = require('../utils/teamRoles');
 const { getTeamChoices, getDivisionChoices } = require('../constants/roles');
 const Logger = require('../utils/logger');
-const fs = require('fs');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -44,11 +44,9 @@ module.exports = {
             // Create embed
             const embed = createRosterEmbed(rosterData);
 
-            // Get team logo
-            const logoPath = findTeamLogo(teamName);
-            const logoAttachment = fs.existsSync(logoPath) 
-                ? new AttachmentBuilder(logoPath, { name: 'team_logo.png' })
-                : null;
+            // Get team logo from the DB (team logo → franchise logo).
+            const dbTeam = await findTeam(teamName, division).catch(() => null);
+            const logoAttachment = await getLogoAttachment(dbTeam?.id, teamName);
 
             // Send roster
             const replyOptions = { embeds: [embed] };

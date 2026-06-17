@@ -1,6 +1,8 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, AttachmentBuilder } = require('discord.js');
 const { pool, isDatabaseAvailable, LeagueDB } = require('../utils/database');
 const { TEAM_NAMES } = require('../constants/roles');
+const { getTeamLogoBuffer } = require('../utils/teamRoles');
+const { buildPlayerStatCard, buildTeamStatCard } = require('../stats/statCard');
 const Logger = require('../utils/logger');
 
 /**
@@ -118,18 +120,25 @@ module.exports = {
         }
 
         const season = await LeagueDB.getActiveSeason();
-        const [seasonRows, lifeRows] = await Promise.all([
+        const [seasonRows, lifeRows, memRows] = await Promise.all([
             season
                 ? pool.query(
-                    `SELECT division, games, score, goals, assists, saves, shots, demos_inflicted, demos_taken, mvps, beluga_score
-                     FROM stats_player_season
-                     WHERE discord_id = $1 AND season_id = $2 AND is_playoff = FALSE`,
+                    `SELECT sps.division, sps.team_id, sps.games, sps.score, sps.goals, sps.assists, sps.saves,
+                            sps.shots, sps.demos_inflicted, sps.demos_taken, sps.mvps, sps.beluga_score,
+                            t.name AS team_name
+                     FROM stats_player_season sps LEFT JOIN teams t ON t.id = sps.team_id
+                     WHERE sps.discord_id = $1 AND sps.season_id = $2 AND sps.is_playoff = FALSE
+                     ORDER BY sps.games DESC`,
                     [String(discordId), season.id]
                 ).catch(() => ({ rows: [] }))
                 : Promise.resolve({ rows: [] }),
             pool.query(
                 `SELECT games, seasons_played, score, goals, assists, saves, shots, demos_inflicted, demos_taken, mvps, beluga_score
                  FROM stats_player_lifetime WHERE discord_id = $1 AND is_playoff = FALSE`,
+                [String(discordId)]
+            ).catch(() => ({ rows: [] })),
+            pool.query(
+                `SELECT display_name, username, avatar_url FROM discord_members WHERE discord_id = $1`,
                 [String(discordId)]
             ).catch(() => ({ rows: [] })),
         ]);
@@ -139,23 +148,42 @@ module.exports = {
             return;
         }
 
-        const embed = new EmbedBuilder()
-            .setColor(0x3498DB)
-            .setTitle(`📊 Player Stats`)
-            .setDescription(`<@${discordId}>`)
-            .setTimestamp();
-
-        for (const row of seasonRows.rows) {
-            embed.addFields(statBlock(`S${season.season_number ?? season.seasonNumber ?? ''} · ${row.division}`, row));
-        }
-        if (lifeRows.rows.length) {
-            const lt = lifeRows.rows[0];
-            embed.addFields(statBlock(`Lifetime (${lt.seasons_played} season${lt.seasons_played === 1 ? '' : 's'})`, lt));
-        }
+        const primary = seasonRows.rows[0] || {};
+        const mem = memRows.rows[0] || {};
+        const mentioned = interaction.options.getUser('player');
+        const avatarUrl =
+            (mentioned && mentioned.id === String(discordId) ? mentioned.displayAvatarURL({ extension: 'png', size: 128 }) : null)
+            || mem.avatar_url || null;
+        const teamLogo = primary.team_id ? await getTeamLogoBuffer(primary.team_id).catch(() => null) : null;
         const url = siteUrl(`/players/${encodeURIComponent(String(discordId))}`);
-        if (url) embed.addFields({ name: 'Full breakdown', value: url, inline: false });
+        const seasonNo = season?.season_number ?? season?.seasonNumber ?? '';
 
-        await interaction.editReply({ embeds: [embed] });
+        try {
+            const buf = await buildPlayerStatCard({
+                name: mem.display_name || mem.username || label || `User ${String(discordId).slice(-4)}`,
+                avatarBuffer: avatarUrl,
+                teamName: primary.team_name || null,
+                teamLogoBuffer: teamLogo,
+                division: primary.division || null,
+                seasonLabel: `THIS SEASON · S${seasonNo}`,
+                season: primary,
+                lifetime: lifeRows.rows[0] || {},
+                siteUrl: url ? url.replace(/^https?:\/\//, '') : null,
+            });
+            const file = new AttachmentBuilder(buf, { name: 'player-stats.png' });
+            const extra = seasonRows.rows.length > 1 ? ` _(showing ${primary.division}; full splits on the site)_` : '';
+            const content = url
+                ? `📊 Stats for <@${discordId}> — full game-by-game breakdown: ${url}${extra}`
+                : `📊 Stats for <@${discordId}>${extra}`;
+            await interaction.editReply({ content, files: [file], allowedMentions: { parse: [] } });
+        } catch (error) {
+            Logger.error('player stat card render failed, falling back to embed', error);
+            const embed = new EmbedBuilder().setColor(0x3498DB).setTitle('📊 Player Stats').setDescription(`<@${discordId}>`).setTimestamp();
+            for (const row of seasonRows.rows) embed.addFields(statBlock(`S${seasonNo} · ${row.division}`, row));
+            if (lifeRows.rows.length) { const lt = lifeRows.rows[0]; embed.addFields(statBlock(`Lifetime (${lt.seasons_played} season${lt.seasons_played === 1 ? '' : 's'})`, lt)); }
+            if (url) embed.addFields({ name: 'Full breakdown', value: url, inline: false });
+            await interaction.editReply({ embeds: [embed], allowedMentions: { parse: [] } });
+        }
     },
 
     async teamStats(interaction) {
@@ -186,22 +214,39 @@ module.exports = {
             return;
         }
         const t = ts.rows[0];
-
-        const embed = new EmbedBuilder()
-            .setColor(0x3498DB)
-            .setTitle(`📊 ${team.name} — ${division}`)
-            .addFields(
-                {
-                    name: 'Record',
-                    value: `Series **${t.series_wins}-${t.series_losses}** · Games **${t.game_wins}-${t.game_losses}**\nGoals **${t.goals_for}-${t.goals_against}** (${t.goals_for - t.goals_against >= 0 ? '+' : ''}${t.goals_for - t.goals_against})`,
-                    inline: true,
-                },
-                statBlock('Team totals', { ...t, games: t.games_played, mvps: 0 }),
-            )
-            .setTimestamp();
+        const teamLogo = await getTeamLogoBuffer(team.id).catch(() => null);
         const url = siteUrl(`/teams/${encodeURIComponent(team.name)}`);
-        if (url) embed.addFields({ name: 'Team page', value: url, inline: false });
+        const seasonNo = season?.season_number ?? season?.seasonNumber ?? '';
 
-        await interaction.editReply({ embeds: [embed] });
+        try {
+            const buf = await buildTeamStatCard({
+                teamName: team.name,
+                teamLogoBuffer: teamLogo,
+                division,
+                seasonLabel: `S${seasonNo}`,
+                record: {
+                    seriesW: t.series_wins, seriesL: t.series_losses,
+                    gameW: t.game_wins, gameL: t.game_losses,
+                    goalsFor: t.goals_for, goalsAgainst: t.goals_against,
+                },
+                totals: t,
+                siteUrl: url ? url.replace(/^https?:\/\//, '') : null,
+            });
+            const file = new AttachmentBuilder(buf, { name: 'team-stats.png' });
+            const content = url ? `📊 ${team.name} (${division}) — team page: ${url}` : `📊 ${team.name} (${division})`;
+            await interaction.editReply({ content, files: [file] });
+        } catch (error) {
+            Logger.error('team stat card render failed, falling back to embed', error);
+            const embed = new EmbedBuilder()
+                .setColor(0x3498DB)
+                .setTitle(`📊 ${team.name} — ${division}`)
+                .addFields(
+                    { name: 'Record', value: `Series **${t.series_wins}-${t.series_losses}** · Games **${t.game_wins}-${t.game_losses}**\nGoals **${t.goals_for}-${t.goals_against}** (${t.goals_for - t.goals_against >= 0 ? '+' : ''}${t.goals_for - t.goals_against})`, inline: true },
+                    statBlock('Team totals', { ...t, games: t.games_played, mvps: 0 }),
+                )
+                .setTimestamp();
+            if (url) embed.addFields({ name: 'Team page', value: url, inline: false });
+            await interaction.editReply({ embeds: [embed] });
+        }
     },
 };

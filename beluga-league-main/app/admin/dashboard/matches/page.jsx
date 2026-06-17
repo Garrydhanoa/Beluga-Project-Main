@@ -64,8 +64,6 @@ export default function StatsMatchesPage() {
         </button>
       </div>
 
-      <IdentityTools />
-
       <div className="mb-4 flex flex-wrap gap-2 items-center p-3 rounded-xl bg-white/[0.03] border border-white/10">
         <select value={filters.division} onChange={(e) => setFilters({ ...filters, division: e.target.value })}
           className="px-3 py-2 bg-black/40 border border-white/10 rounded-lg text-white text-sm">
@@ -88,8 +86,8 @@ export default function StatsMatchesPage() {
       ) : series.length === 0 ? (
         <div className="p-8 rounded-2xl border border-dashed border-white/15 text-center text-white/50">No series reported yet.</div>
       ) : (
-        <div className="rounded-2xl bg-white/[0.02] border border-white/10 overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="rounded-2xl bg-white/[0.02] border border-white/10 overflow-x-auto">
+          <table className="w-full text-sm min-w-[600px]">
             <thead className="bg-black/30">
               <tr className="text-[10px] uppercase tracking-wider text-blue-300/70 font-bold">
                 <th className="px-3 py-2 text-left">Div</th>
@@ -141,68 +139,15 @@ function StatusBadge({ status, isForfeit }) {
   )
 }
 
-function IdentityTools() {
-  const [open, setOpen] = useState(false)
-  const [remap, setRemap] = useState({ platform: 'epic', platformId: '', discordId: '' })
-  const [merge, setMerge] = useState({ fromDiscordId: '', toDiscordId: '' })
-  const [msg, setMsg] = useState('')
-
-  async function post(payload) {
-    setMsg('Working…')
-    const r = await fetch('/api/admin/stats-tools', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-    })
-    const d = await r.json().catch(() => ({}))
-    setMsg(r.ok ? `✅ Done${d.movedRows != null ? ` (${d.movedRows} game rows moved)` : ''}` : `❌ ${d.error || 'Failed'}`)
-  }
-
-  return (
-    <div className="mb-4 rounded-xl bg-white/[0.02] border border-white/10">
-      <button onClick={() => setOpen(!open)} className="w-full px-4 py-3 text-left text-sm font-bold text-blue-200 hover:text-white">
-        🛠 Player identity tools {open ? '▾' : '▸'}
-      </button>
-      {open && (
-        <div className="px-4 pb-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div className="p-3 rounded-lg bg-black/20 border border-white/10 space-y-2">
-            <div className="text-[10px] uppercase tracking-wider text-blue-300/70 font-bold">Re-map a Ballchasing account → Discord user</div>
-            <div className="flex gap-2 flex-wrap">
-              <select value={remap.platform} onChange={(e) => setRemap({ ...remap, platform: e.target.value })}
-                className="px-2 py-1.5 bg-black/40 border border-white/10 rounded text-white text-xs">
-                {['epic', 'steam', 'ps4', 'xbox'].map((p) => <option key={p} value={p}>{p}</option>)}
-              </select>
-              <input placeholder="platform id" value={remap.platformId} onChange={(e) => setRemap({ ...remap, platformId: e.target.value.trim() })}
-                className="flex-1 min-w-[140px] px-2 py-1.5 bg-black/40 border border-white/10 rounded text-white text-xs" />
-              <input placeholder="correct Discord ID" value={remap.discordId} onChange={(e) => setRemap({ ...remap, discordId: e.target.value.trim() })}
-                className="flex-1 min-w-[140px] px-2 py-1.5 bg-black/40 border border-white/10 rounded text-white text-xs" />
-              <button onClick={() => post({ action: 'remap', ...remap })}
-                disabled={!remap.platformId || !remap.discordId}
-                className="px-3 py-1.5 text-xs font-bold text-white bg-blue-500 hover:bg-blue-400 disabled:opacity-40 rounded">Re-map</button>
-            </div>
-          </div>
-          <div className="p-3 rounded-lg bg-black/20 border border-white/10 space-y-2">
-            <div className="text-[10px] uppercase tracking-wider text-blue-300/70 font-bold">Merge two player profiles (same person)</div>
-            <div className="flex gap-2 flex-wrap">
-              <input placeholder="merge FROM Discord ID" value={merge.fromDiscordId} onChange={(e) => setMerge({ ...merge, fromDiscordId: e.target.value.trim() })}
-                className="flex-1 min-w-[150px] px-2 py-1.5 bg-black/40 border border-white/10 rounded text-white text-xs" />
-              <input placeholder="merge INTO Discord ID" value={merge.toDiscordId} onChange={(e) => setMerge({ ...merge, toDiscordId: e.target.value.trim() })}
-                className="flex-1 min-w-[150px] px-2 py-1.5 bg-black/40 border border-white/10 rounded text-white text-xs" />
-              <button onClick={() => { if (confirm('Merge all stats from the first profile into the second? Cannot be undone.')) post({ action: 'merge', ...merge }) }}
-                disabled={!merge.fromDiscordId || !merge.toDiscordId}
-                className="px-3 py-1.5 text-xs font-bold text-white bg-blue-500 hover:bg-blue-400 disabled:opacity-40 rounded">Merge</button>
-            </div>
-          </div>
-          {msg && <div className="lg:col-span-2 text-xs text-white/70">{msg}</div>}
-        </div>
-      )}
-    </div>
-  )
-}
+// Player identity tools moved to the per-player panel on the Players admin tab
+// (search by name + avatar; link / unlink / re-map / merge all live there).
 
 function SeriesModal({ seriesId, onClose, onChanged }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
   const [editing, setEditing] = useState(false)
   const [playerEdits, setPlayerEdits] = useState({})
+  const [gameEdits, setGameEdits] = useState({})
 
   const load = useCallback(async () => {
     setError(null)
@@ -224,13 +169,16 @@ function SeriesModal({ seriesId, onClose, onChanged }) {
     onChanged?.()
   }
 
-  async function savePlayerEdits() {
-    const edits = Object.entries(playerEdits).map(([id, vals]) => ({ id: Number(id), ...vals }))
-    if (!edits.length) return
+  async function saveStatEdits() {
+    const playerEditList = Object.entries(playerEdits).map(([id, vals]) => ({ id: Number(id), ...vals }))
+    const gameEditList = Object.entries(gameEdits).map(([id, vals]) => ({ id: Number(id), ...vals }))
+    if (!playerEditList.length && !gameEditList.length) return
     await fetch(`/api/admin/stats-series/${seriesId}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ playerEdits: edits }),
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ playerEdits: playerEditList, gameEdits: gameEditList }),
     })
     setPlayerEdits({})
+    setGameEdits({})
     await load()
     onChanged?.()
   }
@@ -280,16 +228,16 @@ function SeriesModal({ seriesId, onClose, onChanged }) {
               ) : (
                 <div className="flex gap-2 flex-wrap">
                   <button onClick={() => setEditing(true)} className="px-3 py-1.5 text-xs font-bold text-blue-200 bg-blue-500/15 hover:bg-blue-500/25 border border-blue-400/30 rounded">Edit series</button>
-                  {Object.keys(playerEdits).length > 0 && (
-                    <button onClick={savePlayerEdits} className="px-3 py-1.5 text-xs font-bold text-green-300 bg-green-500/15 hover:bg-green-500/25 border border-green-400/30 rounded">
-                      Save {Object.keys(playerEdits).length} stat line edit(s)
+                  {(Object.keys(playerEdits).length + Object.keys(gameEdits).length) > 0 && (
+                    <button onClick={saveStatEdits} className="px-3 py-1.5 text-xs font-bold text-green-300 bg-green-500/15 hover:bg-green-500/25 border border-green-400/30 rounded">
+                      Save {Object.keys(gameEdits).length + Object.keys(playerEdits).length} edit(s)
                     </button>
                   )}
                   <button onClick={hardDelete} className="px-3 py-1.5 text-xs font-bold text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded ml-auto">Delete series</button>
                 </div>
               )}
 
-              <GamesSection data={data} playerEdits={playerEdits} setPlayerEdits={setPlayerEdits} />
+              <GamesSection data={data} playerEdits={playerEdits} setPlayerEdits={setPlayerEdits} gameEdits={gameEdits} setGameEdits={setGameEdits} />
               <AuditSection audit={data.audit} />
             </>
           )}
@@ -354,7 +302,7 @@ const EDIT_COLS = [
 ]
 const DB_COL = { score: 'score', goals: 'goals', assists: 'assists', saves: 'saves', shots: 'shots', demosInflicted: 'demos_inflicted', demosTaken: 'demos_taken' }
 
-function GamesSection({ data, playerEdits, setPlayerEdits }) {
+function GamesSection({ data, playerEdits, setPlayerEdits, gameEdits, setGameEdits }) {
   const byGame = new Map()
   for (const p of data.players) {
     if (!byGame.has(p.game_id)) byGame.set(p.game_id, [])
@@ -363,22 +311,44 @@ function GamesSection({ data, playerEdits, setPlayerEdits }) {
   const setEdit = (rowId, key, value) => {
     setPlayerEdits((prev) => ({ ...prev, [rowId]: { ...prev[rowId], [key]: value === '' ? null : Number(value) } }))
   }
+  // Per-game score edits. Default both goals into the patch object so editing one
+  // side still sends a complete { homeGoals, awayGoals } pair.
+  const setGameScore = (g, side, value) => {
+    setGameEdits((prev) => {
+      const cur = prev[g.id] || { homeGoals: g.home_goals, awayGoals: g.away_goals }
+      return { ...prev, [g.id]: { ...cur, [side]: value === '' ? 0 : Number(value) } }
+    })
+  }
 
   return (
     <div>
-      <div className="text-[10px] uppercase tracking-wider text-blue-300/70 mb-2 font-bold">Games ({data.games.length}) — edit any stat cell, then “Save stat line edits”</div>
+      <div className="text-[10px] uppercase tracking-wider text-blue-300/70 mb-2 font-bold">Games ({data.games.length}) — edit game scores or any stat cell, then “Save edits”</div>
       <div className="space-y-3">
         {data.games.map((g) => (
           <div key={g.id} className="p-3 rounded-xl bg-white/[0.02] border border-white/10">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs text-white/60">Game {g.game_number}{g.overtime ? ' · OT' : ''}{g.is_forfeit ? ' · FF' : ''}</span>
+            <div className="flex items-center justify-between mb-2 gap-2">
+              <span className="text-xs text-white/60 whitespace-nowrap">Game {g.game_number}{g.overtime ? ' · OT' : ''}{g.is_forfeit ? ' · FF' : ''}</span>
               {g.ballchasing_replay_url
-                ? <a href={g.ballchasing_replay_url} target="_blank" rel="noreferrer" className="text-xs text-blue-300 hover:text-blue-200 underline truncate max-w-[40%]">{g.ballchasing_replay_id}</a>
-                : <span className="text-xs text-white/30">no replay</span>}
-              <span className="font-mono text-sm font-bold text-white">{g.home_goals} - {g.away_goals}</span>
+                ? <a href={g.ballchasing_replay_url} target="_blank" rel="noreferrer" className="text-xs text-blue-300 hover:text-blue-200 underline truncate flex-1">{g.ballchasing_replay_id}</a>
+                : <span className="text-xs text-white/30 flex-1">no replay</span>}
+              <div className="flex items-center gap-1">
+                <input type="number" min={0} title="Home goals"
+                  defaultValue={g.home_goals}
+                  onChange={(e) => setGameScore(g, 'homeGoals', e.target.value)}
+                  className="w-12 px-1 py-0.5 bg-black/40 border border-white/10 rounded text-white text-center font-mono text-sm" />
+                <span className="text-white/40 font-mono">-</span>
+                <input type="number" min={0} title="Away goals"
+                  defaultValue={g.away_goals}
+                  onChange={(e) => setGameScore(g, 'awayGoals', e.target.value)}
+                  className="w-12 px-1 py-0.5 bg-black/40 border border-white/10 rounded text-white text-center font-mono text-sm" />
+              </div>
             </div>
+            {(byGame.get(g.id) || []).length === 0 && (
+              <div className="text-[10px] text-white/30 italic">No player stat lines for this game — game score above is editable.</div>
+            )}
             {(byGame.get(g.id) || []).length > 0 && (
-              <table className="w-full text-[11px]">
+              <div className="overflow-x-auto">
+              <table className="w-full text-[11px] min-w-[520px]">
                 <thead>
                   <tr className="text-[9px] uppercase tracking-wider text-white/40">
                     <th className="text-left py-0.5">Player</th>
@@ -404,6 +374,7 @@ function GamesSection({ data, playerEdits, setPlayerEdits }) {
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
           </div>
         ))}

@@ -6,6 +6,7 @@ const { config } = require('../config/config');
 const Logger = require('../utils/logger');
 const { LeagueDB, TransactionDB, isDatabaseAvailable } = require('../utils/database');
 const { ROLES, TEAM_ROLES, NP_ROLES, TEAM_NAMES, getTeamChoices, getDivisionChoices } = require('../constants/roles');
+const { attachTeamLogo } = require('../utils/teamRoles');
 
 // Command-specific constants
 const TRANSACTION_REQUEST_CHANNEL_ID = '1178913188750823544';
@@ -187,51 +188,11 @@ function validateEligibility(userData) {
     };
 }
 
-// Helper function to find team logo file
-function findTeamLogo(teamName) {
-    try {
-        const logosDir = path.join(__dirname, '../../IMAGES/logos');
-        
-        if (!fs.existsSync(logosDir)) {
-            Logger.warning(`Logos directory not found: ${logosDir}`);
-            return null;
-        }
-        
-        const files = fs.readdirSync(logosDir);
-        
-        // Normalize team name for matching
-        const normalizedTeamName = teamName.toLowerCase().replace(/[^a-z0-9]/g, '');
-        
-        // Try exact match first (case-insensitive)
-        for (const file of files) {
-            const fileNameWithoutExt = path.parse(file).name.toLowerCase();
-            if (fileNameWithoutExt === teamName.toLowerCase()) {
-                return path.join(logosDir, file);
-            }
-        }
-        
-        // Try fuzzy match (remove spaces, special chars)
-        for (const file of files) {
-            const fileNameWithoutExt = path.parse(file).name.toLowerCase().replace(/[^a-z0-9]/g, '');
-            if (fileNameWithoutExt === normalizedTeamName) {
-                return path.join(logosDir, file);
-            }
-        }
-        
-        // Try partial match
-        for (const file of files) {
-            const fileNameWithoutExt = path.parse(file).name.toLowerCase();
-            if (fileNameWithoutExt.includes(normalizedTeamName) || normalizedTeamName.includes(fileNameWithoutExt.replace(/[^a-z0-9]/g, ''))) {
-                return path.join(logosDir, file);
-            }
-        }
-        
-        Logger.warning(`Logo not found for team: ${teamName}`);
-        return null;
-    } catch (error) {
-        Logger.error(`Error finding team logo for ${teamName}`, error);
-        return null;
-    }
+// Team logo for embeds — DB only (teams.logo_data → franchise logo). Returns an
+// AttachmentBuilder named team_logo.png, or null when no logo exists. (Replaces
+// the old IMAGES/logos/*.png file lookup; static team PNGs were deleted.)
+async function teamLogoAttachment(teamName) {
+    return attachTeamLogo(null, teamName);
 }
 
 // Helper function to count roster size for a team in a specific division
@@ -614,10 +575,9 @@ async function processSigningCompletion(transaction, message, client) {
             .setColor(0x00FF00)
             .setTimestamp();
         
-        // Try to add team logo
-        const logoPath = findTeamLogo(transaction.teamName);
-        if (logoPath && fs.existsSync(logoPath)) {
-            const logoAttachment = new AttachmentBuilder(logoPath, { name: 'team_logo.png' });
+        // Try to add team logo (from DB)
+        const logoAttachment = await teamLogoAttachment(transaction.teamName);
+        if (logoAttachment) {
             confirmationEmbed.setThumbnail('attachment://team_logo.png');
             await transactionChannel.send({ content: `<@${transaction.playerId}>`, embeds: [confirmationEmbed], files: [logoAttachment] });
         } else {

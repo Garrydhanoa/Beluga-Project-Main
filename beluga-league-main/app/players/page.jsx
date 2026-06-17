@@ -53,6 +53,7 @@ function adaptApiPlayer(p) {
     discordId: p.discordId,
     avatarUrl: p.avatarUrl || null,
     team: p.currentTeam || 'Free Agent',
+    teamId: p.currentTeamId || null,
     division: divKey,
     divisionLabel: divKey === 'major' ? 'Majors' : divKey.toUpperCase(),
     isCaptain: p.role === 'captain',
@@ -357,7 +358,7 @@ function PlayerCard({ player }) {
           aria-hidden="true"
         >
           <img
-            src={`/logos/${player.team}.png`}
+            src={player.teamId ? `/api/teams/logo?teamId=${player.teamId}` : `/api/teams/logo?name=${encodeURIComponent(player.team)}`}
             alt=""
             className="w-full h-full object-contain"
             onError={(e) => { e.currentTarget.style.display = 'none' }}
@@ -408,7 +409,7 @@ function PlayerCard({ player }) {
           <>
             <div className="w-6 h-6 flex-shrink-0 flex items-center justify-center">
               <img
-                src={`/logos/${player.team}.png`}
+                src={player.teamId ? `/api/teams/logo?teamId=${player.teamId}` : `/api/teams/logo?name=${encodeURIComponent(player.team)}`}
                 alt=""
                 className="w-full h-full object-contain"
                 onError={(e) => { e.currentTarget.style.display = 'none' }}

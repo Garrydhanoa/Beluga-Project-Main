@@ -64,20 +64,18 @@ export async function GET(request) {
     return NextResponse.json({ error: 'teamId or name required' }, { status: 400 })
   }
 
-  // No DB/franchise logo found. If we have a team NAME, fall back to the static
-  // /logos/<name>.png file via a redirect instead of erroring — most teams only
-  // have static logos, so this avoids 404 spam and the <img> still resolves.
-  const staticFallback = () =>
-    byName
-      ? NextResponse.redirect(new URL(`/logos/${encodeURIComponent(byName)}.png`, request.url), 302)
-      : NextResponse.json({ error: 'Logo not found' }, { status: 404 })
+  // Logos are DB-only now (team logo → franchise logo). There is no static
+  // /logos/<name>.png redirect anymore — those files were removed league-wide.
+  // When nothing is found we return 404 so the <img> fires onError and the
+  // TeamLogo component falls through to the team's initials (never a broken icon).
+  const notFound = () => NextResponse.json({ error: 'Logo not found' }, { status: 404 })
 
-  if (!row) return staticFallback()
+  if (!row) return notFound()
 
   const mime = row.team_data ? row.team_mime : row.franchise_mime
   const data = row.team_data || row.franchise_data
 
-  if (!data) return staticFallback()
+  if (!data) return notFound()
 
   return new NextResponse(data, {
     headers: {

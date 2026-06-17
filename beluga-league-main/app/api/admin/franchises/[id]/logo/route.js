@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { withAudit } from '../../../../../../lib/activityLog'
 import { requireAdmin } from '../../../../../../lib/adminAuth'
 import { ensureLeagueSchema } from '../../../../../../lib/leagueSchema'
 import { setFranchiseLogo, getFranchiseLogo } from '../../../../../../lib/franchiseStore'
@@ -29,7 +30,7 @@ export async function GET(_request, { params }) {
   })
 }
 
-export async function POST(request, { params }) {
+async function postHandler(request, { params }) {
   const auth = await requireAdmin()
   if (!auth.ok) return auth.response
 
@@ -50,7 +51,7 @@ export async function POST(request, { params }) {
   return NextResponse.json({ ok: true })
 }
 
-export async function DELETE(_request, { params }) {
+async function deleteHandler(_request, { params }) {
   const auth = await requireAdmin()
   if (!auth.ok) return auth.response
 
@@ -62,3 +63,7 @@ export async function DELETE(_request, { params }) {
   await setFranchiseLogo(fid, { mime: null, data: null })
   return NextResponse.json({ ok: true })
 }
+
+// Audit every write (actor + body + status -> /higgenlogs).
+export const POST = withAudit(postHandler, { action: 'franchises.logo.post' })
+export const DELETE = withAudit(deleteHandler, { action: 'franchises.logo.delete' })

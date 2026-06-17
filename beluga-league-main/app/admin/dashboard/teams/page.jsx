@@ -252,6 +252,7 @@ function TeamCard({ team, onChanged }) {
 
   const [logoError, setLogoError] = useState(null)
   const [logoBust, setLogoBust] = useState(0)
+  const [logoOk, setLogoOk] = useState(true) // hide the "no logo" placeholder once the img loads
 
   async function uploadLogo(file) {
     if (!file) return
@@ -293,13 +294,15 @@ function TeamCard({ team, onChanged }) {
         >
           {/* Always try the logo endpoint — it falls back to the franchise logo,
               which is what serves site-wide now that per-team logos are cleared.
-              Only show "no logo" if even that 404s. */}
-          <span className="absolute inset-0 flex items-center justify-center">no logo</span>
+              Only show "no logo" if even that 404s (it sits BEHIND the img, so it
+              must be hidden once the img loads or it bleeds through). */}
+          {!logoOk && <span className="absolute inset-0 flex items-center justify-center">no logo</span>}
           <img
             src={`/api/teams/logo?teamId=${team.id}&v=${logoBust || team.updatedAt || team.id}`}
             alt=""
             className="relative w-full h-full object-cover"
-            onError={(e) => { e.currentTarget.style.display = 'none' }}
+            onLoad={() => setLogoOk(true)}
+            onError={(e) => { setLogoOk(false); e.currentTarget.style.display = 'none' }}
           />
           <input
             ref={fileRef}

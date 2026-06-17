@@ -158,14 +158,19 @@ function buildAssignMessage({ sessionId, parsed, homeName, awayName, suggestedId
             { name: suggestedIdx === 0 ? `Group A — looks like ${truncate(homeName, 200)}` : 'Group A', value: truncate(group(parsed.teams[0].players), 1000) || '—', inline: false },
             { name: suggestedIdx === 1 ? `Group B — looks like ${truncate(homeName, 200)}` : 'Group B', value: truncate(group(parsed.teams[1].players), 1000) || '—', inline: false },
         );
+    // BUTTONS, not a pre-selected select menu: Discord fires NO interaction when a
+    // user re-picks the option already marked default, so a correct guess left the
+    // reporter stuck (they had to choose the WRONG group to advance). Two buttons
+    // always fire. The guessed side is highlighted Primary so it reads as "confirm".
     const row = new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-            .setCustomId(ids.build('assign', sessionId))
-            .setPlaceholder(`Which group is ${homeName}?`)
-            .addOptions(
-                new StringSelectMenuOptionBuilder().setLabel(truncate(`Group A is ${homeName}`, 100)).setValue('0').setDefault(suggestedIdx === 0),
-                new StringSelectMenuOptionBuilder().setLabel(truncate(`Group B is ${homeName}`, 100)).setValue('1').setDefault(suggestedIdx === 1),
-            )
+        new ButtonBuilder()
+            .setCustomId(ids.build('assign', sessionId, 0))
+            .setLabel(truncate(`Group A is ${homeName}`, 80))
+            .setStyle(suggestedIdx === 0 ? ButtonStyle.Success : ButtonStyle.Secondary),
+        new ButtonBuilder()
+            .setCustomId(ids.build('assign', sessionId, 1))
+            .setLabel(truncate(`Group B is ${homeName}`, 80))
+            .setStyle(suggestedIdx === 1 ? ButtonStyle.Success : ButtonStyle.Secondary),
     );
     return { embeds: [embed], components: [row] };
 }

@@ -34,7 +34,7 @@ function getTeamInitials(name) {
     .join('')
 }
 
-function TeamSide({ name, side }) {
+function TeamSide({ name, teamId, side }) {
   // Ghost logo positioning — bleeds out of the card toward the outer corner
   const ghostPos =
     side === 'home'
@@ -52,6 +52,7 @@ function TeamSide({ name, side }) {
       <div className="absolute inset-0 rounded-full bg-blue-500/0 group-hover:bg-blue-500/20 blur-md transition-all" />
       <TeamLogo
         name={name}
+        teamId={teamId}
         className="relative w-full h-full"
         imgClassName="relative w-full h-full object-contain drop-shadow-lg"
       />
@@ -76,7 +77,7 @@ function TeamSide({ name, side }) {
         className={`absolute ${ghostPos} w-44 h-44 opacity-[0.08] group-hover:opacity-[0.2] transition-opacity duration-700 pointer-events-none`}
         aria-hidden="true"
       >
-        <TeamLogo name={name} className="w-full h-full" imgClassName="w-full h-full object-contain" alt="" />
+        <TeamLogo name={name} teamId={teamId} className="w-full h-full" imgClassName="w-full h-full object-contain" alt="" />
       </div>
       {/* Foreground content */}
       <div className={`relative flex items-center gap-3 ${alignment}`}>
@@ -231,7 +232,7 @@ export default function SchedulesPage() {
                       >
                         {/* HOME HALF — top */}
                         <div className="relative px-5 pt-5 pb-9 overflow-hidden bg-gradient-to-br from-blue-600/15 via-blue-500/5 to-transparent">
-                          <TeamSide name={match[0]} side="home" />
+                          <TeamSide name={match[0]} teamId={match[2]} side="home" />
                         </div>
 
                         {/* Perforated divider */}
@@ -256,7 +257,7 @@ export default function SchedulesPage() {
 
                         {/* AWAY HALF — bottom */}
                         <div className="relative px-5 pt-9 pb-5 overflow-hidden bg-gradient-to-tr from-transparent via-blue-500/5 to-blue-400/10">
-                          <TeamSide name={match[1]} side="away" />
+                          <TeamSide name={match[1]} teamId={match[3]} side="away" />
                         </div>
                       </div>
                     ))}

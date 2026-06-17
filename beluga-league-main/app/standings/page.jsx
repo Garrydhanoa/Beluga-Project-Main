@@ -2,91 +2,21 @@
 
 import { useMemo, useState, useEffect } from 'react'
 import Link from 'next/link'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
+import TeamLogo from '../components/TeamLogo'
 
 // ====================================================================
-// Config
+// Config — divisions only. ALL standings data is live from /api/standings
+// (the Ballchasing-based stats system). No placeholder data.
 // ====================================================================
 
 const DIVISIONS = [
-  { key: 'aa', label: 'AA' },
+  { key: 'majors', label: 'Majors' },
   { key: 'aaa', label: 'AAA' },
-  { key: 'major', label: 'Majors' },
+  { key: 'aa', label: 'AA' },
 ]
 
-const ALL_TEAMS = [
-  '6 Speed', 'Archangels', 'Aviators', 'Clovis Esports', 'Griffins',
-  'Immortals', 'InTraCate', 'Kingdom', 'Lotus', 'Malfeasance',
-  'MNML', 'Panthers', 'Sublunary', 'Surge',
-]
-
-const MAJORS_TEAMS = [
-  '6 Speed', 'Archangels', 'Aviators', 'Clovis Esports', 'InTraCate',
-  'Lotus', 'Malfeasance', 'Panthers', 'Sublunary', 'Surge',
-]
-
-const PLAYOFF_CUTOFF = 8
-const TOTAL_GAMES = 16 // 8 weeks × 2 matches per week
-
-// ====================================================================
-// Deterministic helpers
-// ====================================================================
-
-function hashString(s) {
-  let h = 0
-  for (let i = 0; i < s.length; i++) {
-    h = (h << 5) - h + s.charCodeAt(i)
-    h |= 0
-  }
-  return Math.abs(h)
-}
-
-function seededRand(seed, min, max) {
-  const x = Math.sin(seed) * 10000
-  const r = x - Math.floor(x)
-  return Math.floor(r * (max - min + 1)) + min
-}
-
-// ====================================================================
-// Fake standings generation
-// ====================================================================
-
-function generateStandings(division) {
-  const teams = division === 'major' ? MAJORS_TEAMS : ALL_TEAMS
-  const results = teams.map((team) => {
-    const seed = hashString(`${team}|${division}|s9`)
-    const wins = seededRand(seed, 2, TOTAL_GAMES - 1)
-    const losses = TOTAL_GAMES - wins
-    const goalsFor = seededRand(seed + 1, 35, 90)
-    const goalsAgainst = seededRand(seed + 2, 25, 80)
-    const gameDiff = wins - losses
-    const goalDiff = goalsFor - goalsAgainst
-    const winPct = ((wins / TOTAL_GAMES) * 100).toFixed(1)
-
-    return {
-      team,
-      wins,
-      losses,
-      winPct: parseFloat(winPct),
-      goalsFor,
-      goalsAgainst,
-      gameDiff,
-      goalDiff,
-    }
-  })
-
-  // Sort: wins → goalDiff → goalsFor
-  results.sort((a, b) => {
-    if (b.wins !== a.wins) return b.wins - a.wins
-    if (b.goalDiff !== a.goalDiff) return b.goalDiff - a.goalDiff
-    return b.goalsFor - a.goalsFor
-  })
-
-  results.forEach((t, i) => {
-    t.position = i + 1
-  })
-  return results
-}
+const PLAYOFF_CUTOFF = 8 // top N qualify for playoffs
 
 // ====================================================================
 // Shared
@@ -108,34 +38,22 @@ function FadeIn({ children, delay = 0, y = 20, className = '' }) {
 
 function rankBadgeStyle(rank) {
   if (rank === 1) {
-    return {
-      background: 'linear-gradient(135deg, #fde047, #ca8a04)',
-      color: '#422006',
-      boxShadow: '0 0 20px rgba(250, 204, 21, 0.4)',
-      border: '1px solid rgba(250, 204, 21, 0.7)',
-    }
+    return { background: 'linear-gradient(135deg, #fde047, #ca8a04)', color: '#422006', boxShadow: '0 0 20px rgba(250, 204, 21, 0.45)', border: '1px solid rgba(250, 204, 21, 0.7)' }
   }
   if (rank === 2) {
-    return {
-      background: 'linear-gradient(135deg, #e2e8f0, #94a3b8)',
-      color: '#1e293b',
-      boxShadow: '0 0 15px rgba(148, 163, 184, 0.3)',
-      border: '1px solid rgba(226, 232, 240, 0.6)',
-    }
+    return { background: 'linear-gradient(135deg, #e2e8f0, #94a3b8)', color: '#1e293b', boxShadow: '0 0 15px rgba(148, 163, 184, 0.35)', border: '1px solid rgba(226, 232, 240, 0.6)' }
   }
   if (rank === 3) {
-    return {
-      background: 'linear-gradient(135deg, #fb923c, #9a3412)',
-      color: '#431407',
-      boxShadow: '0 0 15px rgba(251, 146, 60, 0.3)',
-      border: '1px solid rgba(251, 146, 60, 0.6)',
-    }
+    return { background: 'linear-gradient(135deg, #fb923c, #9a3412)', color: '#431407', boxShadow: '0 0 15px rgba(251, 146, 60, 0.35)', border: '1px solid rgba(251, 146, 60, 0.6)' }
   }
-  return {
-    background: 'rgba(59, 130, 246, 0.15)',
-    color: '#93c5fd',
-    border: '1px solid rgba(96, 165, 250, 0.3)',
-  }
+  return { background: 'rgba(59, 130, 246, 0.15)', color: '#93c5fd', border: '1px solid rgba(96, 165, 250, 0.3)' }
+}
+
+function TrendChip({ trend }) {
+  if (trend === 'up') return <span className="text-[11px] font-extrabold text-green-400" title="Up vs last power ranking">▲</span>
+  if (trend === 'down') return <span className="text-[11px] font-extrabold text-red-400" title="Down vs last power ranking">▼</span>
+  if (trend === 'new') return <span className="text-[10px] font-extrabold text-yellow-300" title="New">★</span>
+  return null
 }
 
 // ====================================================================
@@ -143,95 +61,70 @@ function rankBadgeStyle(rank) {
 // ====================================================================
 
 export default function StandingsPage() {
-  const [division, setDivision] = useState('major')
+  const [division, setDivision] = useState('majors')
   const [query, setQuery] = useState('')
-  const [sortField, setSortField] = useState('position')
-  const [sortDir, setSortDir] = useState('asc')
   const [apiData, setApiData] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [trendByTeam, setTrendByTeam] = useState({})
+  const [expanded, setExpanded] = useState(null)
 
+  // Standings (live)
   useEffect(() => {
-    const divKey = division === 'major' ? 'majors' : division
     setLoading(true)
-    fetch(`/api/standings?division=${divKey}`, { cache: 'no-store' })
+    setExpanded(null)
+    fetch(`/api/standings?division=${division}`, { cache: 'no-store' })
       .then((r) => r.json())
       .then((d) => setApiData(d))
       .catch(() => setApiData({ data: [] }))
       .finally(() => setLoading(false))
   }, [division])
 
-  const rawStandings = useMemo(() => {
+  // Power-rankings trend (▲▼ movement) — best-effort; standings still render without it.
+  useEffect(() => {
+    const divKey = division === 'majors' ? 'Majors' : division === 'aaa' ? 'AAA' : 'AA'
+    fetch('/api/power-rankings', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((d) => {
+        const teams = d?.rankings?.team?.[divKey] || []
+        const map = {}
+        for (const t of teams) if (t?.name) map[t.name] = t.trend
+        setTrendByTeam(map)
+      })
+      .catch(() => setTrendByTeam({}))
+  }, [division])
+
+  const standings = useMemo(() => {
     if (!apiData || !Array.isArray(apiData.data)) return []
     return apiData.data.map((row, i) => {
       const wins = Number(row.wins || 0)
       const losses = Number(row.losses || 0)
-      const goalsFor = Number(row.goalsFor || row.goals_for || 0)
-      const goalsAgainst = Number(row.goalsAgainst || row.goals_against || 0)
+      const goalsFor = Number(row.goalsFor ?? row.goals_for ?? 0)
+      const goalsAgainst = Number(row.goalsAgainst ?? row.goals_against ?? 0)
       const totalGames = wins + losses || 1
       return {
         team: row.team,
+        teamId: row.teamId ?? null,
         wins,
         losses,
-        winPct: parseFloat(((wins / totalGames) * 100).toFixed(1)),
+        winPct: Math.round((wins / totalGames) * 1000) / 10,
         goalsFor,
         goalsAgainst,
-        gameDiff: wins - losses,
-        goalDiff: goalsFor - goalsAgainst,
+        gameDiff: Number(row.gameDiff ?? (wins - losses)),
+        goalDiff: Number(row.goalDiff ?? (goalsFor - goalsAgainst)),
+        rating: Number(row.rating || 0),
         position: row.rank || i + 1,
       }
     })
   }, [apiData])
 
-  const sortedStandings = useMemo(() => {
-    let list = rawStandings
-    if (query.trim()) {
-      const q = query.toLowerCase()
-      list = list.filter((t) => t.team.toLowerCase().includes(q))
-    }
-    const sorted = [...list].sort((a, b) => {
-      let cmp = 0
-      switch (sortField) {
-        case 'position':
-          cmp = a.position - b.position
-          break
-        case 'team':
-          cmp = a.team.localeCompare(b.team)
-          break
-        case 'wins':
-          cmp = a.wins - b.wins
-          break
-        case 'losses':
-          cmp = a.losses - b.losses
-          break
-        case 'winPct':
-          cmp = a.winPct - b.winPct
-          break
-        case 'gameDiff':
-          cmp = a.gameDiff - b.gameDiff
-          break
-        case 'goalDiff':
-          cmp = a.goalDiff - b.goalDiff
-          break
-        default:
-          cmp = a.position - b.position
-      }
-      return sortDir === 'asc' ? cmp : -cmp
-    })
-    return sorted
-  }, [rawStandings, query, sortField, sortDir])
-
-  function toggleSort(field) {
-    if (sortField === field) {
-      setSortDir(sortDir === 'asc' ? 'desc' : 'asc')
-    } else {
-      setSortField(field)
-      // "position" and "losses" sort ascending first, others descending
-      setSortDir(field === 'position' || field === 'losses' ? 'asc' : 'desc')
-    }
-  }
+  const visible = useMemo(() => {
+    if (!query.trim()) return standings
+    const q = query.toLowerCase()
+    return standings.filter((t) => (t.team || '').toLowerCase().includes(q))
+  }, [standings, query])
 
   const divisionLabel = DIVISIONS.find((d) => d.key === division)?.label || division
-  const totalTeams = division === 'major' ? MAJORS_TEAMS.length : ALL_TEAMS.length
+  const isStatsBacked = apiData?.source === 'stats'
 
   return (
     <div className="relative text-white overflow-hidden">
@@ -242,7 +135,7 @@ export default function StandingsPage() {
             <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-blue-500/10 border border-blue-400/30 backdrop-blur-sm mb-6">
               <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
               <span className="text-xs text-blue-200 font-medium tracking-[0.2em] uppercase">
-                Season 9 · Standings
+                {apiData?.season?.season_number ? `Season ${apiData.season.season_number} · Standings` : 'Standings'}
               </span>
             </div>
             <h1 className="text-5xl sm:text-6xl md:text-7xl font-black tracking-tight mb-4 leading-[0.95]">
@@ -252,7 +145,7 @@ export default function StandingsPage() {
               </span>
             </h1>
             <p className="text-base md:text-lg text-blue-100/70 max-w-xl mx-auto">
-              Live team standings across all three divisions. Top {PLAYOFF_CUTOFF} teams qualify for playoffs.
+              Live team standings across all three divisions. Top {PLAYOFF_CUTOFF} teams qualify for playoffs — tap a team to expand its tiebreakers.
             </p>
           </div>
         </FadeIn>
@@ -262,7 +155,6 @@ export default function StandingsPage() {
       <section className="container mx-auto px-4 mb-8 max-w-5xl">
         <FadeIn delay={0.1}>
           <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-            {/* Division tabs */}
             <div className="flex gap-2 flex-wrap">
               {DIVISIONS.map((d) => {
                 const active = division === d.key
@@ -282,15 +174,8 @@ export default function StandingsPage() {
               })}
             </div>
 
-            {/* Search */}
             <div className="relative w-full md:w-64">
-              <svg
-                className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-blue-300/60"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={2}
-              >
+              <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-blue-300/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
               </svg>
               <input
@@ -305,49 +190,51 @@ export default function StandingsPage() {
         </FadeIn>
       </section>
 
-      {/* ============ STANDINGS TABLE ============ */}
+      {/* ============ STANDINGS ============ */}
       <section className="container mx-auto px-4 pb-24 max-w-5xl">
         <FadeIn delay={0.15}>
-          {/* Division summary header */}
           <div className="mb-4 flex items-center gap-3">
             <span className="text-[10px] font-bold tracking-[0.25em] uppercase text-blue-300/70">
               {divisionLabel} Division
             </span>
             <div className="flex-1 h-px bg-gradient-to-r from-blue-400/30 to-transparent" />
             <span className="text-[10px] font-bold text-blue-300/60">
-              {sortedStandings.length} / {totalTeams} {totalTeams === 1 ? 'team' : 'teams'}
+              {visible.length} {visible.length === 1 ? 'team' : 'teams'}
             </span>
           </div>
 
-          {/* Table */}
-          <div className="rounded-2xl bg-white/[0.03] border border-white/10 overflow-hidden">
-            {/* Column headers */}
-            <div className="hidden md:grid grid-cols-[60px_1fr_80px_70px_70px_90px_100px_100px] gap-3 px-5 py-3 border-b border-white/10 bg-black/30 text-[10px] font-bold tracking-wider uppercase text-blue-300/60">
-              <ColumnHeader label="Pos" field="position" sortField={sortField} sortDir={sortDir} onClick={toggleSort} />
-              <ColumnHeader label="Team" field="team" sortField={sortField} sortDir={sortDir} onClick={toggleSort} alignLeft />
-              <ColumnHeader label="W" field="wins" sortField={sortField} sortDir={sortDir} onClick={toggleSort} />
-              <ColumnHeader label="L" field="losses" sortField={sortField} sortDir={sortDir} onClick={toggleSort} />
-              <ColumnHeader label="PCT" field="winPct" sortField={sortField} sortDir={sortDir} onClick={toggleSort} />
-              <ColumnHeader label="Game Diff" field="gameDiff" sortField={sortField} sortDir={sortDir} onClick={toggleSort} />
-              <ColumnHeader label="Goal Diff" field="goalDiff" sortField={sortField} sortDir={sortDir} onClick={toggleSort} />
-              <div className="text-right">Goals F/A</div>
-            </div>
+          {/* Header strip (desktop) */}
+          <div className="hidden md:grid grid-cols-[64px_1fr_64px_120px_70px] gap-3 px-5 pb-2 text-[10px] font-bold tracking-wider uppercase text-blue-300/50">
+            <div>Rank</div>
+            <div>Team</div>
+            <div className="text-center">Record</div>
+            <div className="text-center">Win %</div>
+            <div className="text-right">More</div>
+          </div>
 
-            {sortedStandings.length === 0 ? (
-              <div className="py-16 text-center text-sm text-white/40">No teams match your search.</div>
+          <div className="rounded-2xl bg-white/[0.03] border border-white/10 overflow-hidden">
+            {loading ? (
+              <div className="py-20 text-center text-sm text-blue-200/60">Loading standings…</div>
+            ) : visible.length === 0 ? (
+              <div className="py-16 text-center text-sm text-white/40">
+                {query.trim() ? 'No teams match your search.' : `No results recorded yet for ${divisionLabel} — standings appear after the first reported series.`}
+              </div>
             ) : (
-              sortedStandings.map((team, idx) => {
-                // Show the playoff cutoff divider after the last playoff team
+              visible.map((team, idx) => {
                 const showPlayoffCutoff =
-                  sortField === 'position' &&
-                  sortDir === 'asc' &&
+                  !query.trim() &&
                   team.position === PLAYOFF_CUTOFF &&
-                  idx < sortedStandings.length - 1
+                  idx < visible.length - 1
                 return (
                   <div key={team.team}>
-                    <StandingRow team={team} />
+                    <StandingRow
+                      team={team}
+                      trend={trendByTeam[team.team]}
+                      open={expanded === team.team}
+                      onToggle={() => setExpanded(expanded === team.team ? null : team.team)}
+                    />
                     {showPlayoffCutoff && (
-                      <div className="relative flex items-center gap-3 px-5 py-2 bg-blue-500/[0.04] border-y border-blue-400/20">
+                      <div className="relative flex items-center gap-3 px-5 py-2 bg-blue-500/[0.05] border-y border-blue-400/20">
                         <div className="flex-1 h-px bg-gradient-to-r from-blue-400/40 to-transparent" />
                         <span className="text-[9px] font-black tracking-[0.3em] uppercase text-blue-300/70">
                           Playoff Cutoff
@@ -363,26 +250,15 @@ export default function StandingsPage() {
 
           {/* Legend */}
           <div className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-[10px] text-white/50 tracking-wider">
-            <div className="flex items-center gap-2">
-              <div style={{ ...rankBadgeStyle(1), width: 16, height: 16, borderRadius: 9999 }} />
-              <span>1st Place</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div style={{ ...rankBadgeStyle(2), width: 16, height: 16, borderRadius: 9999 }} />
-              <span>2nd</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div style={{ ...rankBadgeStyle(3), width: 16, height: 16, borderRadius: 9999 }} />
-              <span>3rd</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded-full bg-blue-500/15 border border-blue-400/30" />
-              <span>Playoff Contender</span>
-            </div>
+            <div className="flex items-center gap-2"><div style={{ ...rankBadgeStyle(1), width: 16, height: 16, borderRadius: 9999 }} /><span>1st</span></div>
+            <div className="flex items-center gap-2"><div style={{ ...rankBadgeStyle(2), width: 16, height: 16, borderRadius: 9999 }} /><span>2nd</span></div>
+            <div className="flex items-center gap-2"><div style={{ ...rankBadgeStyle(3), width: 16, height: 16, borderRadius: 9999 }} /><span>3rd</span></div>
+            <div className="flex items-center gap-2"><span className="text-green-400 font-extrabold">▲</span><span className="text-red-400 font-extrabold">▼</span><span>Power-ranking trend</span></div>
           </div>
 
-          <div className="mt-6 text-center text-[10px] text-white/30 tracking-wider">
-            Standings shown are placeholder data for design purposes.
+          <div className="mt-4 text-center text-[10px] text-white/30 tracking-wider">
+            Tiebreakers: Wins → Losses → Head-to-Head → Game Diff → Goal Diff → Rating
+            {isStatsBacked ? '' : ' · legacy data'}
           </div>
         </FadeIn>
       </section>
@@ -394,100 +270,95 @@ export default function StandingsPage() {
 // Sub-components
 // ====================================================================
 
-function ColumnHeader({ label, field, sortField, sortDir, onClick, alignLeft = false }) {
-  const active = sortField === field
+function StandingRow({ team, trend, open, onToggle }) {
+  const isPlayoff = team.position <= PLAYOFF_CUTOFF
+  const diffColor = (n) => (n > 0 ? 'text-green-300' : n < 0 ? 'text-red-300' : 'text-white/60')
+  const fmt = (n) => (n > 0 ? `+${n}` : `${n}`)
+
   return (
-    <button
-      onClick={() => onClick(field)}
-      className={`flex items-center gap-1 ${alignLeft ? 'justify-start' : 'justify-end text-right'} cursor-pointer transition-colors hover:text-blue-200 ${
-        active ? 'text-blue-200' : ''
-      }`}
-    >
-      <span>{label}</span>
-      {active && (
-        <span className="text-[8px] leading-none">
-          {sortDir === 'asc' ? '▲' : '▼'}
-        </span>
-      )}
-    </button>
+    <div className={`border-b border-white/5 last:border-b-0 transition-colors ${isPlayoff ? '' : 'opacity-70'}`}>
+      <button
+        onClick={onToggle}
+        className={`w-full grid grid-cols-[48px_1fr_auto_28px] md:grid-cols-[64px_1fr_64px_120px_70px] gap-3 px-5 py-4 items-center text-left ${
+          isPlayoff ? 'hover:bg-blue-500/[0.06]' : 'hover:bg-white/[0.03]'
+        }`}
+      >
+        {/* Rank badge */}
+        <div
+          style={{ ...rankBadgeStyle(team.position), width: 38, height: 38, borderRadius: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 14, flexShrink: 0 }}
+        >
+          {team.position}
+        </div>
+
+        {/* Team name + logo + trend */}
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="flex-shrink-0 w-9 h-9 flex items-center justify-center">
+            <TeamLogo
+              name={team.team}
+              teamId={team.teamId}
+              className="w-full h-full"
+              imgClassName="w-full h-full object-contain drop-shadow-[0_0_10px_rgba(59,130,246,0.2)]"
+            />
+          </div>
+          <span className="text-sm font-bold text-white truncate">{team.team}</span>
+          <TrendChip trend={trend} />
+        </div>
+
+        {/* Record (W-L) */}
+        <div className="text-center md:text-center tabular-nums">
+          <span className="text-sm font-black text-white">{team.wins}</span>
+          <span className="text-white/30 mx-0.5">-</span>
+          <span className="text-sm font-black text-white/60">{team.losses}</span>
+        </div>
+
+        {/* Win % (desktop) */}
+        <div className="hidden md:block text-center text-sm font-bold text-blue-200 tabular-nums">
+          {team.winPct.toFixed(1)}%
+        </div>
+
+        {/* Expand chevron */}
+        <div className="text-right text-blue-300/60">
+          <svg className={`w-4 h-4 inline transition-transform ${open ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </div>
+      </button>
+
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.25, ease: 'easeInOut' }}
+            className="overflow-hidden"
+          >
+            <div className="px-5 pb-5 pt-1">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                <Stat label="Win %" value={`${team.winPct.toFixed(1)}%`} accent="text-blue-200" />
+                <Stat label="Game Diff" value={fmt(team.gameDiff)} accent={diffColor(team.gameDiff)} />
+                <Stat label="Goal Diff" value={fmt(team.goalDiff)} accent={diffColor(team.goalDiff)} />
+                <Stat label="Goals F / A" value={`${team.goalsFor} / ${team.goalsAgainst}`} accent="text-white/80" />
+                <Stat label="Team Rating" value={team.rating ? team.rating.toFixed(1) : '—'} accent="text-purple-200" />
+              </div>
+              <div className="mt-3 text-right">
+                <Link href={`/teams/${encodeURIComponent(team.team)}`} className="text-[11px] font-bold uppercase tracking-wider text-blue-300 hover:text-white transition">
+                  View team page →
+                </Link>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   )
 }
 
-function StandingRow({ team }) {
-  const isPlayoff = team.position <= PLAYOFF_CUTOFF
+function Stat({ label, value, accent }) {
   return (
-    <div
-      className={`grid grid-cols-[48px_1fr_40px_40px_54px_70px] md:grid-cols-[60px_1fr_80px_70px_70px_90px_100px_100px] gap-3 px-5 py-4 items-center border-b border-white/5 last:border-b-0 transition-colors ${
-        isPlayoff ? 'hover:bg-blue-500/[0.05]' : 'hover:bg-white/[0.02] opacity-70'
-      }`}
-    >
-      {/* Position badge */}
-      <div
-        style={{
-          ...rankBadgeStyle(team.position),
-          width: '38px',
-          height: '38px',
-          borderRadius: '9999px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontWeight: 900,
-          fontSize: '14px',
-          flexShrink: 0,
-        }}
-      >
-        {team.position}
-      </div>
-
-      {/* Team name + logo */}
-      <Link
-        href={`/teams/${encodeURIComponent(team.team)}`}
-        className="group flex items-center gap-3 min-w-0"
-      >
-        <div className="flex-shrink-0 w-9 h-9 flex items-center justify-center">
-          <img
-            src={`/logos/${team.team}.png`}
-            alt={team.team}
-            className="w-full h-full object-contain drop-shadow-[0_0_10px_rgba(59,130,246,0.2)]"
-            onError={(e) => {
-              e.currentTarget.style.display = 'none'
-            }}
-          />
-        </div>
-        <span className="text-sm font-bold text-white group-hover:text-blue-200 transition-colors truncate">
-          {team.team}
-        </span>
-      </Link>
-
-      {/* Wins */}
-      <div className="text-right text-sm font-black text-white tabular-nums">{team.wins}</div>
-
-      {/* Losses */}
-      <div className="text-right text-sm font-black text-white/60 tabular-nums">{team.losses}</div>
-
-      {/* Win % */}
-      <div className="text-right text-sm font-bold text-blue-200 tabular-nums">
-        {team.winPct.toFixed(1)}%
-      </div>
-
-      {/* Game differential (hidden on mobile) */}
-      <div className="hidden md:block text-right text-sm font-bold tabular-nums">
-        <span className={team.gameDiff >= 0 ? 'text-blue-300' : 'text-white/50'}>
-          {team.gameDiff >= 0 ? `+${team.gameDiff}` : team.gameDiff}
-        </span>
-      </div>
-
-      {/* Goal differential */}
-      <div className="text-right text-sm font-bold tabular-nums">
-        <span className={team.goalDiff >= 0 ? 'text-blue-300' : 'text-white/50'}>
-          {team.goalDiff >= 0 ? `+${team.goalDiff}` : team.goalDiff}
-        </span>
-      </div>
-
-      {/* Goals F/A (hidden on mobile) */}
-      <div className="hidden md:block text-right text-xs text-white/50 tabular-nums">
-        {team.goalsFor} / {team.goalsAgainst}
-      </div>
+    <div className="rounded-lg bg-black/30 border border-white/10 px-3 py-2 text-center">
+      <div className="text-[9px] font-bold tracking-wider uppercase text-white/40 mb-0.5">{label}</div>
+      <div className={`text-sm font-black tabular-nums ${accent}`}>{value}</div>
     </div>
   )
 }

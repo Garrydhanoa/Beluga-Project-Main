@@ -1,4 +1,5 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, AttachmentBuilder } = require('discord.js');
+const { buildWhoisCard } = require('../stats/statCard');
 const { google } = require('googleapis');
 const fs = require('fs');
 const path = require('path');
@@ -203,6 +204,13 @@ function parseTrackerUrls(trackerString) {
     return urls;
 }
 
+// Tracker → { name, url } for card chips (name) + clickable message links (url).
+function trackerParts(url) {
+    if (!url || !url.trim()) return null;
+    const m = url.match(/rocket-league\/profile\/([^/]+)\/([^/\s]+)/i);
+    return { name: m ? decodeURIComponent(m[2]) : 'tracker', url: url.trim() };
+}
+
 // Helper function to format status badges
 function getStatusBadges(playerData, salSheetData) {
     const badges = [];
@@ -400,11 +408,16 @@ module.exports = {
 
             let embedColor = 0x2B6CB0;
             let statsLine = null;
+            let career = null;
+            let teamLogoBuf = null;
             try {
-                const { findTeam, getTeamColorInt } = require('../utils/teamRoles');
+                const { findTeam, getTeamColorInt, getTeamLogoBuffer } = require('../utils/teamRoles');
                 if (teamInfo) {
                     const dbTeam = await findTeam(teamInfo, leagueInfo === 'MAJORS' ? 'Majors' : leagueInfo);
-                    if (dbTeam) embedColor = await getTeamColorInt(dbTeam.id);
+                    if (dbTeam) {
+                        embedColor = await getTeamColorInt(dbTeam.id);
+                        teamLogoBuf = await getTeamLogoBuffer(dbTeam.id).catch(() => null);
+                    }
                 }
                 const { pool, isDatabaseAvailable } = require('../utils/database');
                 if (typeof isDatabaseAvailable === 'function' ? isDatabaseAvailable() : isDatabaseAvailable) {
@@ -416,10 +429,116 @@ module.exports = {
                     );
                     const st = s.rows[0];
                     if (st && Number(st.games) > 0) {
+                        career = st;
                         statsLine = `${st.games} games · ${st.goals} goals · ${st.assists} assists · ${st.saves} saves · ${st.mvps} MVPs`;
                     }
                 }
             } catch { /* profile renders without stats */ }
+
+            // Build the status chips, roles, and trackers once (shared by card + embed).
+            const captainRolesList = getCaptainRoles(playerData);
+            const cardRoles = [];
+            if (playerData.isGM && playerData.isGM.trim() !== '') cardRoles.push('General Manager');
+            captainRolesList.forEach((c) => cardRoles.push(c));
+            // Admin-configured AWARD roles this player holds (from the bot-synced
+            // snapshot) so every award shows on the card, not just GM/captain.
+            try {
+                const { pool, isDatabaseAvailable } = require('../utils/database');
+                if (typeof isDatabaseAvailable === 'function' ? isDatabaseAvailable() : isDatabaseAvailable) {
+                    const cfg = await pool.query(`SELECT value FROM app_config WHERE key = 'award_roles'`);
+                    const list = JSON.parse(cfg.rows[0]?.value || '[]');
+                    if (Array.isArray(list) && list.length) {
+                        const held = await pool.query(`SELECT role_id FROM award_role_holders WHERE discord_id = $1`, [String(targetUser.id)]);
+                        const heldSet = new Set(held.rows.map((r) => String(r.role_id)));
+                        list.filter((r) => heldSet.has(String(r.roleId)) && r.label).forEach((r) => cardRoles.push(String(r.label)));
+                    }
+                }
+            } catch { /* awards optional — card renders without them */ }
+
+            const cardStatuses = [];
+            const up = (v) => String(v || '').toUpperCase();
+            if (up(salSheetData.freeAgent) === 'YES') cardStatuses.push({ label: '🟢 Free Agent', color: '#3FB950' });
+            if (up(salSheetData.rfa) === 'YES') cardStatuses.push({ label: `🔒 RFA${salSheetData.rfaExpiry ? ` until ${salSheetData.rfaExpiry}` : ''}`, color: '#f0a020' });
+            if (up(salSheetData.inReserve) === 'YES') {
+                let lbl = '🏥 IR';
+                if (salSheetData.irExpiry) { const d = new Date(salSheetData.irExpiry); if (!isNaN(d)) lbl += ` until ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`; }
+                cardStatuses.push({ label: lbl, color: '#ff7b72' });
+            }
+            if (salSheetData.eligible && up(salSheetData.eligible) !== 'YES') cardStatuses.push({ label: '🔴 Ineligible', color: '#ff7b72' });
+            if (up(salSheetData.suspended) === 'YES') cardStatuses.push({ label: '🔴 Suspended', color: '#ff7b72' });
+
+            const trackers = [];
+            const mainT = trackerParts(playerData.mainTracker);
+            if (mainT) trackers.push(mainT);
+            parseTrackerUrls(playerData.altTrackers).forEach((u) => { const p = trackerParts(u); if (p) trackers.push(p); });
+
+            const site = process.env.RAILWAY_PUBLIC_DOMAIN;
+            const profileUrl = site ? `https://${site}/players/${encodeURIComponent(String(targetUser.id))}` : null;
+
+            // Fetch the avatar as a real Buffer (node-canvas loadImage is
+            // unreliable on remote URLs, so a URL string can silently render blank).
+            let avatarBuf = null;
+            try {
+                const avatarUrl = targetUser.displayAvatarURL({ extension: 'png', size: 128, forceStatic: true });
+                const res = await fetch(avatarUrl);
+                if (res.ok) avatarBuf = Buffer.from(await res.arrayBuffer());
+            } catch { /* avatar optional */ }
+
+            // Discord membership facts a normal /whois shows.
+            const fmtDate = (dt) => {
+                if (!dt) return null;
+                try { return new Date(dt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
+                catch { return null; }
+            };
+            // Server roles relevant to the league (skip @everyone + managed bot roles).
+            let serverRoleNames = [];
+            if (targetMember?.roles?.cache) {
+                serverRoleNames = targetMember.roles.cache
+                    .filter((role) => role.name !== '@everyone' && !role.managed)
+                    .sort((a, b) => b.position - a.position)
+                    .map((role) => role.name)
+                    .slice(0, 8);
+            }
+            const discordInfo = {
+                userId: String(targetUser.id),
+                nickname: targetMember?.nickname || displayName,
+                joinedAt: fmtDate(targetMember?.joinedAt),
+                createdAt: fmtDate(targetUser.createdAt),
+                roleNames: serverRoleNames,
+            };
+
+            // Primary: team-colored profile CARD. Links stay clickable in the message text.
+            try {
+                const colorHex = `#${Number(embedColor).toString(16).padStart(6, '0')}`;
+                const buf = await buildWhoisCard({
+                    name: displayName,
+                    avatarBuffer: avatarBuf,
+                    teamName: teamInfo,
+                    teamLogoBuffer: teamLogoBuf,
+                    division: leagueInfo,
+                    teamColor: colorHex,
+                    salary: playerData.salary !== 'N/A' ? String(playerData.salary).replace(/^\$/, '') : null,
+                    statuses: cardStatuses,
+                    roles: cardRoles,
+                    career: career || {},
+                    trackerNames: trackers.map((t) => t.name),
+                    siteUrl: profileUrl ? profileUrl.replace(/^https?:\/\//, '') : null,
+                    discord: discordInfo,
+                });
+                const file = new AttachmentBuilder(buf, { name: 'whois.png' });
+                const linkBits = [];
+                if (trackers.length) linkBits.push('Trackers: ' + trackers.slice(0, 5).map((t) => `[${t.name}](${t.url})`).join(' · '));
+                if (profileUrl) linkBits.push(`Full profile: ${profileUrl}`);
+                await interaction.editReply({
+                    content: `**${displayName}** — ${clickableProfile}${linkBits.length ? `\n${linkBits.join('\n')}` : ''}`,
+                    files: [file],
+                    allowedMentions: { parse: [] },
+                });
+                Logger.success(`Player info (card) sent for ${targetUser.tag}`);
+                return;
+            } catch (cardErr) {
+                Logger.error('whois card render failed, falling back to embed', cardErr);
+            }
 
             const embed = new EmbedBuilder()
                 .setAuthor({ name: 'Beluga League — Player Profile', iconURL: interaction.client.user.displayAvatarURL() })
@@ -478,9 +597,8 @@ module.exports = {
                 inline: false,
             });
 
-            const site = process.env.RAILWAY_PUBLIC_DOMAIN;
-            if (site) {
-                embed.addFields({ name: 'Full profile', value: `https://${site}/players/${encodeURIComponent(String(targetUser.id))}`, inline: false });
+            if (profileUrl) {
+                embed.addFields({ name: 'Full profile', value: profileUrl, inline: false });
             }
 
             await interaction.editReply({ embeds: [embed] });

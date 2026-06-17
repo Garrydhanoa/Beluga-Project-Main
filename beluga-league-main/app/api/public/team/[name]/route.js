@@ -119,6 +119,11 @@ export async function GET(_request, { params }) {
           week: r.week,
           home: r.home,
           away: r.away,
+          // Team ids let the page request the exact DB logo (own + opponent).
+          homeTeamId: r.home_team_id,
+          awayTeamId: r.away_team_id,
+          ownTeamId: t.id,
+          opponentTeamId: isHome ? r.away_team_id : r.home_team_id,
           isHome,
           homeScore: s ? (isHome ? s.ourScore : s.theirScore) : null,
           awayScore: s ? (isHome ? s.theirScore : s.ourScore) : null,

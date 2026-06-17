@@ -112,7 +112,7 @@ export default function Home() {
           const seasonNum = data.season?.season_number ?? data.season?.seasonNumber;
           const memberCount = data.totals.discordMemberCount;
           setStats([
-            { value: data.totals.teams, label: "Teams", suffix: "" },
+            { value: data.totals.teams, label: "Franchise's", suffix: "" },
             // Season is rendered smaller (it's a label, not a big count).
             { value: seasonNum || 0, label: "Current Season", prefix: seasonNum ? "Season " : "", small: true },
             {
@@ -135,15 +135,31 @@ export default function Home() {
       season: ps.seasonNumber,
       year: ps.year ? String(ps.year) : '',
       team: c.teamName,
+      teamId: c.teamId,
       gm: c.gmDisplayName || 'TBD',
       division,
     }))
   );
 
+  // The ACTIVE season's set champions (per division) drive the big champion card
+  // in the bracket — so a champion set in the admin Seasons tab shows up in place
+  // of "TBD". Logos resolve from the DB by teamId. Order: Majors → AAA → AA.
+  const DIVISION_ORDER = ['Majors', 'AAA', 'AA'];
+  const currentChampions = (() => {
+    const num = activeSeason?.season_number ?? activeSeason?.seasonNumber;
+    if (num == null) return [];
+    const ps = (pastChampions || []).find((p) => p.seasonNumber === num);
+    if (!ps) return [];
+    return DIVISION_ORDER
+      .filter((d) => ps.byDivision && ps.byDivision[d] && ps.byDivision[d].teamName)
+      .map((d) => ({ division: d, ...ps.byDivision[d] }));
+  })();
+  const hasCurrentChampions = currentChampions.length > 0;
+
   useEffect(() => {
     TEAMS.forEach((team) => {
       const img = new Image();
-      img.src = `/logos/${team.name}.png`;
+      img.src = `/api/teams/logo?name=${encodeURIComponent(team.name)}`;
     });
   }, [TEAMS]);
 
@@ -440,6 +456,7 @@ export default function Home() {
                       <div className="w-14 h-14 flex-shrink-0 flex items-center justify-center">
                         <TeamLogoImg
                           name={team.name}
+                          teamId={team.id}
                           hasDbLogo={team.hasLogo}
                           className="max-w-full max-h-full"
                           imgClassName="max-w-full max-h-full object-contain drop-shadow-lg group-hover:scale-110 transition-transform"
@@ -504,9 +521,35 @@ export default function Home() {
                   </svg>
                   <div className="text-center relative">
                     <div className="text-[10px] tracking-[0.3em] uppercase text-blue-300/70 mb-1.5">
-                      Champion
+                      {hasCurrentChampions && currentChampions.length > 1 ? 'Champions' : 'Champion'}
                     </div>
-                    <div className="text-4xl font-black text-white">TBD</div>
+                    {hasCurrentChampions ? (
+                      <div className="flex flex-col gap-3">
+                        {currentChampions.map((c) => (
+                          <Link
+                            key={c.division}
+                            href={`/teams/${encodeURIComponent(c.teamName)}`}
+                            className="group/champ flex items-center gap-3 px-3 py-2 rounded-xl bg-white/[0.04] border border-blue-300/30 hover:border-blue-300/70 hover:bg-blue-500/15 transition-all"
+                          >
+                            <div className="w-10 h-10 flex-shrink-0 flex items-center justify-center">
+                              <TeamLogoImg
+                                name={c.teamName}
+                                teamId={c.teamId}
+                                hasDbLogo={c.hasLogo}
+                                className="max-w-full max-h-full"
+                                imgClassName="max-w-full max-h-full object-contain drop-shadow"
+                              />
+                            </div>
+                            <div className="text-left min-w-0">
+                              <div className="text-[9px] tracking-[0.2em] uppercase text-blue-300/70">{c.division}</div>
+                              <div className="text-base font-black text-white truncate group-hover/champ:text-blue-200 transition-colors">{c.teamName}</div>
+                            </div>
+                          </Link>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-4xl font-black text-white">TBD</div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -551,6 +594,7 @@ export default function Home() {
                       <div className="w-14 h-14 flex-shrink-0 flex items-center justify-center">
                         <TeamLogoImg
                           name={team.name}
+                          teamId={team.id}
                           hasDbLogo={team.hasLogo}
                           className="max-w-full max-h-full"
                           imgClassName="max-w-full max-h-full object-contain drop-shadow-lg group-hover:scale-110 transition-transform"
@@ -573,8 +617,36 @@ export default function Home() {
               <span className="text-[10px] font-bold text-white tracking-[0.2em] uppercase">{seasonLabel}</span>
             </div>
             <div className="text-center">
-              <div className="text-[9px] tracking-[0.3em] uppercase text-blue-300/70 mb-1">Champion</div>
-              <div className="text-xl font-black text-white">TBD</div>
+              <div className="text-[9px] tracking-[0.3em] uppercase text-blue-300/70 mb-1">
+                {hasCurrentChampions && currentChampions.length > 1 ? 'Champions' : 'Champion'}
+              </div>
+              {hasCurrentChampions ? (
+                <div className="flex flex-col gap-2 mt-1">
+                  {currentChampions.map((c) => (
+                    <Link
+                      key={c.division}
+                      href={`/teams/${encodeURIComponent(c.teamName)}`}
+                      className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-white/[0.04] border border-blue-300/30"
+                    >
+                      <div className="w-8 h-8 flex-shrink-0 flex items-center justify-center">
+                        <TeamLogoImg
+                          name={c.teamName}
+                          teamId={c.teamId}
+                          hasDbLogo={c.hasLogo}
+                          className="max-w-full max-h-full"
+                          imgClassName="max-w-full max-h-full object-contain"
+                        />
+                      </div>
+                      <div className="text-left min-w-0">
+                        <div className="text-[8px] tracking-[0.2em] uppercase text-blue-300/70">{c.division}</div>
+                        <div className="text-sm font-black text-white truncate">{c.teamName}</div>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-xl font-black text-white">TBD</div>
+              )}
             </div>
           </div>
           {TEAMS.map((team, i) => {
@@ -588,6 +660,7 @@ export default function Home() {
                   <div className="w-10 h-10 flex-shrink-0 flex items-center justify-center">
                     <TeamLogoImg
                       name={team.name}
+                      teamId={team.id}
                       hasDbLogo={team.hasLogo}
                       className="max-w-full max-h-full"
                       imgClassName="max-w-full max-h-full object-contain"
@@ -642,14 +715,11 @@ export default function Home() {
                     </div>
                     <div className="relative w-20 h-20 flex items-center justify-center">
                       <div className="absolute inset-0 rounded-full bg-blue-500/0 group-hover:bg-blue-500/20 blur-xl transition-all" />
-                      <img
-                        src={`/logos/${champ.team}.png`}
-                        alt={champ.team}
-                        className="relative max-w-full max-h-full object-contain drop-shadow-lg grayscale group-hover:grayscale-0 group-hover:scale-110 transition-all duration-300 opacity-70 group-hover:opacity-100"
-                        onError={(e) => {
-                          e.currentTarget.onerror = null;
-                          e.currentTarget.style.display = 'none';
-                        }}
+                      <TeamLogoImg
+                        name={champ.team}
+                        teamId={champ.teamId}
+                        className="relative max-w-full max-h-full"
+                        imgClassName="max-w-full max-h-full object-contain drop-shadow-lg grayscale group-hover:grayscale-0 group-hover:scale-110 transition-all duration-300 opacity-70 group-hover:opacity-100"
                       />
                     </div>
                     <div className="text-sm font-bold text-white/70 group-hover:text-blue-200 transition-colors truncate max-w-full text-center">

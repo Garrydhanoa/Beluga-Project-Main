@@ -9,8 +9,6 @@
  */
 
 const { createCanvas, loadImage } = require('canvas');
-const fs = require('fs');
-const { findTeamLogo } = require('../../utils/rosterManager');
 const { getTeamLogoBufferByName } = require('../../utils/teamRoles');
 const { config } = require('../../config/config');
 const Logger = require('../../utils/logger');
@@ -20,14 +18,12 @@ const FONT = (config && config.images && config.images.fontFamily) ? config.imag
 function truncate(s, n) { const v = String(s ?? ''); return v.length > n ? `${v.slice(0, n - 1)}…` : v; }
 
 async function loadLogo(teamName) {
-    // Database logo first (teams/franchise logo_data), legacy local file fallback.
+    // DB only (teams/franchise logo_data). Static PNGs were deleted; a missing
+    // logo just renders team initials in drawLogo — never load a null buffer
+    // (loadImage(null) hangs node-canvas).
     try {
         const buf = await getTeamLogoBufferByName(teamName);
         if (buf) return await loadImage(buf);
-    } catch { /* fall through */ }
-    try {
-        const p = findTeamLogo(teamName);
-        if (p && fs.existsSync(p)) return await loadImage(p);
     } catch { /* missing logo is fine */ }
     return null;
 }

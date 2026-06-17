@@ -336,6 +336,11 @@ const TicketDB = {
         }
         
         try {
+            // Coerce createdAt defensively: a missing/invalid value would become
+            // `new Date(undefined)` = Invalid Date, which Postgres rejects with a
+            // 22007 timestamp error and orphans the channel. Fall back to now().
+            let createdAt = ticketData.createdAt ? new Date(ticketData.createdAt) : new Date();
+            if (Number.isNaN(createdAt.getTime())) createdAt = new Date();
             await pool.query(
                 `INSERT INTO tickets (channel_id, channel_name, reason, created_by, created_by_username, user_ids, created_at)
                  VALUES ($1, $2, $3, $4, $5, $6, $7)`,
@@ -346,7 +351,7 @@ const TicketDB = {
                     ticketData.createdBy,
                     ticketData.createdByUsername,
                     ticketData.userIds,
-                    new Date(ticketData.createdAt)
+                    createdAt
                 ]
             );
             Logger.info(`Created ticket in database: ${ticketData.channelName}`);
@@ -995,6 +1000,22 @@ const TransactionDB = {
         }
 
         try {
+            // Always stamp a readable name so the website's Transactions list never
+            // shows a bare Discord ID ("Other"). Fall back to the discord_members
+            // directory when the caller didn't pass one.
+            let resolvedDisplayName = displayName;
+            let resolvedUsername = discordUsername;
+            if (!resolvedDisplayName || !resolvedUsername) {
+                const m = await pool.query(
+                    'SELECT display_name, username FROM discord_members WHERE discord_id = $1',
+                    [String(discordId)]
+                ).catch(() => ({ rows: [] }));
+                if (m.rows.length) {
+                    if (!resolvedDisplayName) resolvedDisplayName = m.rows[0].display_name || m.rows[0].username || null;
+                    if (!resolvedUsername) resolvedUsername = m.rows[0].username || null;
+                }
+            }
+
             // Resolve team_name_snapshot if not provided.
             let resolvedTeamSnapshot = teamNameSnapshot;
             if (teamId && !resolvedTeamSnapshot) {
@@ -1030,8 +1051,8 @@ const TransactionDB = {
                 [
                     resolvedSeasonId,
                     String(discordId),
-                    discordUsername,
-                    displayName,
+                    resolvedUsername,
+                    resolvedDisplayName,
                     teamId,
                     resolvedTeamSnapshot,
                     resolvedFranchiseId,

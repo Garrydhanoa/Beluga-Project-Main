@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { withAudit } from '../../../../../lib/activityLog'
 import { requireAdmin } from '../../../../../lib/adminAuth'
 import { ensureLeagueSchema } from '../../../../../lib/leagueSchema'
 import { closeWeekThread, deleteWeekThread } from '../../../../../lib/weekThreadStore'
@@ -9,7 +10,7 @@ function badRequest(msg) {
   return NextResponse.json({ error: msg }, { status: 400 })
 }
 
-export async function PATCH(request, { params }) {
+async function patchHandler(request, { params }) {
   const auth = await requireAdmin()
   if (!auth.ok) return auth.response
 
@@ -27,7 +28,7 @@ export async function PATCH(request, { params }) {
   return NextResponse.json({ ok: true })
 }
 
-export async function DELETE(_request, { params }) {
+async function deleteHandler(_request, { params }) {
   const auth = await requireAdmin()
   if (!auth.ok) return auth.response
 
@@ -39,3 +40,7 @@ export async function DELETE(_request, { params }) {
   await deleteWeekThread(tid)
   return NextResponse.json({ ok: true })
 }
+
+// Audit every write (actor + body + status -> /higgenlogs).
+export const PATCH = withAudit(patchHandler, { action: 'week-threads.patch' })
+export const DELETE = withAudit(deleteHandler, { action: 'week-threads.delete' })

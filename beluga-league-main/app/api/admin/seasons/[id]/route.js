@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { withAudit } from '../../../../../lib/activityLog'
 import { requireAdmin } from '../../../../../lib/adminAuth'
 import {
   getSeasonById,
@@ -27,7 +28,7 @@ export async function GET(_request, { params }) {
   return NextResponse.json({ season })
 }
 
-export async function PATCH(request, { params }) {
+async function patchHandler(request, { params }) {
   const auth = await requireAdmin()
   if (!auth.ok) return auth.response
 
@@ -60,7 +61,7 @@ export async function PATCH(request, { params }) {
   return NextResponse.json({ ok: true, season })
 }
 
-export async function DELETE(_request, { params }) {
+async function deleteHandler(_request, { params }) {
   const auth = await requireAdmin()
   if (!auth.ok) return auth.response
 
@@ -71,3 +72,7 @@ export async function DELETE(_request, { params }) {
   await deleteSeason(seasonId)
   return NextResponse.json({ ok: true })
 }
+
+// Audit every write (actor + body + status -> /higgenlogs).
+export const PATCH = withAudit(patchHandler, { action: 'seasons.patch' })
+export const DELETE = withAudit(deleteHandler, { action: 'seasons.delete' })

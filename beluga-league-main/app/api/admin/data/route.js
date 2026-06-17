@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { withAudit } from '../../../../lib/activityLog'
 import { readData, updateSection } from '../../../../lib/adminStore'
 import { requireAdmin } from '../../../../lib/adminAuth'
 
@@ -18,7 +19,7 @@ export async function GET(request) {
   return NextResponse.json(data)
 }
 
-export async function POST(request) {
+async function postHandler(request) {
   const auth = await requireAdmin()
   if (!auth.ok) return auth.response
 
@@ -37,3 +38,6 @@ export async function POST(request) {
   const updated = await updateSection(type, data)
   return NextResponse.json({ ok: true, type, data: updated })
 }
+
+// Audit every write (actor + body + status -> /higgenlogs).
+export const POST = withAudit(postHandler, { action: 'data.post' })

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { withAudit } from '../../../../../../lib/activityLog'
 import { requireAdmin } from '../../../../../../lib/adminAuth'
 import { ensureLeagueSchema } from '../../../../../../lib/leagueSchema'
 import { getPool } from '../../../../../../lib/db'
@@ -23,7 +24,7 @@ function badRequest(msg, status = 400) {
  * Returns: { ok, results: [{ index, division, name, franchiseId, teamId, status, error? }, ...] }
  *   status ∈ 'created' | 'updated' | 'skipped'
  */
-export async function POST(request, { params }) {
+async function postHandler(request, { params }) {
   const auth = await requireAdmin()
   if (!auth.ok) return auth.response
 
@@ -170,3 +171,6 @@ export async function POST(request, { params }) {
 
   return NextResponse.json({ ok: true, results, summary })
 }
+
+// Audit every write (actor + body + status -> /higgenlogs).
+export const POST = withAudit(postHandler, { action: 'seasons.bulk-teams.post' })

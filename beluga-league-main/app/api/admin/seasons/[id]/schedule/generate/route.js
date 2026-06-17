@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { withAudit } from '../../../../../../../lib/activityLog'
 import { requireAdmin } from '../../../../../../../lib/adminAuth'
 import { getPool, query } from '../../../../../../../lib/db'
 import { ensureLeagueSchema } from '../../../../../../../lib/leagueSchema'
@@ -12,7 +13,7 @@ function badRequest(msg, status = 400) {
   return NextResponse.json({ error: msg }, { status })
 }
 
-export async function POST(request, { params }) {
+async function postHandler(request, { params }) {
   const auth = await requireAdmin()
   if (!auth.ok) return auth.response
 
@@ -81,3 +82,6 @@ export async function POST(request, { params }) {
   const counts = perDivision
   return NextResponse.json({ ok: true, count: matches.length, weeks, publish, perDivision: counts })
 }
+
+// Audit every write (actor + body + status -> /higgenlogs).
+export const POST = withAudit(postHandler, { action: 'seasons.schedule.generate.post' })

@@ -1,7 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder, AttachmentBuilder } = require('discord.js');
 const { google } = require('googleapis');
-const fs = require('fs');
-const path = require('path');
 const { config } = require('../config/config');
 const Logger = require('../utils/logger');
 const { LeagueDB, TransactionDB, isDatabaseAvailable } = require('../utils/database');
@@ -14,15 +12,6 @@ const DEFAULT_ROSTER_LIMIT = 4;
 
 // Pending trade transactions storage
 const pendingTrades = new Map();
-
-/**
- * Find team logo path
- */
-function findTeamLogo(teamName) {
-    const normalizedName = teamName.replace(/\s+/g, ' ').trim();
-    const logoPath = path.join(__dirname, '../../IMAGES/logos', `${normalizedName}.png`);
-    return logoPath;
-}
 
 /**
  * Get player's division by checking their team roles

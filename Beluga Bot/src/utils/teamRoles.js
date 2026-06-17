@@ -11,6 +11,7 @@
  * Short caches keep Discord autocomplete (3s budget) and embeds fast.
  */
 
+const { AttachmentBuilder } = require('discord.js');
 const { pool, isDatabaseAvailable } = require('./database');
 const { ROLES, TEAM_ROLES, NP_ROLES, TEAM_COLORS } = require('../constants/roles');
 const Logger = require('./logger');
@@ -209,6 +210,25 @@ async function getTeamLogoBufferByName(name, division = null) {
     return team ? getTeamLogoBuffer(team.id) : null;
 }
 
+/**
+ * Single DB-backed team-logo attachment for embeds — the one helper all bot
+ * commands should use (replaces per-file findTeamLogo + IMAGES/logos/*.png).
+ * Resolves team→franchise logo from Postgres; returns an AttachmentBuilder named
+ * `team_logo.png` (referenceable as `attachment://team_logo.png`) or null when no
+ * logo exists. Never reads the filesystem; never returns a path to a missing file.
+ * Pass a teamId when you have one (exact match); otherwise a name (active-season
+ * lookup with franchise fallback). `filename` overrides the attachment name when a
+ * caller needs a distinct one (e.g. two logos in one message).
+ */
+async function attachTeamLogo(teamId, teamName, filename = 'team_logo.png') {
+    try {
+        let buf = teamId != null ? await getTeamLogoBuffer(teamId) : null;
+        if (!buf && teamName) buf = await getTeamLogoBufferByName(teamName).catch(() => null);
+        if (buf) return new AttachmentBuilder(buf, { name: filename });
+    } catch { /* no logo — embed renders without a thumbnail */ }
+    return null;
+}
+
 /** Per-division captain role (fixed constants by operator decision). */
 function getCaptainRoleId(division) {
     return ROLES.CAPTAINS[String(division || '').toUpperCase()] || null;
@@ -230,6 +250,7 @@ module.exports = {
     getTeamColorInt,
     getTeamLogoBuffer,
     getTeamLogoBufferByName,
+    attachTeamLogo,
     getCaptainRoleId,
     clearTeamRoleCache,
 };

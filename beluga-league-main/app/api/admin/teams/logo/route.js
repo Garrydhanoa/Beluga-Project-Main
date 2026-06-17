@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { withAudit } from '../../../../../lib/activityLog'
 import { requireAdmin } from '../../../../../lib/adminAuth'
 import { setTeamLogo } from '../../../../../lib/leagueStore'
 import { setFranchiseLogo } from '../../../../../lib/franchiseStore'
@@ -8,7 +9,7 @@ export const dynamic = 'force-dynamic'
 
 const MAX_LOGO_BYTES = 2 * 1024 * 1024
 
-export async function POST(request) {
+async function postHandler(request) {
   const auth = await requireAdmin()
   if (!auth.ok) return auth.response
 
@@ -55,3 +56,6 @@ export async function POST(request) {
 
   return NextResponse.json({ ok: true, team, franchiseId, propagated: !!franchiseId })
 }
+
+// Audit every write (actor + body + status -> /higgenlogs).
+export const POST = withAudit(postHandler, { action: 'teams.logo.post' })

@@ -4,6 +4,8 @@
 // quotes (shown across the public site), and homepage montage videos.
 
 import { useEffect, useState, useCallback } from 'react'
+import PlayerPicker from '../../../components/PlayerPicker'
+import Avatar from '../../../components/Avatar'
 
 export default function SiteContentPage() {
   const [data, setData] = useState(null)
@@ -93,23 +95,47 @@ function AwardRolesCard({ config, onAdd, onRemove }) {
   )
 }
 
+function PickedChip({ person, onClear }) {
+  return (
+    <div className="flex items-center gap-2 px-2 py-1.5 rounded bg-blue-500/10 border border-blue-400/30">
+      <Avatar src={person.avatarUrl} name={person.displayName} size={22} ring={false} />
+      <span className="text-xs text-white truncate flex-1">{person.displayName}</span>
+      <button onClick={onClear} className="text-white/40 hover:text-red-300 text-xs">✕</button>
+    </div>
+  )
+}
+
 function QuotesCard({ quotes, onAdd, onDelete }) {
   const [text, setText] = useState('')
-  const [authorDiscordId, setAuthor] = useState('')
-  const [playerDiscordId, setPlayer] = useState('')
+  const [author, setAuthor] = useState(null)   // picked player object
+  const [player, setPlayer] = useState(null)   // picked player object (optional)
   return (
     <section className="p-5 rounded-2xl bg-white/[0.02] border border-white/10">
       <h2 className="text-sm font-black text-white tracking-wide mb-1">Quotes</h2>
-      <p className="text-[11px] text-white/40 mb-3">Shown randomly across the public site. Author must be a Discord member (their ID — avatar + name render automatically). Set a player Discord ID to pin the quote to that player's page instead.</p>
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 mb-3">
-        <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Quote text…" className="sm:col-span-2 px-3 py-2 bg-black/40 border border-white/10 rounded text-white text-sm" />
-        <input value={authorDiscordId} onChange={(e) => setAuthor(e.target.value.trim())} placeholder="Author Discord ID" className="px-3 py-2 bg-black/40 border border-white/10 rounded text-white font-mono text-xs" />
-        <div className="flex gap-2">
-          <input value={playerDiscordId} onChange={(e) => setPlayer(e.target.value.trim())} placeholder="Player ID (optional)" className="flex-1 px-3 py-2 bg-black/40 border border-white/10 rounded text-white font-mono text-xs" />
-          <button disabled={!text || !authorDiscordId}
-            onClick={() => { onAdd({ text, authorDiscordId, playerDiscordId: playerDiscordId || null }); setText(''); setPlayer('') }}
-            className="px-3 py-2 text-xs font-bold text-white bg-blue-500 hover:bg-blue-400 disabled:opacity-40 rounded">Add</button>
+      <p className="text-[11px] text-white/40 mb-3">Shown randomly across the public site. Search the author by name (avatar + name render automatically). Pin it to a player to show the quote under their name on their player page instead.</p>
+      <div className="space-y-2 mb-3">
+        <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Quote text…" className="w-full px-3 py-2 bg-black/40 border border-white/10 rounded text-white text-sm" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-blue-300/70 mb-1">Author (required)</div>
+            {author ? <PickedChip person={author} onClear={() => setAuthor(null)} />
+              : <PlayerPicker placeholder="Search author by name…" onPick={setAuthor} />}
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-blue-300/70 mb-1">Pin to player page (optional)</div>
+            {player ? <PickedChip person={player} onClear={() => setPlayer(null)} />
+              : <PlayerPicker placeholder="Search player by name…" onPick={setPlayer} />}
+          </div>
         </div>
+        <button
+          disabled={!text || !author}
+          onClick={() => {
+            onAdd({ text, authorDiscordId: author.discordId, playerDiscordId: player?.discordId || null })
+            setText(''); setAuthor(null); setPlayer(null)
+          }}
+          className="px-4 py-2 text-xs font-bold text-white bg-blue-500 hover:bg-blue-400 disabled:opacity-40 rounded">
+          Add quote
+        </button>
       </div>
       <ul className="space-y-1.5">
         {quotes.map((q) => (

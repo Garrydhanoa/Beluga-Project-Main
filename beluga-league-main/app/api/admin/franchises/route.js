@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { withAudit } from '../../../../lib/activityLog'
 import { requireAdmin } from '../../../../lib/adminAuth'
 import { listFranchises, createFranchise } from '../../../../lib/franchiseStore'
 
@@ -18,7 +19,7 @@ export async function GET(request) {
   return NextResponse.json({ franchises })
 }
 
-export async function POST(request) {
+async function postHandler(request) {
   const auth = await requireAdmin()
   if (!auth.ok) return auth.response
 
@@ -38,3 +39,6 @@ export async function POST(request) {
     return badRequest(err.message || 'Failed to create franchise')
   }
 }
+
+// Audit every write (actor + body + status -> /higgenlogs).
+export const POST = withAudit(postHandler, { action: 'franchises.post' })

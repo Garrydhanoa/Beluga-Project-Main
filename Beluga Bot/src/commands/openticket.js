@@ -950,8 +950,17 @@ async function captureTicketMessage(message) {
     try {
         const channelId = message.channel?.id;
         if (!channelId) return;
-        // Only capture for tracked ticket channels.
-        if (!isValidTicketChannel(channelId)) return;
+        // Only capture for tracked ticket channels. Check the in-memory map
+        // first (cheap), then fall back to a direct DB lookup. The fallback is
+        // REQUIRED for the new configurable ticket system (ticketSystem.js):
+        // it writes the tickets row but never refreshes this module's in-memory
+        // activeTickets map, so without the DB check its channels look untracked
+        // and NOTHING gets mirrored — leaving both the live and the closed
+        // (archive-from-snapshot) transcripts empty.
+        if (!isValidTicketChannel(channelId)) {
+            const dbTicket = await TicketDB.get(channelId).catch(() => null);
+            if (!dbTicket) return;
+        }
 
         const author = message.author;
         const member = message.member;

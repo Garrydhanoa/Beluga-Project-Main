@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { withAudit } from '../../../../../lib/activityLog'
 import { requireAdmin } from '../../../../../lib/adminAuth'
 import { ensureLeagueSchema } from '../../../../../lib/leagueSchema'
 import { query } from '../../../../../lib/db'
@@ -22,8 +23,14 @@ export async function GET(_request, { params }) {
   await ensureLeagueSchema()
 
   // Identity: latest display name / username for this discord id, resolved from
-  // every source the directory lists from (roster + transactions + manual_salaries)
-  // so a player who appears only via a transaction or salary row never 404s.
+  // EVERY source the directory can list a player from, so the detail modal opens
+  // for anyone the directory shows. The directory (/api/admin/players) unions
+  // roster + transactions + manual_salaries + discord_members + the salary sheet,
+  // and the new stats system can surface a player too — so a free agent with only
+  // a discord_members row and/or stats (e.g. a sheet/stats-only player) must NOT
+  // 404 here. We add discord_members + the stats tables to the union; the salary
+  // sheet is covered below by the resolveMember()/stats fallback when the DB union
+  // is empty (sheet-only players still have a discord_members row in practice).
   const idRes = await query(`
     WITH identities AS (
       SELECT discord_id, display_name, discord_username, updated_at AS seen_at
@@ -34,6 +41,15 @@ export async function GET(_request, { params }) {
       UNION ALL
       SELECT discord_id, username AS display_name, username AS discord_username, updated_at AS seen_at
       FROM manual_salaries WHERE discord_id = $1
+      UNION ALL
+      SELECT discord_id, display_name, username AS discord_username, synced_at AS seen_at
+      FROM discord_members WHERE discord_id = $1
+      UNION ALL
+      SELECT discord_id, current_name AS display_name, current_name AS discord_username, last_seen AS seen_at
+      FROM stats_player_accounts WHERE discord_id = $1
+      UNION ALL
+      SELECT discord_id, ingame_name AS display_name, ingame_name AS discord_username, created_at AS seen_at
+      FROM stats_game_players WHERE discord_id = $1
     )
     SELECT discord_id,
       (ARRAY_REMOVE(ARRAY_AGG(display_name ORDER BY seen_at DESC), NULL))[1] AS display_name,
@@ -41,10 +57,21 @@ export async function GET(_request, { params }) {
       MAX(seen_at) AS last_seen
     FROM identities
     GROUP BY discord_id
-  `, [id])
-  if (!idRes.rows.length) return NextResponse.json({ player: null }, { status: 404 })
-  const identity = idRes.rows[0]
+  `, [id]).catch(() => ({ rows: [] }))
+
   const member = await resolveMember(id).catch(() => null)
+
+  // Fallback so the modal opens for any directory-listed player. If the DB union
+  // found nothing, we can still build a real identity from discord_members (the
+  // directory's name/avatar source) — this covers the sheet-only / stats-only
+  // free-agent tail. Only a genuinely unknown id (nothing anywhere) gets a 404.
+  // No fake/placeholder rows: roster/tx/stats sections below stay truly empty.
+  const identity = idRes.rows.length
+    ? idRes.rows[0]
+    : (member
+      ? { discord_id: id, display_name: member.displayName, discord_username: member.username, last_seen: null }
+      : null)
+  if (!identity) return NextResponse.json({ player: null }, { status: 404 })
 
   // Roster history: which team/division/season they've appeared on.
   const rosterRes = await query(`
@@ -174,7 +201,7 @@ export async function GET(_request, { params }) {
 
 // Edit a player's per-season aggregate (new stats system). Sets manual_override
 // so the recompute engine preserves the staff numbers.
-export async function PATCH(request, { params }) {
+async function patchHandler(request, { params }) {
   const auth = await requireAdmin()
   if (!auth.ok) return auth.response
   const { discordId } = await params
@@ -204,3 +231,6 @@ export async function PATCH(request, { params }) {
   }
   return NextResponse.json({ ok: true })
 }
+
+// Audit every write (actor + body + status -> /higgenlogs).
+export const PATCH = withAudit(patchHandler, { action: 'players.patch' })

@@ -2,50 +2,12 @@ const { SlashCommandBuilder, EmbedBuilder, AttachmentBuilder } = require('discor
 const Logger = require('../utils/logger');
 const { TEAM_ROLES, TEAM_COLORS } = require('../constants/roles');
 const { getTeamSchedule, AAA_AA_ONLY_TEAMS, ALL_DIVISION_TEAMS } = require('../constants/schedule');
-const path = require('path');
-const fs = require('fs');
+const { attachTeamLogo } = require('../utils/teamRoles');
 
-// Team logo URLs (hosted on Discord CDN or external)
-// For local logos, we'll attach them
-function findTeamLogo(teamName) {
-    try {
-        const logosDir = path.join(__dirname, '../../IMAGES/logos');
-        
-        if (!fs.existsSync(logosDir)) {
-            return null;
-        }
-        
-        const files = fs.readdirSync(logosDir);
-        const normalizedTeamName = teamName.toLowerCase().replace(/[^a-z0-9]/g, '');
-        
-        // Try exact match first
-        for (const file of files) {
-            const fileNameWithoutExt = path.parse(file).name.toLowerCase();
-            if (fileNameWithoutExt === teamName.toLowerCase()) {
-                return path.join(logosDir, file);
-            }
-        }
-        
-        // Try fuzzy match
-        for (const file of files) {
-            const fileNameWithoutExt = path.parse(file).name.toLowerCase().replace(/[^a-z0-9]/g, '');
-            if (fileNameWithoutExt === normalizedTeamName) {
-                return path.join(logosDir, file);
-            }
-        }
-        
-        // Try partial match
-        for (const file of files) {
-            const fileNameWithoutExt = path.parse(file).name.toLowerCase();
-            if (fileNameWithoutExt.includes(normalizedTeamName) || normalizedTeamName.includes(fileNameWithoutExt.replace(/[^a-z0-9]/g, ''))) {
-                return path.join(logosDir, file);
-            }
-        }
-        
-        return null;
-    } catch (error) {
-        return null;
-    }
+// Team logo for embeds — DB only (team→franchise logo). Returns an
+// AttachmentBuilder named team_logo.png or null. (Was IMAGES/logos/*.png.)
+async function teamLogoAttachment(teamName) {
+    return attachTeamLogo(null, teamName);
 }
 
 // Build team choices based on division
@@ -170,12 +132,11 @@ module.exports = {
                 .setFooter({ text: `${division} Division | (H) Home | (A) Away` })
                 .setTimestamp();
 
-            // Try to attach team logo as thumbnail
-            const logoPath = findTeamLogo(teamName);
+            // Try to attach team logo as thumbnail (from DB)
+            const logoAttachment = await teamLogoAttachment(teamName);
             const files = [];
-            
-            if (logoPath && fs.existsSync(logoPath)) {
-                const logoAttachment = new AttachmentBuilder(logoPath, { name: 'team_logo.png' });
+
+            if (logoAttachment) {
                 files.push(logoAttachment);
                 scheduleEmbed.setThumbnail('attachment://team_logo.png');
             }

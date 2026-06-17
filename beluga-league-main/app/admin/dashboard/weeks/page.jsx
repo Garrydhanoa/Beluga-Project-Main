@@ -117,6 +117,36 @@ export default function WeekThreadsPage() {
     await reload()
   }
 
+  // Delete ONE closed/archived thread's saved transcript (the Discord thread is
+  // already gone). Uses the per-ticket transcript delete (thread_messages + thread_archives).
+  async function deleteOneArchive(threadId, label) {
+    if (!threadId) return
+    if (!confirm(`Delete the saved transcript for "${label}"? This clears its stored messages + archive snapshot from the website. Cannot be undone.`)) return
+    setBusy(true)
+    const r = await fetch(`/api/admin/transcripts?ticket=${encodeURIComponent(threadId)}`, { method: 'DELETE' })
+    const d = await r.json().catch(() => ({}))
+    setBusy(false)
+    alert(r.ok ? `Deleted ${d.deletedMessages || 0} message(s) + ${d.deletedArchives || 0} archive(s).` : 'Failed to delete transcript.')
+    await reload()
+  }
+
+  // Bulk-delete every archived transcript in one week (loops per-thread so it works
+  // even when the week_threads rows are already gone).
+  async function deleteArchiveWeek(week, threadIds) {
+    if (!threadIds?.length) return
+    if (!confirm(`Delete ALL ${threadIds.length} saved transcript(s) for Week ${week}? Cannot be undone.`)) return
+    setBusy(true)
+    let msgs = 0, arch = 0
+    for (const tid of threadIds) {
+      const r = await fetch(`/api/admin/transcripts?ticket=${encodeURIComponent(tid)}`, { method: 'DELETE' })
+      const d = await r.json().catch(() => ({}))
+      if (r.ok) { msgs += d.deletedMessages || 0; arch += d.deletedArchives || 0 }
+    }
+    setBusy(false)
+    alert(`Deleted ${msgs} message(s) + ${arch} archive(s) across ${threadIds.length} thread(s).`)
+    await reload()
+  }
+
   const threads = data?.threads || []
   // Group by week_number
   const byWeek = threads.reduce((acc, t) => {
@@ -183,7 +213,7 @@ export default function WeekThreadsPage() {
             </div>
           )}
 
-          <ArchivedThreadsSection archives={data.archives || []} onViewTranscript={setTranscriptThread} />
+          <ArchivedThreadsSection archives={data.archives || []} onViewTranscript={setTranscriptThread} onDeleteOne={deleteOneArchive} onDeleteWeek={deleteArchiveWeek} busy={busy} />
         </>
       )}
 
@@ -205,7 +235,7 @@ export default function WeekThreadsPage() {
   )
 }
 
-function ArchivedThreadsSection({ archives, onViewTranscript }) {
+function ArchivedThreadsSection({ archives, onViewTranscript, onDeleteOne, onDeleteWeek, busy }) {
   if (!archives || archives.length === 0) return null
   // Group by week for readability.
   const byWeek = archives.reduce((acc, a) => {
@@ -223,25 +253,44 @@ function ArchivedThreadsSection({ archives, onViewTranscript }) {
         <span className="text-[10px] text-white/40">{archives.length} saved transcript{archives.length === 1 ? '' : 's'}</span>
       </div>
       <div className="p-3 space-y-3">
-        {weeks.map((w) => (
-          <div key={w}>
-            <div className="text-[10px] uppercase tracking-wider text-blue-300/70 font-bold mb-1.5">Week {w}</div>
-            <ul className="space-y-1">
-              {byWeek[w].map((a) => (
-                <li key={a.threadId} className="flex items-center gap-2 px-2 py-1.5 rounded text-xs bg-white/[0.02] border border-white/5">
-                  <span className="text-blue-200/80 w-14 text-[10px] uppercase font-bold">{a.division}</span>
-                  <span className="text-white truncate flex-1">{a.team1} <span className="text-white/40 mx-1">vs</span> {a.team2}</span>
-                  <span className="text-white/40 text-[10px]">{a.messageCount ?? 0} msg{a.messageCount === 1 ? '' : 's'}</span>
-                  {a.closedAt && <span className="text-white/30 text-[10px]">{new Date(a.closedAt).toLocaleDateString()}</span>}
-                  <button onClick={() => onViewTranscript({ threadId: a.threadId, label: `${a.team1} vs ${a.team2} (W${a.weekNumber})` })}
-                    className="px-2 py-0.5 text-[9px] uppercase font-bold rounded bg-blue-500/15 text-blue-200 border border-blue-400/30">
-                    Transcript
+        {weeks.map((w) => {
+          const threadIds = byWeek[w].map((a) => a.threadId).filter(Boolean)
+          return (
+            <div key={w}>
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="text-[10px] uppercase tracking-wider text-blue-300/70 font-bold">Week {w}</div>
+                {threadIds.length > 0 && (
+                  <button onClick={() => onDeleteWeek?.(w, threadIds)} disabled={busy}
+                    title="Delete every saved transcript in this week (threads already closed)"
+                    className="px-2 py-0.5 text-[9px] uppercase font-bold rounded text-red-300/90 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 disabled:opacity-50">
+                    Delete all ({threadIds.length})
                   </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
+                )}
+              </div>
+              <ul className="space-y-1">
+                {byWeek[w].map((a) => (
+                  <li key={a.threadId} className="flex items-center gap-2 px-2 py-1.5 rounded text-xs bg-white/[0.02] border border-white/5">
+                    <span className="text-blue-200/80 w-14 text-[10px] uppercase font-bold">{a.division}</span>
+                    <span className="text-white truncate flex-1">{a.team1} <span className="text-white/40 mx-1">vs</span> {a.team2}</span>
+                    <span className="text-white/40 text-[10px]">{a.messageCount ?? 0} msg{a.messageCount === 1 ? '' : 's'}</span>
+                    {a.closedAt && <span className="text-white/30 text-[10px]">{new Date(a.closedAt).toLocaleDateString()}</span>}
+                    <button onClick={() => onViewTranscript({ threadId: a.threadId, label: `${a.team1} vs ${a.team2} (W${a.weekNumber})` })}
+                      className="px-2 py-0.5 text-[9px] uppercase font-bold rounded bg-blue-500/15 text-blue-200 border border-blue-400/30">
+                      Transcript
+                    </button>
+                    {a.threadId && (
+                      <button onClick={() => onDeleteOne?.(a.threadId, `${a.team1} vs ${a.team2} (W${a.weekNumber})`)} disabled={busy}
+                        title="Delete this saved transcript"
+                        className="px-2 py-0.5 text-[9px] uppercase font-bold rounded text-red-300/80 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 disabled:opacity-50">
+                        Delete
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )
+        })}
       </div>
     </div>
   )

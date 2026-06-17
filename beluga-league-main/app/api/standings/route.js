@@ -42,6 +42,7 @@ export async function GET(request) {
       ? statsRows.map((r) => ({
           rank: r.rank,
           team: r.team,
+          teamId: r.teamId,
           division: divisionMap[division],
           wins: r.wins,
           losses: r.losses,

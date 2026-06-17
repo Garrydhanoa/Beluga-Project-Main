@@ -182,74 +182,56 @@ class ImageGenerator {
     return metrics.width;
   }
 
+  /**
+   * Load a team's logo from the DB (team logo → franchise logo, by name), the same
+   * source the website uses. Returns a canvas Image or null. DB is authoritative so
+   * admin re-uploads show in bot images too; the file map below is only a fallback.
+   */
+  async loadDbLogo(teamName) {
+    try {
+      const { pool, isDatabaseAvailable } = require('./database');
+      const up = typeof isDatabaseAvailable === 'function' ? isDatabaseAvailable() : isDatabaseAvailable;
+      if (!up) return null;
+      const r = await pool.query(
+        `SELECT COALESCE(t.logo_data, f.logo_data) AS data
+           FROM teams t LEFT JOIN team_franchises f ON f.id = t.franchise_id
+          WHERE LOWER(t.name) = LOWER($1)
+          ORDER BY (t.logo_data IS NOT NULL) DESC, t.id DESC LIMIT 1`,
+        [teamName]
+      );
+      let data = r.rows[0]?.data || null;
+      if (!data) {
+        const fr = await pool.query(
+          `SELECT logo_data AS data FROM team_franchises WHERE LOWER(name) = LOWER($1) LIMIT 1`, [teamName]
+        );
+        data = fr.rows[0]?.data || null;
+      }
+      if (!data) return null;
+      return await loadImage(Buffer.isBuffer(data) ? data : Buffer.from(data));
+    } catch (e) {
+      Logger.debug(`DB logo lookup failed for ${teamName}: ${e.message}`);
+      return null;
+    }
+  }
+
   async drawTeamLogo(ctx, teamName, x, y) {
     try {
-      // Normalize team name for better matching
-      const normalizedName = teamName.toLowerCase().trim();
-      
-      // Create a comprehensive mapping for team names to logo files
-      const teamLogoMap = {
-        'panthers': 'Panthers.png',
-        'malfeasance': 'Malfeasance.png',
-        'mnml': 'MNML.png',
-        'sublunary': 'Sublunary.png',
-        'lotus': 'Lotus.png',
-        'intracate': 'InTraCate.png',
-        'surge': 'Surge.png',
-        'kingdom': 'Kingdom.png',
-        'immortals': 'Immortals.png',
-        'archangels': 'Archangels.png',
-        'aviators': 'Aviators.png',
-        'clovis esports': 'Clovis Esports.png',
-        '6 speed': '6 Speed.png',
-        'griffins': 'Griffins.png'
-      };
-      
-      // First try direct mapping
-      let logoFileName = teamLogoMap[normalizedName];
-      
-      if (!logoFileName) {
-        // Create a list of possible logo names to try
-        const possibleNames = [
-          `${teamName}.png`,                    // Exact match
-          `${teamName} Esports.png`,           // Add "Esports" suffix
-          `${teamName} Gaming.png`,            // Add "Gaming" suffix
-          `${teamName} FC.png`,                // Add "FC" suffix
-          // Try with proper case variations
-          `${teamName.charAt(0).toUpperCase() + teamName.slice(1).toLowerCase()}.png`,
-          `${teamName.toUpperCase()}.png`,
-          `${teamName.toLowerCase()}.png`,
-        ];
-        
-        // Try each possible name
-        for (const fileName of possibleNames) {
-          const testPath = path.resolve(this.logosDir, fileName);
-          if (fs.existsSync(testPath)) {
-            logoFileName = fileName;
-            break;
-          }
-        }
+      // Logos are DB-only (admin-uploaded team logo → franchise logo), matching
+      // the website. There is no static /logos file fallback anymore.
+      const dbLogo = await this.loadDbLogo(teamName);
+      if (dbLogo) {
+        const logoHeight = (dbLogo.height * config.images.logoWidth) / dbLogo.width;
+        ctx.drawImage(dbLogo, x, y - logoHeight / 2, config.images.logoWidth, logoHeight);
+        return;
       }
-      
-      if (logoFileName) {
-        const logoPath = path.resolve(this.logosDir, logoFileName);
-        if (fs.existsSync(logoPath)) {
-          const logo = await loadImage(logoPath);
-          const logoHeight = (logo.height * config.images.logoWidth) / logo.width;
-          ctx.drawImage(logo, x, y - logoHeight / 2, config.images.logoWidth, logoHeight);
-          Logger.debug(`Logo found for team ${teamName}: ${logoFileName}`);
-          return;
-        }
-      }
-      
-      // If no logo found, log warning and draw placeholder
-      Logger.warning(`Logo not found for team: ${teamName}`);
-      // Draw a placeholder rectangle
+
+      // No DB logo: draw a subtle placeholder instead of a hard error block.
+      Logger.warning(`No DB logo for team: ${teamName}`);
       ctx.save();
-      ctx.fillStyle = '#cccccc';
+      ctx.fillStyle = 'rgba(255,255,255,0.08)';
       ctx.fillRect(x, y - config.images.logoWidth / 2, config.images.logoWidth, config.images.logoWidth);
       ctx.restore();
-      
+
     } catch (error) {
       Logger.error(`Error loading logo for team ${teamName}:`, error);
       // Draw a placeholder rectangle

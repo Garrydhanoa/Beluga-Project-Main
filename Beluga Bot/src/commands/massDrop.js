@@ -6,6 +6,7 @@ const { config } = require('../config/config');
 const Logger = require('../utils/logger');
 const { ROLES, TEAM_ROLES, NP_ROLES } = require('../constants/roles');
 const { TransactionDB } = require('../utils/database');
+const { attachTeamLogo } = require('../utils/teamRoles');
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const DEVELOPER_ID              = '769357454890631170';
@@ -102,20 +103,10 @@ class SheetsManager {
 const sheetsManager = new SheetsManager();
 
 // ─── Logo helper ────────────────────────────────────────────────────────────────
-function findTeamLogo(teamName) {
-    try {
-        const logosDir = path.join(__dirname, '../../IMAGES/logos');
-        if (!fs.existsSync(logosDir)) return null;
-        const files = fs.readdirSync(logosDir);
-        const norm  = teamName.toLowerCase().replace(/[^a-z0-9]/g, '');
-        for (const file of files) {
-            if (path.parse(file).name.toLowerCase() === teamName.toLowerCase()) return path.join(logosDir, file);
-        }
-        for (const file of files) {
-            if (path.parse(file).name.toLowerCase().replace(/[^a-z0-9]/g, '') === norm) return path.join(logosDir, file);
-        }
-        return null;
-    } catch { return null; }
+// DB only (team→franchise logo). Returns an AttachmentBuilder named team_logo.png
+// or null. (Was IMAGES/logos/*.png.)
+async function teamLogoAttachment(teamName) {
+    return attachTeamLogo(null, teamName);
 }
 
 // ─── Collect all team members ──────────────────────────────────────────────────
@@ -251,9 +242,8 @@ async function executeMassDrop(approvalMessage, client, requestedBy) {
                 .setColor(0xFF4444)
                 .setTimestamp();
 
-            const logoPath = teamName ? findTeamLogo(teamName) : null;
-            if (logoPath && fs.existsSync(logoPath)) {
-                const attachment = new AttachmentBuilder(logoPath, { name: 'team_logo.png' });
+            const attachment = teamName ? await teamLogoAttachment(teamName) : null;
+            if (attachment) {
                 confirmEmbed.setThumbnail('attachment://team_logo.png');
                 await confirmChannel.send({ embeds: [confirmEmbed], files: [attachment] });
             } else {

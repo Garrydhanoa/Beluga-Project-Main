@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { withAudit } from '../../../../lib/activityLog'
 import { requireAdmin } from '../../../../lib/adminAuth'
 import { getSiteConfig, setSiteConfig } from '../../../../lib/siteConfigStore'
 
@@ -11,7 +12,7 @@ export async function GET() {
   return NextResponse.json({ notification })
 }
 
-export async function PUT(request) {
+async function putHandler(request) {
   const auth = await requireAdmin()
   if (!auth.ok) return auth.response
 
@@ -26,3 +27,6 @@ export async function PUT(request) {
   const saved = await setSiteConfig('notification', value)
   return NextResponse.json({ ok: true, notification: saved })
 }
+
+// Audit every write (actor + body + status -> /higgenlogs).
+export const PUT = withAudit(putHandler, { action: 'notification.put' })

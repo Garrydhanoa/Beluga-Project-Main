@@ -21,6 +21,7 @@ export default function RankingsPage() {
   const [dirty, setDirty] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [recalcing, setRecalcing] = useState(false)
   const [savedAt, setSavedAt] = useState(null)
 
   const reload = useCallback(async () => {
@@ -95,6 +96,23 @@ export default function RankingsPage() {
     }
   }
 
+  // Auto-recalculate every division's team + player rankings from recent results
+  // (same formula as the bot's /power-rankings + week-close refresh). Overwrites all.
+  async function recalc() {
+    if (!seasonId) return
+    if (!confirm('Auto-recalculate ALL power rankings (teams + players, every division) from recent results?\n\nThis replaces the current saved rankings — manual reorders/notes will be overwritten. Trend arrows are set vs the previous run.')) return
+    setRecalcing(true)
+    try {
+      const r = await fetch('/api/admin/power-rankings', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
+        body: JSON.stringify({ action: 'recalc', seasonId }),
+      })
+      const d = await r.json()
+      if (r.ok) { setData((prev) => ({ ...prev, rankings: d.rankings })); setSavedAt(Date.now()); setDirty(false) }
+      else alert(d.error || 'Recalc failed')
+    } finally { setRecalcing(false) }
+  }
+
   const availableTeams = (data?.seasonTeams || []).filter((t) => t.division === division && !list.some((l) => l.teamId === t.id))
 
   return (
@@ -129,10 +147,16 @@ export default function RankingsPage() {
             </button>
           ))}
         </div>
-        <button onClick={save} disabled={saving || !dirty} className="ml-auto px-4 py-2 text-xs font-bold text-white bg-blue-500 hover:bg-blue-400 disabled:opacity-40 rounded-lg">
-          {saving ? 'Saving…' : dirty ? 'Save changes' : 'Saved'}
-        </button>
-        {savedAt && !dirty && <span className="text-xs text-green-300">✓</span>}
+        <div className="ml-auto flex items-center gap-2">
+          <button onClick={recalc} disabled={recalcing || saving} title="Regenerate all rankings from recent results (overwrites manual edits)"
+            className="px-4 py-2 text-xs font-bold text-purple-100 bg-purple-500/20 hover:bg-purple-500/30 border border-purple-400/40 disabled:opacity-40 rounded-lg">
+            {recalcing ? 'Recalculating…' : '⟳ Recalculate (auto)'}
+          </button>
+          <button onClick={save} disabled={saving || !dirty} className="px-4 py-2 text-xs font-bold text-white bg-blue-500 hover:bg-blue-400 disabled:opacity-40 rounded-lg">
+            {saving ? 'Saving…' : dirty ? 'Save changes' : 'Saved'}
+          </button>
+          {savedAt && !dirty && <span className="text-xs text-green-300">✓</span>}
+        </div>
       </div>
 
       {loading && !data ? (
@@ -155,7 +179,7 @@ export default function RankingsPage() {
                     </div>
                     {entityType === 'player'
                       ? <Avatar src={row.avatarUrl} name={row.name} size={30} ring={false} />
-                      : <img src={`/logos/${row.name}.png`} alt="" className="w-7 h-7 object-contain" onError={(e) => { e.currentTarget.style.visibility = 'hidden' }} />}
+                      : <img src={row.teamId ? `/api/teams/logo?teamId=${row.teamId}` : ''} alt="" className="w-7 h-7 object-contain" onError={(e) => { e.currentTarget.style.visibility = 'hidden' }} />}
                     <span className="text-white text-sm font-medium truncate w-40">{row.name}</span>
                     <input value={row.note} onChange={(e) => updateRow(i, { note: e.target.value })} placeholder="note (optional)"
                       className="flex-1 px-2 py-1 bg-black/40 border border-white/10 rounded text-white text-xs" />

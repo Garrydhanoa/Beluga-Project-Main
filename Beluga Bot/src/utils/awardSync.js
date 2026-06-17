@@ -20,6 +20,10 @@ async function syncAwardRoles(client) {
         if (!Array.isArray(roles) || !roles.length) return;
         const guild = client.guilds.cache.first();
         if (!guild) return;
+        // role.members only reflects the MEMBER CACHE — right after boot that's
+        // often just a handful, so award roles would show only 1-2 holders. Fetch
+        // the full member list once so every role's members are populated.
+        try { await guild.members.fetch(); } catch (e) { Logger.warning?.(`awardSync: members.fetch failed (${e?.message || e}) — using cache`); }
         for (const r of roles) {
             if (!r?.roleId) continue;
             const role = await guild.roles.fetch(String(r.roleId)).catch(() => null);
