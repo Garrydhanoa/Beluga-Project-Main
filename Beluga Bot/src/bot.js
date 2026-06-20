@@ -214,6 +214,15 @@ class BelugaLeagueBot {
             } catch (awardError) {
                 Logger.error('Failed to start award sync', awardError);
             }
+
+            // MMR Updater outbox: post player pings / staff reports queued by the
+            // standalone TRN scraper (only when the operator has armed sheet writes).
+            try {
+                const { startMmrOutboxPoller } = require('./stats/mmrOutbox');
+                startMmrOutboxPoller(client);
+            } catch (mmrError) {
+                Logger.error('Failed to start MMR outbox poller', mmrError);
+            }
         });
 
         this.client.on(Events.InteractionCreate, async (interaction) => {

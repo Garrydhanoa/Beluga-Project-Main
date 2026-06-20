@@ -257,7 +257,8 @@ class GoogleSheetsManager {
             });
 
             Logger.success(`Discord ID ${userId} appended to SalSheet!P${targetRow}`);
-            return true;
+            // Return the row we wrote so the caller can queue an MMR update for it.
+            return targetRow;
         } catch (error) {
             Logger.error('Failed to append Discord ID to SalSheet', error);
             return false;
@@ -916,10 +917,24 @@ module.exports = {
 
                     // Extra step: append the Discord ID to the end of the SalSheet
                     // Discord-ID column (column P). Non-fatal — never blocks success.
+                    // Returns the row it wrote to (or false on failure).
+                    let salSheetRow = false;
                     try {
-                        await sheetsManager.appendDiscordIdToSalSheet(session.userId);
+                        salSheetRow = await sheetsManager.appendDiscordIdToSalSheet(session.userId);
                     } catch (salSheetError) {
                         Logger.error('SalSheet Discord-ID append failed (registration still saved)', salSheetError);
+                    }
+
+                    // Queue an MMR Updater single-update for this new row so the
+                    // website pulls their trackers "from register command". Fully
+                    // fire-and-forget + non-fatal — never blocks the registration.
+                    if (Number.isInteger(salSheetRow)) {
+                        try {
+                            const { enqueueRegisterUpdate } = require('../stats/registerQueue');
+                            enqueueRegisterUpdate(salSheetRow, session.userId).catch(() => {});
+                        } catch (queueError) {
+                            Logger.error('Failed to queue register MMR update (registration still saved)', queueError);
+                        }
                     }
 
                     // Send registration announcement

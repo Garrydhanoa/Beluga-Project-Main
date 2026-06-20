@@ -4,7 +4,7 @@ const path = require('path');
 const { EmbedBuilder } = require('discord.js');
 const { config } = require('../config/config');
 const Logger = require('./logger');
-const { ManualSalaryDB, SalaryLockNotificationDB, isDatabaseAvailable } = require('./database');
+const { ManualSalaryDB, SalaryLockNotificationDB, isDatabaseAvailable, pool } = require('./database');
 const { updateAllRosters } = require('./rosterManager');
 const { ROLES, TEAM_ROLES, NP_ROLES } = require('../constants/roles');
 
@@ -14,6 +14,53 @@ const INRESERVE_RELEASE_CHANNEL_ID = '1263723227872755732';
 const SALARY_ANNOUNCEMENT_CHANNEL_ID = '1430752024630268024';
 const ROSTER_ALERT_CHANNEL_ID = '1299015210702737429'; // Salary Crew alerts for locked players
 const SPREADSHEET_ID = '1cnrCOiAX5PfcxqpTX16YvbPVYnBxZiCk_zSCDqoeDGs';
+
+// ── DB-backed enable toggles ──────────────────────────────────────────────────
+// The two automation switches used to live in the SalSheet "CONTROL PANEL" tab
+// (B2 = Salary Lock, B5 = Role/Name sync). They now live in the shared Postgres
+// `trn_config` table (the same table the website's MMR UPDATER tab writes), so the
+// website is the single control surface and the bot just reads the DB.
+//
+// Config keys (set by the website):
+//   auto_sal_lock_enabled       -> Auto Sal Lock Update
+//   auto_roling_naming_enabled  -> Auto Roling and Naming System
+//
+// Truthiness: "1" | "2" | "on" | "yes" | "true" => ENABLED (the operator sets "2"
+// to verify the value is being read from the DB). "0" | "off" | "no" | "false" |
+// "" => DISABLED. If the KEY IS MISSING entirely we fall back to the legacy sheet
+// cell so nothing breaks before the website has ever written the value.
+const SAL_LOCK_KEY = 'auto_sal_lock_enabled';
+const ROLE_SYNC_KEY = 'auto_roling_naming_enabled';
+
+function _truthyToggle(value) {
+    const v = String(value).trim().toLowerCase();
+    if (['1', '2', 'on', 'yes', 'true'].includes(v)) return true;
+    if (['0', 'off', 'no', 'false', ''].includes(v)) return false;
+    // Any other non-empty value -> treat as enabled (e.g. an alternate "ON" label).
+    return true;
+}
+
+/**
+ * Read a toggle from trn_config. Returns:
+ *   true / false  -> explicit DB value
+ *   null          -> key not present (caller falls back to the sheet)
+ */
+async function readDbToggle(key) {
+    try {
+        if (!(typeof isDatabaseAvailable === 'function' ? isDatabaseAvailable() : isDatabaseAvailable)) {
+            return null;
+        }
+        const res = await pool.query('SELECT value FROM trn_config WHERE key=$1', [key]);
+        if (res.rows.length === 0 || res.rows[0].value == null) return null;
+        return _truthyToggle(res.rows[0].value);
+    } catch (err) {
+        // trn_config only exists once the scraper has run; missing table -> fall back.
+        if (!/relation .* does not exist/.test(String(err.message))) {
+            Logger.error(`Failed to read DB toggle ${key}`, err);
+        }
+        return null;
+    }
+}
 
 class RoleSyncManager {
     constructor() {
@@ -54,6 +101,15 @@ class RoleSyncManager {
     }
 
     async checkControlPanel() {
+        // Auto Roling and Naming System toggle. DB (trn_config) is the source of
+        // truth; the SalSheet CONTROL PANEL!B5 cell is only a fallback for before
+        // the website has ever written the key.
+        const dbToggle = await readDbToggle(ROLE_SYNC_KEY);
+        if (dbToggle !== null) {
+            Logger.info(`Role/Name sync toggle (DB ${ROLE_SYNC_KEY}): ${dbToggle ? 'ENABLED' : 'DISABLED'}`);
+            return dbToggle;
+        }
+
         try {
             if (!this.sheets) {
                 await this.initialize();
@@ -67,8 +123,8 @@ class RoleSyncManager {
 
             const value = response.data.values?.[0]?.[0];
             const isOn = value && value.toString().toUpperCase() === 'ON';
-            
-            Logger.info(`Control Panel B5 status: ${value || 'EMPTY'} - Sync ${isOn ? 'ENABLED' : 'DISABLED'}`);
+
+            Logger.info(`Control Panel B5 status (sheet fallback): ${value || 'EMPTY'} - Sync ${isOn ? 'ENABLED' : 'DISABLED'}`);
             return isOn;
         } catch (error) {
             Logger.error('Failed to check control panel', error);
@@ -77,6 +133,15 @@ class RoleSyncManager {
     }
 
     async checkSalaryLockControl() {
+        // Auto Sal Lock Update toggle. DB (trn_config) is the source of truth; the
+        // SalSheet CONTROL PANEL!B2 cell is only a fallback for before the website
+        // has ever written the key.
+        const dbToggle = await readDbToggle(SAL_LOCK_KEY);
+        if (dbToggle !== null) {
+            Logger.info(`Salary Lock toggle (DB ${SAL_LOCK_KEY}): ${dbToggle ? 'ENABLED' : 'DISABLED'}`);
+            return dbToggle;
+        }
+
         try {
             if (!this.sheets) {
                 await this.initialize();
@@ -90,8 +155,8 @@ class RoleSyncManager {
 
             const value = response.data.values?.[0]?.[0];
             const isOn = value && value.toString().toUpperCase() === 'ON';
-            
-            Logger.info(`Control Panel B2 (Salary Lock) status: ${value || 'EMPTY'} - ${isOn ? 'ENABLED' : 'DISABLED'}`);
+
+            Logger.info(`Control Panel B2 (Salary Lock) status (sheet fallback): ${value || 'EMPTY'} - ${isOn ? 'ENABLED' : 'DISABLED'}`);
             return isOn;
         } catch (error) {
             Logger.error('Failed to check salary lock control panel', error);
@@ -121,6 +186,23 @@ class RoleSyncManager {
                 await this.initialize();
             }
 
+            // Resolve the guild + its members so we can SKIP any player who isn't
+            // currently in the server. Such players get NO column-O write and NO
+            // notification — the change stays pending so it re-fires automatically
+            // on a later cycle once they rejoin. (Salary runs before the role-sync
+            // step's member fetch, so fetch here too; it's cached/cheap after the
+            // first pull.)
+            const guild = client?.guilds?.cache?.first() || null;
+            if (guild && guild.members.cache.size < 50) {
+                try {
+                    await guild.members.fetch();
+                } catch (memberFetchErr) {
+                    Logger.warning(`Salary lock: member fetch failed (${memberFetchErr.message}); ` +
+                        `proceeding with ${guild.members.cache.size} cached members`);
+                }
+            }
+            const memberInServer = (id) => !!(guild && id && guild.members.cache.has(String(id)));
+
             // Get all manual salary overrides
             const manualOverrides = await ManualSalaryDB.getAll();
             const manualOverrideMap = new Map();
@@ -144,8 +226,7 @@ class RoleSyncManager {
             }
 
             const updates = [];
-            const colorUpdates = [];
-            const logsToCreate = [];
+            const notificationsToSend = []; // {name, oldValue, newValue, discordId}
             const lockedPlayerNotifications = []; // Track locked players eligible for increases
 
             for (let i = 0; i < salRows.length; i++) {
@@ -157,6 +238,14 @@ class RoleSyncManager {
 
                 // Skip empty rows
                 if (nameVal === '' && oVal === '' && nVal === '') continue;
+
+                // SKIP players who aren't currently in the server — no column-O
+                // write, no notification. The change stays pending (O untouched),
+                // so it re-fires on a later cycle once they rejoin. A row with no
+                // Discord ID at all can't be matched/notified, so skip it too.
+                if (!discordId || !memberInServer(discordId)) {
+                    continue;
+                }
 
                 // Check if this user has a manual override (locked)
                 if (discordId && manualOverrideMap.has(discordId)) {
@@ -198,25 +287,21 @@ class RoleSyncManager {
                 const oHasLetters = /[a-zA-Z]/.test(oVal);
                 const rowIndex = i + 2; // Row number in sheet (starting from 2)
                 let newOValue = oVal;
-                let backgroundColor = null;
                 let shouldLog = false;
 
                 // Case 1: O empty but N has value
                 if ((oVal === '' || oVal === null) && nVal !== '') {
                     newOValue = nVal;
-                    backgroundColor = { red: 0.99, green: 0.90, blue: 0.80 }; // #fce5cd
                     shouldLog = true;
                 }
                 // Case 2: N has letters but O doesn't
                 else if (/[a-zA-Z]/.test(nVal) && !oHasLetters) {
                     newOValue = nVal;
-                    backgroundColor = { red: 0.99, green: 0.90, blue: 0.80 }; // #fce5cd
                     shouldLog = true;
                 }
-                // Case 3: O has letters but N has numbers (NEW - RED HIGHLIGHT)
+                // Case 3: O has letters but N has numbers
                 else if (oHasLetters && !isNaN(parseFloat(nVal)) && nVal !== '') {
                     newOValue = nVal;
-                    backgroundColor = { red: 1.0, green: 0.0, blue: 0.0 }; // RED
                     shouldLog = true;
                 }
                 // Case 4: Both numeric
@@ -233,29 +318,23 @@ class RoleSyncManager {
 
                     if (incremented) {
                         newOValue = currentO;
-                        backgroundColor = { red: 1.0, green: 0.0, blue: 0.0 }; // RED
                         shouldLog = true;
                     }
                 }
 
-                // If there's a change, add to updates
+                // If there's a change, queue the value update + the notification.
+                // No color changes, no SAL Lock LOG row — column O keeps its default
+                // formatting. (Player already confirmed in-server above.)
                 if (shouldLog && newOValue !== oVal) {
                     // Ensure we're storing numbers without apostrophes
                     const cleanValue = String(newOValue).replace(/^'/, '');
-                    
+
                     updates.push({
                         range: `SalSheet!O${rowIndex}`,
                         values: [[cleanValue]]
                     });
 
-                    if (backgroundColor) {
-                        colorUpdates.push({
-                            rowIndex: rowIndex,
-                            color: backgroundColor
-                        });
-                    }
-
-                    logsToCreate.push({
+                    notificationsToSend.push({
                         name: nameVal,
                         oldValue: oVal,
                         newValue: cleanValue,
@@ -276,37 +355,9 @@ class RoleSyncManager {
                 Logger.success(`Updated ${updates.length} salary values in column O`);
             }
 
-            // Apply color updates
-            if (colorUpdates.length > 0) {
-                const salSheetId = await this.getSheetId('SalSheet');
-                const requests = colorUpdates.map(update => ({
-                    repeatCell: {
-                        range: {
-                            sheetId: salSheetId,
-                            startRowIndex: update.rowIndex - 1,
-                            endRowIndex: update.rowIndex,
-                            startColumnIndex: 14, // Column O
-                            endColumnIndex: 15
-                        },
-                        cell: {
-                            userEnteredFormat: {
-                                backgroundColor: update.color
-                            }
-                        },
-                        fields: 'userEnteredFormat.backgroundColor'
-                    }
-                }));
-
-                await this.sheets.spreadsheets.batchUpdate({
-                    spreadsheetId: SPREADSHEET_ID,
-                    resource: { requests }
-                });
-                Logger.success(`Applied ${colorUpdates.length} color updates`);
-            }
-
-            // Create log entries and send Discord notifications
-            for (const log of logsToCreate) {
-                await this.logAndNotify(log.name, log.oldValue, log.newValue, log.discordId, client);
+            // Send Discord notifications for each change (no log/color writes).
+            for (const note of notificationsToSend) {
+                await this.notifySalaryChange(note.name, note.oldValue, note.newValue, note.discordId, client);
             }
 
             // Send notifications for locked players eligible for increases
@@ -340,9 +391,6 @@ class RoleSyncManager {
                 }
             }
 
-            // Process log sheet for checked boxes
-            await this.processLogSheet();
-
             Logger.success('===== Salary Lock Update Complete =====');
 
         } catch (error) {
@@ -350,212 +398,34 @@ class RoleSyncManager {
         }
     }
 
-    async logAndNotify(name, oldVal, newVal, discordId, client) {
+    /**
+     * Send the Discord salary-change announcement. NO SAL Lock LOG row, NO
+     * checkbox, NO cell colouring — just the message. The caller has already
+     * confirmed the player is in the server and written column O.
+     */
+    async notifySalaryChange(name, oldVal, newVal, discordId, client) {
         try {
-            const now = new Date();
-            const estTime = now.toLocaleTimeString('en-US', { 
-                timeZone: 'America/New_York',
-                hour: '2-digit',
-                minute: '2-digit',
-                hour12: true
-            });
-            const estDate = now.toLocaleDateString('en-US', { 
-                timeZone: 'America/New_York',
-                day: '2-digit',
-                month: 'short',
-                year: 'numeric'
-            });
-            const logMessage = `${name} SAL was changed to ${newVal}`;
+            const salaryChannel = await client.channels.fetch(SALARY_ANNOUNCEMENT_CHANNEL_ID);
 
-            // Append log row to SAL Lock LOG sheet
-            const logRow = [name, estDate, estTime, logMessage, '', ''];
-            const appendResponse = await this.sheets.spreadsheets.values.append({
-                spreadsheetId: SPREADSHEET_ID,
-                range: 'SAL Lock LOG!A:F',
-                valueInputOption: 'RAW',
-                resource: {
-                    values: [logRow]
-                }
-            });
+            // Create clickable player mention if Discord ID is available
+            const playerMention = discordId && discordId.trim() !== '' ? `<@${discordId}>` : name;
 
-            // Get the row number where data was appended
-            const updatedRange = appendResponse.data.updates.updatedRange; // e.g. "SAL Lock LOG!A5:F5"
-            const rowMatch = updatedRange.match(/!A(\d+)/);
-            const rowNumber = rowMatch ? parseInt(rowMatch[1]) : null;
-            
-            if (!rowNumber) {
-                Logger.error('Failed to parse appended row number from response');
-                return;
+            // Check if NS or empty old salary
+            const isNewSalary = !oldVal || oldVal === '' || oldVal.toUpperCase() === 'NS';
+
+            let message;
+            if (isNewSalary) {
+                // New salary assignment
+                message = `${playerMention} you are a **${newVal}** salary`;
+            } else {
+                // Salary increase
+                message = `<@&${ROLES.SALARY_CREW}>\n${playerMention} is being moved up from a **${oldVal}** to **${newVal}**`;
             }
 
-            // Insert checkbox in column E of the appended row
-            await this.sheets.spreadsheets.batchUpdate({
-                spreadsheetId: SPREADSHEET_ID,
-                resource: {
-                    requests: [{
-                        setDataValidation: {
-                            range: {
-                                sheetId: await this.getSheetId('SAL Lock LOG'),
-                                startRowIndex: rowNumber - 1, // Convert to 0-indexed
-                                endRowIndex: rowNumber, // Exclusive end
-                                startColumnIndex: 4, // Column E
-                                endColumnIndex: 5
-                            },
-                            rule: {
-                                condition: {
-                                    type: 'BOOLEAN'
-                                },
-                                showCustomUi: true
-                            }
-                        }
-                    }]
-                }
-            });
-
-            // Send Discord notification to salary announcement channel
-            try {
-                const salaryChannel = await client.channels.fetch(SALARY_ANNOUNCEMENT_CHANNEL_ID);
-                
-                // Create clickable player mention if Discord ID is available
-                const playerMention = discordId && discordId.trim() !== '' ? `<@${discordId}>` : name;
-                
-                // Check if NS or empty old salary
-                const isNewSalary = !oldVal || oldVal === '' || oldVal.toUpperCase() === 'NS';
-                
-                let message;
-                if (isNewSalary) {
-                    // New salary assignment
-                    message = `${playerMention} you are a **${newVal}** salary`;
-                } else {
-                    // Salary increase
-                    message = `<@&${ROLES.SALARY_CREW}>\n${playerMention} is being moved up from a **${oldVal}** to **${newVal}**`;
-                }
-
-                await salaryChannel.send(message);
-
-                Logger.info(`Sent salary announcement for ${name}`);
-            } catch (discordError) {
-                Logger.error('Failed to send Discord notification', discordError);
-            }
-
-            Logger.info(`Logged and notified: ${logMessage}`);
-
-        } catch (error) {
-            Logger.error(`Failed to log and notify for ${name}`, error);
-        }
-    }
-
-    async processLogSheet() {
-        try {
-            // Get log sheet data
-            const logResponse = await this.sheets.spreadsheets.values.get({
-                spreadsheetId: SPREADSHEET_ID,
-                range: 'SAL Lock LOG!A2:F',
-            });
-
-            const logRows = logResponse.data.values || [];
-            if (logRows.length === 0) return;
-
-            const salResponse = await this.sheets.spreadsheets.values.get({
-                spreadsheetId: SPREADSHEET_ID,
-                range: 'SalSheet!B2:B',
-            });
-            const salNames = salResponse.data.values || [];
-
-            const colorUpdates = [];
-            const logUpdates = [];
-            const salSheetId = await this.getSheetId('SalSheet');
-
-            for (let i = 0; i < logRows.length; i++) {
-                const row = logRows[i];
-                const name = row[0] || '';
-                const checked = row[4] === true || row[4] === 'TRUE';
-                const doneText = row[5] || '';
-
-                if (checked && doneText === '') {
-                    // Remove numbers in parentheses from nickname
-                    const cleanName = name.replace(/\s*\([^)]*\)/g, '').trim();
-
-                    // Find row in SalSheet
-                    for (let j = 0; j < salNames.length; j++) {
-                        const salName = (salNames[j][0] || '').replace(/\s*\([^)]*\)/g, '').trim();
-                        if (salName === cleanName) {
-                            // Reset column O color to default
-                            colorUpdates.push({
-                                range: {
-                                    sheetId: salSheetId, // SalSheet
-                                    startRowIndex: j + 1,
-                                    endRowIndex: j + 2,
-                                    startColumnIndex: 14, // Column O
-                                    endColumnIndex: 15
-                                },
-                                color: { red: 0.99, green: 0.90, blue: 0.80 } // #fce5cd
-                            });
-                            break;
-                        }
-                    }
-
-                    // Remove checkbox and mark as DONE
-                    logUpdates.push({
-                        range: `SAL Lock LOG!E${i + 2}`,
-                        values: [['']]
-                    });
-                    logUpdates.push({
-                        range: `SAL Lock LOG!F${i + 2}`,
-                        values: [['DONE by automation']]
-                    });
-                }
-            }
-
-            // Apply color updates
-            if (colorUpdates.length > 0) {
-                const requests = colorUpdates.map(update => ({
-                    repeatCell: {
-                        range: update.range,
-                        cell: {
-                            userEnteredFormat: {
-                                backgroundColor: update.color
-                            }
-                        },
-                        fields: 'userEnteredFormat.backgroundColor'
-                    }
-                }));
-
-                await this.sheets.spreadsheets.batchUpdate({
-                    spreadsheetId: SPREADSHEET_ID,
-                    resource: { requests }
-                });
-                Logger.success(`Reset ${colorUpdates.length} salary cell colors after acknowledgment`);
-            }
-
-            // Apply log updates
-            if (logUpdates.length > 0) {
-                await this.sheets.spreadsheets.values.batchUpdate({
-                    spreadsheetId: SPREADSHEET_ID,
-                    resource: {
-                        valueInputOption: 'RAW',
-                        data: logUpdates
-                    }
-                });
-                Logger.success(`Marked ${logUpdates.length / 2} log entries as DONE`);
-            }
-
-        } catch (error) {
-            Logger.error('Failed to process log sheet', error);
-        }
-    }
-
-    async getSheetId(sheetName) {
-        try {
-            const response = await this.sheets.spreadsheets.get({
-                spreadsheetId: SPREADSHEET_ID
-            });
-
-            const sheet = response.data.sheets?.find(s => s.properties?.title === sheetName);
-            return sheet?.properties?.sheetId || 0;
-        } catch (error) {
-            Logger.error(`Failed to get sheet ID for ${sheetName}`, error);
-            return 0;
+            await salaryChannel.send(message);
+            Logger.info(`Sent salary announcement for ${name} (${oldVal || 'NS'} -> ${newVal})`);
+        } catch (discordError) {
+            Logger.error(`Failed to send salary notification for ${name}`, discordError);
         }
     }
 

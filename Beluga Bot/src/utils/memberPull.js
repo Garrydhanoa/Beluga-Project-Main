@@ -29,9 +29,32 @@ async function performMemberPull(client, confirmationChannelId = '14039614617760
 
         Logger.info(`Found ${roles.length} roles`);
 
-        // Get all members from the server
+        // Get all members from the server.
+        // The FIRST pull right after boot often times out: discord.js waits for the
+        // gateway to stream every GUILD_MEMBERS chunk and gives up at its default
+        // (~120s) with "Members didn't arrive in time" before the chunks finish.
+        // The chunks usually DO arrive shortly after, so on a timeout we wait a
+        // moment and retry once, then fall back to whatever's already cached rather
+        // than letting the whole pull (and the role sync chained after it) die.
         Logger.info('Fetching all guild members...');
-        await guild.members.fetch();
+        try {
+            await guild.members.fetch({ time: 120000 });
+        } catch (fetchError) {
+            Logger.warning(`Initial member fetch timed out (${fetchError.message}); ` +
+                `have ${guild.members.cache.size} cached. Waiting 10s and retrying once...`);
+            await new Promise((resolve) => setTimeout(resolve, 10000));
+            try {
+                await guild.members.fetch({ time: 180000 });
+                Logger.info(`Retry succeeded — now have ${guild.members.cache.size} members`);
+            } catch (retryError) {
+                Logger.warning(`Member fetch retry also failed (${retryError.message}); ` +
+                    `proceeding with ${guild.members.cache.size} cached members`);
+                // If the cache is basically empty we genuinely can't pull — surface it.
+                if (guild.members.cache.size < 50) {
+                    throw retryError;
+                }
+            }
+        }
 
         // Persist members + roles to Postgres so the website has a single source
         // of identity (display names, avatars) + an exact member count. Non-fatal.

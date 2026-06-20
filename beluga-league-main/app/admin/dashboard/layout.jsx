@@ -15,6 +15,7 @@ const NAV = [
   { label: 'Players', href: '/admin/dashboard/players', icon: 'user' },
   { label: 'Transactions', href: '/admin/dashboard/transactions', icon: 'arrows' },
   { label: 'Power Rankings', href: '/admin/dashboard/rankings', icon: 'trending' },
+  { label: 'MMR Updater', href: '/admin/dashboard/mmr', icon: 'trending' },
   { label: 'Site Content', href: '/admin/dashboard/site-content', icon: 'grid' },
   { label: 'Ticket Setup', href: '/admin/dashboard/ticket-setup', icon: 'alert' },
   { label: 'Applications', href: '/admin/dashboard/applications', icon: 'user' },
