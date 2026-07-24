@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getActiveSeason, getStandingsFromRecords } from '../../../lib/leagueStore';
+import { resolveSeason, getStandingsFromRecords } from '../../../lib/leagueStore';
 import { getStatsStandings } from '../../../lib/belugaStats';
 
 // Tell Next.js this is a dynamic route that shouldn't be prerendered
@@ -9,7 +9,8 @@ export async function GET(request) {
   // Get the division parameter from the URL
   const url = new URL(request.url);
   const division = url.searchParams.get('division');
-  
+  const seasonParam = url.searchParams.get('season');
+
   if (!division || !['majors', 'aaa', 'aa'].includes(division)) {
     console.log(`Invalid division parameter: ${division}`);
     return NextResponse.json(
@@ -17,9 +18,10 @@ export async function GET(request) {
       { status: 400 }
     );
   }
-  
+
   try {
-    const season = await getActiveSeason();
+    // ?season=<number> views a past season; absent/'active' → the active season.
+    const season = await resolveSeason(seasonParam);
     if (!season) {
       return NextResponse.json({
         data: [],

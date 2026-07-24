@@ -1,8 +1,47 @@
 import DiscordProvider from 'next-auth/providers/discord'
 
 const SEVEN_DAYS_SECONDS = 60 * 60 * 24 * 7
+
+// The entire admin panel authorizes on a JWT session cookie encrypted with
+// NEXTAUTH_SECRET. If that secret is missing, the shipped placeholder, or too short,
+// anyone who knows/guesses it can forge an `isDirector:true` admin cookie offline.
+// FAIL CLOSED: refuse to boot in production with a weak secret rather than silently
+// signing admin sessions with a guessable key. Local dev only warns.
+const WEAK_SECRETS = new Set([
+  'beluga-league-admin-secret-key-change-me-in-production',
+  'change-me',
+  'secret',
+])
+function resolveAuthSecret() {
+  const secret = (process.env.NEXTAUTH_SECRET || '').trim()
+  const isWeak = !secret || WEAK_SECRETS.has(secret) || secret.length < 32
+  if (isWeak) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        '[auth] NEXTAUTH_SECRET is missing or a known-weak/placeholder value in production. ' +
+          'Set a strong random secret (openssl rand -base64 32) before deploying.'
+      )
+    }
+    console.warn(
+      '[auth] NEXTAUTH_SECRET is weak/placeholder — acceptable for LOCAL DEV ONLY. ' +
+        'Set a strong random secret before deploying.'
+    )
+  }
+  return secret || undefined
+}
 const ROLE_CACHE_TTL_MS = 60 * 60 * 1000 // re-check Discord role every hour
 const RATE_LIMIT_BACKOFF_MS = 5 * 60 * 1000 // after a 429, don't retry for 5 minutes
+
+// Per-process role cache keyed by Discord user id. CRITICAL: with the JWT session
+// strategy, token mutations made inside the `jwt` callback during a server-side
+// getServerSession() (every requireAdmin() call) are NOT written back to the cookie
+// — so the cookie's rolesCheckedAt / rate-limit backoff never advance between
+// requests. Admin pages that poll (the MMR tab hits requireAdmin every ~1s) then
+// re-fetch Discord on EVERY request once the cookie cache goes stale, which storms
+// Discord into 429s. This in-memory cache makes the "checked recently" and "backing
+// off after a 429" decisions durable across requests in the running process, so we
+// fetch Discord at most once per TTL per user (and not at all during a backoff).
+const roleCache = new Map() // discordUserId -> { roles, isDirector, username, checkedAt, rateLimitedUntil }
 
 function getAdminDiscordIds() {
   const raw = process.env.ADMIN_DISCORD_IDS || process.env.ADMIN_DISCORD_ID || ''
@@ -34,8 +73,41 @@ async function refreshDiscordRoles(token) {
     return
   }
 
-  // If we recently got rate-limited, don't try again until backoff expires.
-  if (token.rolesRateLimitedUntil && Date.now() < token.rolesRateLimitedUntil) {
+  const now = Date.now()
+  const uid = String(token.discordUserId || '')
+  const cached = uid ? roleCache.get(uid) : null
+
+  // Hydrate the token from any cached roles up front so a backoff/short-circuit still
+  // yields the last-known role data (not an empty set).
+  const hydrateFromCache = () => {
+    if (!cached) return
+    if (Array.isArray(cached.roles)) {
+      token.roles = cached.roles
+      token.isDirector = cached.isDirector
+    }
+    if (cached.username) token.discordUsername = cached.username
+    if (cached.checkedAt) token.rolesCheckedAt = cached.checkedAt
+  }
+
+  // In-memory backoff after a recent 429 — sticks across requests (the cookie's
+  // backoff timestamp does not), so a polling page can't re-storm Discord.
+  if (cached && cached.rateLimitedUntil && now < cached.rateLimitedUntil) {
+    hydrateFromCache()
+    token.rolesRateLimitedUntil = cached.rateLimitedUntil
+    applyBypass(token)
+    return
+  }
+
+  // In-memory fresh cache — skip the Discord fetch entirely within the TTL.
+  if (cached && cached.checkedAt && now - cached.checkedAt < ROLE_CACHE_TTL_MS && Array.isArray(cached.roles)) {
+    hydrateFromCache()
+    applyBypass(token)
+    return
+  }
+
+  // Legacy cookie-side backoff guard (kept for the client /api/auth/session path).
+  if (token.rolesRateLimitedUntil && now < token.rolesRateLimitedUntil) {
+    hydrateFromCache()
     applyBypass(token)
     return
   }
@@ -49,9 +121,12 @@ async function refreshDiscordRoles(token) {
     if (res.status === 429) {
       const retryAfter = Number(res.headers.get('retry-after')) || 60
       const backoff = Math.min(Math.max(retryAfter * 1000, RATE_LIMIT_BACKOFF_MS), 60 * 60 * 1000)
-      token.rolesRateLimitedUntil = Date.now() + backoff
+      token.rolesRateLimitedUntil = now + backoff
+      // Persist the backoff in-process so subsequent requests don't re-fetch (and
+      // don't re-log) until it expires — keep any previously cached roles.
+      roleCache.set(uid, { ...(cached || {}), rateLimitedUntil: now + backoff })
       console.warn(`[auth] Discord rate-limited role check; backing off ${Math.round(backoff / 1000)}s`)
-      // Keep using cached role data; bypass kicks in for master admin if no cache.
+      hydrateFromCache()
       applyBypass(token)
       return
     }
@@ -61,13 +136,15 @@ async function refreshDiscordRoles(token) {
       console.warn('[auth] Discord access token unauthorized; clearing cached role data')
       token.roles = []
       token.isDirector = false
-      token.rolesCheckedAt = Date.now()
+      token.rolesCheckedAt = now
+      roleCache.delete(uid)
       applyBypass(token)
       return
     }
 
     if (!res.ok) {
       console.warn(`[auth] Discord role check returned ${res.status}; keeping cached values`)
+      hydrateFromCache()
       applyBypass(token)
       return
     }
@@ -76,13 +153,20 @@ async function refreshDiscordRoles(token) {
     token.roles = Array.isArray(member.roles) ? member.roles : []
     token.isDirector = token.roles.includes(directorRoleId)
     token.discordUsername = member.user?.username || member.nick || token.discordUsername || 'Unknown'
-    token.rolesCheckedAt = Date.now()
+    token.rolesCheckedAt = now
     delete token.rolesRateLimitedUntil
     delete token.bypassReason
+    if (uid) {
+      roleCache.set(uid, {
+        roles: token.roles, isDirector: token.isDirector,
+        username: token.discordUsername, checkedAt: now,
+      })
+    }
 
     applyBypass(token)
   } catch (err) {
     console.warn('[auth] Discord role check threw:', err.message)
+    hydrateFromCache()
     applyBypass(token)
   }
 }
@@ -151,6 +235,6 @@ export const authOptions = {
     signIn: '/admin',
     error: '/admin/denied',
   },
-  secret: process.env.NEXTAUTH_SECRET,
+  secret: resolveAuthSecret(),
   debug: process.env.NODE_ENV !== 'production',
 }

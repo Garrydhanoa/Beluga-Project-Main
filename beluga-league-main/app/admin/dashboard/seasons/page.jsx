@@ -29,6 +29,8 @@ export default function SeasonsPage() {
   const [showWizard, setShowWizard] = useState(false)
   const [expandedId, setExpandedId] = useState(null)
   const [error, setError] = useState(null)
+  // Director-gated reset/delete flow: { mode:'reset'|'delete', season }
+  const [gate, setGate] = useState(null)
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -65,14 +67,6 @@ export default function SeasonsPage() {
     reload()
   }
 
-  async function handleDelete(id, label) {
-    const confirmText = `DELETE ${label}`
-    const got = prompt(`Type "${confirmText}" to permanently delete this season and ALL teams, schedule, standings, stats, and champions tied to it. Cannot be undone.`)
-    if (got !== confirmText) return
-    await fetch(`/api/admin/seasons/${id}`, { cache: 'no-store', method: 'DELETE' })
-    setExpandedId(null)
-    reload()
-  }
 
   return (
     <div className="max-w-5xl">
@@ -88,9 +82,9 @@ export default function SeasonsPage() {
           const activeSeason = seasons.find((s) => s.status === 'active')
           return activeSeason ? (
             <button
-              disabled
-              title={`Archive Season ${activeSeason.seasonNumber} first`}
-              className="px-5 py-3 bg-white/5 text-white/40 font-bold rounded-lg border border-white/10 cursor-not-allowed"
+              onClick={() => setGate({ mode: 'reset', season: activeSeason })}
+              title="Archive the current season and start the next one (requires 3 director approvals)"
+              className="px-5 py-3 bg-blue-500 hover:bg-blue-400 text-white font-bold rounded-lg shadow-[0_0_25px_rgba(59,130,246,0.4)] transition"
             >
               + Start New Season
             </button>
@@ -108,7 +102,7 @@ export default function SeasonsPage() {
       {seasons.find((s) => s.status === 'active') && (
         <div className="mb-4 p-4 rounded-2xl bg-yellow-500/[0.06] border border-yellow-400/30 text-sm text-yellow-100/90">
           <strong className="text-yellow-200">Season {seasons.find((s) => s.status === 'active').seasonNumber} is active.</strong>{' '}
-          You can&apos;t start a new season until it&apos;s archived. Expand it below and click <em>Archive</em> — all its teams, schedule, standings, stats, and champions stay saved as a past season. Then a fresh start (with franchise suggestions) unlocks.
+          <em>Start New Season</em> archives it (all teams, schedule, standings, stats, and champions stay saved as a past season, browsable forever) and stands up the next season with teams carried over (empty rosters, no schedule yet). It is a <strong>dangerous, irreversible</strong> action, so it requires <strong>3 director approvals</strong> in Discord before anything changes.
         </div>
       )}
 
@@ -130,7 +124,7 @@ export default function SeasonsPage() {
               onToggle={() => setExpandedId(expandedId === s.id ? null : s.id)}
               onActivate={() => handleActivate(s.id)}
               onArchive={() => handleArchive(s.id)}
-              onDelete={() => handleDelete(s.id, `Season ${s.seasonNumber}`)}
+              onDelete={() => setGate({ mode: 'delete', season: s })}
               onChanged={reload}
             />
           ))}
@@ -143,6 +137,268 @@ export default function SeasonsPage() {
           onCreated={() => { setShowWizard(false); reload() }}
         />
       )}
+
+      {gate && (
+        <GatedSeasonActionModal
+          mode={gate.mode}
+          season={gate.season}
+          onClose={() => setGate(null)}
+          onDone={() => { setGate(null); reload() }}
+        />
+      )}
+    </div>
+  )
+}
+
+// ── Director-gated Start-New-Season / Delete-Season flow ──────────────────────
+// 5 steps: (1) warn, (2) type a non-copiable 10-letter string, (3) details (reset
+// only), (4) submit → queues a director-approval request, (5) poll while 3 directors
+// ✅ in Discord. The bot performs the actual DB changes after approval.
+function randomCode(len = 10) {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ' // no I/O to avoid confusion
+  let out = ''
+  for (let i = 0; i < len; i++) out += alphabet[Math.floor(Math.random() * alphabet.length)]
+  return out
+}
+
+// Renders the confirm code as SVG text (not selectable / not copyable), so the
+// director must type it by hand.
+function NonCopyableCode({ code }) {
+  const W = 240, H = 46
+  return (
+    <svg
+      width="100%" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="confirmation code"
+      style={{ userSelect: 'none', pointerEvents: 'none', maxWidth: 260 }}
+    >
+      <rect x="0" y="0" width={W} height={H} rx="8" fill="rgba(0,0,0,0.35)" stroke="rgba(255,255,255,0.15)" />
+      {code.split('').map((ch, i) => (
+        <text
+          key={i}
+          x={16 + i * ((W - 32) / code.length)}
+          y={H / 2 + 6}
+          fill="#e2e8f0"
+          fontFamily="monospace"
+          fontSize="20"
+          fontWeight="800"
+          transform={`rotate(${(i % 2 ? 1 : -1) * (2 + (i % 3))} ${16 + i * ((W - 32) / code.length)} ${H / 2})`}
+        >
+          {ch}
+        </text>
+      ))}
+    </svg>
+  )
+}
+
+function GatedSeasonActionModal({ mode, season, onClose, onDone }) {
+  const isReset = mode === 'reset'
+  const [step, setStep] = useState(1)
+  const [code] = useState(() => randomCode(10))
+  const [typed, setTyped] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+
+  // reset details
+  const [newSeasonNumber, setNewSeasonNumber] = useState(isReset ? Number(season?.seasonNumber || 0) + 1 : '')
+  const [newName, setNewName] = useState('')
+  const [startDate, setStartDate] = useState('')
+
+  // approval polling
+  const [requestId, setRequestId] = useState(null)
+  const [poll, setPoll] = useState(null) // { status, approvals, required, declinedBy, result }
+
+  useEffect(() => {
+    if (step !== 5 || !requestId) return undefined
+    let alive = true
+    const tick = () => {
+      fetch(`/api/admin/seasons/request/${requestId}`, { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((d) => { if (alive && d.request) setPoll(d.request) })
+        .catch(() => {})
+    }
+    tick()
+    const iv = setInterval(tick, 4000)
+    return () => { alive = false; clearInterval(iv) }
+  }, [step, requestId])
+
+  async function submit() {
+    setBusy(true); setErr(null)
+    try {
+      const url = isReset ? '/api/admin/seasons/request-reset' : '/api/admin/seasons/request-delete'
+      const body = isReset
+        ? { newSeasonNumber: Number(newSeasonNumber), newName: newName.trim() || null, startDate: startDate || null, carryTeams: true, verifyString: code }
+        : { seasonId: season.id, verifyString: code }
+      const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      const d = await r.json()
+      if (!r.ok) { setErr(d.error || 'Failed to submit request'); setBusy(false); return }
+      setRequestId(d.requestId)
+      setStep(5)
+    } catch (e) {
+      setErr(e.message || 'Failed to submit')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const title = isReset ? `Start New Season (archive S${season?.seasonNumber})` : `Delete Season ${season?.seasonNumber}`
+  const codeOk = typed.trim().toUpperCase() === code
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
+      <div className="w-full max-w-lg rounded-2xl bg-slate-900 border border-white/15 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
+          <h3 className="text-lg font-black text-white">{title}</h3>
+          <button onClick={onClose} className="text-white/40 hover:text-white text-xl leading-none">×</button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          {/* Step indicator */}
+          <div className="flex items-center gap-1.5">
+            {[1, 2, 3, 4, 5].map((n) => (
+              <div key={n} className={`h-1.5 flex-1 rounded-full ${step >= n ? 'bg-blue-500' : 'bg-white/10'}`} />
+            ))}
+          </div>
+
+          {step === 1 && (
+            <div className="space-y-3">
+              <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-sm text-red-100">
+                <div className="font-bold text-red-200 mb-1">⚠ Dangerous action — cannot be undone</div>
+                {isReset ? (
+                  <ul className="list-disc pl-5 space-y-1 text-red-100/90">
+                    <li>Season {season?.seasonNumber} is <b>archived</b> (its data is kept forever, browsable via the season picker).</li>
+                    <li>A new active season is created; teams carry over with <b>logos, colors and Discord roles</b>, but <b>rosters are emptied</b>.</li>
+                    <li><b>No schedule</b> is generated — you add/adjust teams and generate it after.</li>
+                    <li>Standings, power rankings and stats start fresh for the new season.</li>
+                  </ul>
+                ) : (
+                  <ul className="list-disc pl-5 space-y-1 text-red-100/90">
+                    <li><b>Permanently deletes</b> Season {season?.seasonNumber} and its teams, rosters, schedule, brackets, series and games.</li>
+                    <li>Per-season stat aggregates are removed; <b>lifetime player stats are kept</b>.</li>
+                    <li>If this is the active season, the newest remaining season is auto-activated.</li>
+                  </ul>
+                )}
+              </div>
+              <p className="text-xs text-white/50">This needs <b>3 director approvals in Discord</b> before anything changes.</p>
+              <div className="flex justify-end gap-2">
+                <button onClick={onClose} className="px-3 py-2 text-sm text-white/60 hover:text-white">Cancel</button>
+                <button onClick={() => setStep(2)} className="px-4 py-2 text-sm font-bold text-white bg-red-500 hover:bg-red-400 rounded-lg">I understand — continue</button>
+              </div>
+            </div>
+          )}
+
+          {step === 2 && (
+            <div className="space-y-3">
+              <p className="text-sm text-white/70">Type this code to confirm (it can&apos;t be copied):</p>
+              <NonCopyableCode code={code} />
+              <input
+                value={typed}
+                onChange={(e) => setTyped(e.target.value)}
+                onPaste={(e) => e.preventDefault()}
+                placeholder="Type the code"
+                className="w-full px-3 py-2 bg-black/40 border border-white/15 rounded-lg text-white font-mono tracking-widest uppercase focus:border-blue-400/60 focus:outline-none"
+              />
+              <div className="flex justify-between gap-2">
+                <button onClick={() => setStep(1)} className="px-3 py-2 text-sm text-white/60 hover:text-white">Back</button>
+                <button
+                  onClick={() => setStep(isReset ? 3 : 4)}
+                  disabled={!codeOk}
+                  className="px-4 py-2 text-sm font-bold text-white bg-blue-500 hover:bg-blue-400 disabled:opacity-40 rounded-lg"
+                >
+                  Continue
+                </button>
+              </div>
+            </div>
+          )}
+
+          {step === 3 && isReset && (
+            <div className="space-y-3">
+              <div>
+                <label className="block text-[11px] uppercase tracking-wider text-blue-300/70 mb-1">New season number</label>
+                <input type="number" min={1} value={newSeasonNumber}
+                  onChange={(e) => setNewSeasonNumber(e.target.value)}
+                  className="w-full px-3 py-2 bg-black/40 border border-white/15 rounded-lg text-white" />
+              </div>
+              <div>
+                <label className="block text-[11px] uppercase tracking-wider text-blue-300/70 mb-1">Name (optional)</label>
+                <input value={newName} onChange={(e) => setNewName(e.target.value)}
+                  className="w-full px-3 py-2 bg-black/40 border border-white/15 rounded-lg text-white" />
+              </div>
+              <div>
+                <label className="block text-[11px] uppercase tracking-wider text-blue-300/70 mb-1">Start date (optional)</label>
+                <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
+                  className="w-full px-3 py-2 bg-black/40 border border-white/15 rounded-lg text-white" />
+              </div>
+              <div className="flex justify-between gap-2">
+                <button onClick={() => setStep(2)} className="px-3 py-2 text-sm text-white/60 hover:text-white">Back</button>
+                <button onClick={() => setStep(4)} disabled={!(Number(newSeasonNumber) > 0)}
+                  className="px-4 py-2 text-sm font-bold text-white bg-blue-500 hover:bg-blue-400 disabled:opacity-40 rounded-lg">Continue</button>
+              </div>
+            </div>
+          )}
+
+          {step === 4 && (
+            <div className="space-y-3">
+              <div className="p-3 rounded-lg bg-white/5 border border-white/10 text-sm text-white/80">
+                {isReset
+                  ? <>Archive <b>Season {season?.seasonNumber}</b> and start <b>Season {newSeasonNumber}</b>{newName ? ` — ${newName}` : ''}.</>
+                  : <>Delete <b>Season {season?.seasonNumber}</b> and everything tied to it.</>}
+              </div>
+              {err && <div className="p-2 rounded bg-red-500/10 border border-red-500/30 text-red-200 text-sm">{err}</div>}
+              <div className="flex justify-between gap-2">
+                <button onClick={() => setStep(isReset ? 3 : 2)} className="px-3 py-2 text-sm text-white/60 hover:text-white">Back</button>
+                <button onClick={submit} disabled={busy}
+                  className="px-4 py-2 text-sm font-bold text-white bg-red-500 hover:bg-red-400 disabled:opacity-50 rounded-lg">
+                  {busy ? 'Submitting…' : 'Send to directors'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {step === 5 && (
+            <div className="space-y-3 text-center py-2">
+              {(!poll || poll.status === 'awaiting_approval' || poll.status === 'pending_post') && (
+                <>
+                  <div className="text-4xl">📨</div>
+                  <p className="text-sm text-white/80">A message was sent to the director chat. <b>3 directors must react ✅</b> to confirm — go check-mark there.</p>
+                  <p className="text-2xl font-black text-blue-200">{poll ? poll.approvals : 0} / {poll ? poll.required : 3}</p>
+                  <p className="text-xs text-white/40">Any director&apos;s ❌ withdraws it. Expires in 24h. You can close this — it keeps going in Discord.</p>
+                </>
+              )}
+              {poll?.status === 'executed' && (
+                <>
+                  <div className="text-4xl">✅</div>
+                  <p className="text-sm text-green-200 font-bold">Approved and executed.</p>
+                  {poll.result && <p className="text-xs text-white/50">{poll.result}</p>}
+                  <button onClick={onDone} className="px-4 py-2 text-sm font-bold text-white bg-blue-500 hover:bg-blue-400 rounded-lg">Done</button>
+                </>
+              )}
+              {poll?.status === 'declined' && (
+                <>
+                  <div className="text-4xl">🚫</div>
+                  <p className="text-sm text-red-200 font-bold">Withdrawn by a director.</p>
+                  <button onClick={onClose} className="px-4 py-2 text-sm font-bold text-white bg-white/10 hover:bg-white/20 rounded-lg">Close</button>
+                </>
+              )}
+              {poll?.status === 'expired' && (
+                <>
+                  <div className="text-4xl">⌛</div>
+                  <p className="text-sm text-white/70">The request expired without 3 approvals.</p>
+                  <button onClick={onClose} className="px-4 py-2 text-sm font-bold text-white bg-white/10 hover:bg-white/20 rounded-lg">Close</button>
+                </>
+              )}
+              {poll?.status === 'failed' && (
+                <>
+                  <div className="text-4xl">⚠️</div>
+                  <p className="text-sm text-red-200">Execution failed: {poll.result || 'unknown error'}.</p>
+                  <button onClick={onClose} className="px-4 py-2 text-sm font-bold text-white bg-white/10 hover:bg-white/20 rounded-lg">Close</button>
+                </>
+              )}
+              {(!poll || poll.status === 'awaiting_approval' || poll.status === 'pending_post') && (
+                <button onClick={onClose} className="mt-1 text-xs text-white/40 hover:text-white underline">Close</button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

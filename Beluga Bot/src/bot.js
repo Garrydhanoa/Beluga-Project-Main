@@ -223,6 +223,18 @@ class BelugaLeagueBot {
             } catch (mmrError) {
                 Logger.error('Failed to start MMR outbox poller', mmrError);
             }
+
+            // Director-gated season lifecycle (Start New Season / Delete Season):
+            // post approval embeds for website-queued requests, and collect the 3
+            // director ✅ reactions that trigger the archive+new-season / delete.
+            try {
+                const { startSeasonActionsPoller } = require('./stats/seasonActionsPoller');
+                const { registerSeasonApprovalHandlers } = require('./stats/seasonApprovals');
+                startSeasonActionsPoller(client);
+                registerSeasonApprovalHandlers(client);
+            } catch (seasonError) {
+                Logger.error('Failed to start season actions poller/approvals', seasonError);
+            }
         });
 
         this.client.on(Events.InteractionCreate, async (interaction) => {
@@ -519,6 +531,54 @@ class BelugaLeagueBot {
                 }
             } catch (error) {
                 Logger.error('Error handling reaction add', error);
+            }
+        });
+
+        // A member joined (or REJOINED) the server → queue a single MMR pull so they
+        // update immediately instead of waiting for the next bulk run (which skips
+        // players not in the server). Non-fatal + fire-and-forget; no-ops if they're
+        // not in the SalSheet.
+        this.client.on(Events.GuildMemberAdd, async (member) => {
+            try {
+                if (member.user?.bot) return;
+                const { enqueueRejoinUpdate } = require('./stats/registerQueue');
+                await enqueueRejoinUpdate(member.id);
+            } catch (error) {
+                Logger.error('guildMemberAdd rejoin MMR enqueue failed', error);
+            }
+            // Re-grant any award roles this member held when they last left. Kept
+            // separate from the MMR enqueue so a failure in one doesn't skip the
+            // other. Non-fatal + best-effort; no-ops if nothing is remembered.
+            try {
+                if (member.user?.bot) return;
+                const { restoreAwardRoles } = require('./utils/awardSync');
+                await restoreAwardRoles(member);
+            } catch (error) {
+                Logger.error('guildMemberAdd award-role restore failed', error);
+            }
+        });
+
+        // A member's roles changed while they are IN the guild → keep award-role
+        // memory in sync (gain = remember, staff removal = forget). This is the
+        // only place memory is pruned; leaving the server never forgets.
+        this.client.on(Events.GuildMemberUpdate, async (oldMember, newMember) => {
+            try {
+                if ((newMember || oldMember)?.user?.bot) return;
+                const { syncMemberAwardMemory } = require('./utils/awardSync');
+                await syncMemberAwardMemory(oldMember, newMember);
+            } catch (error) {
+                Logger.error('guildMemberUpdate award-memory sync failed', error);
+            }
+        });
+
+        // A member left the server. Intentionally a NO-OP for award-role memory:
+        // memory persists precisely so their roles can be restored on rejoin.
+        this.client.on(Events.GuildMemberRemove, (member) => {
+            try {
+                if (member?.user?.bot) return;
+                Logger.info?.(`guildMemberRemove: ${member?.user?.tag || member?.id} left — award-role memory preserved for rejoin`);
+            } catch (error) {
+                Logger.error('guildMemberRemove handler failed', error);
             }
         });
 

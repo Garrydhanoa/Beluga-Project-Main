@@ -60,6 +60,11 @@ async function runMigrations() {
   await step('seasons.description', `ALTER TABLE seasons ADD COLUMN IF NOT EXISTS description TEXT`)
   await step('seasons.recruiting_open', `ALTER TABLE seasons ADD COLUMN IF NOT EXISTS recruiting_open BOOLEAN NOT NULL DEFAULT FALSE`)
   await step('seasons.start_date', `ALTER TABLE seasons ADD COLUMN IF NOT EXISTS start_date DATE`)
+  // Safety hardening (behind the director-gated reset flow): at most ONE active
+  // season at a time. Partial unique index — only one row may have status='active'.
+  // Non-fatal if it can't be created (e.g. pre-existing duplicate active rows); the
+  // reset/delete executors already enforce single-active in application code.
+  await step('ux_one_active_season', `CREATE UNIQUE INDEX IF NOT EXISTS ux_one_active_season ON seasons (status) WHERE status = 'active'`)
 
   await step('teams', `
     CREATE TABLE IF NOT EXISTS teams (
@@ -547,6 +552,34 @@ async function runMigrations() {
   `)
   await step('idx_power_rankings', `CREATE INDEX IF NOT EXISTS idx_power_rankings ON power_rankings(season_id, entity_type, division, rank)`)
 
+  // season_action_requests — director-gated queue for "Start New Season" / "Delete
+  // Season". The website (admin panel) inserts a row after the 5-step confirm; the
+  // bot posts an approval embed to the director channel, collects 3 Director ✅
+  // reactions (any ❌ withdraws; 24h expiry), then executes the archive+new-season
+  // or delete DB writes itself. Mirrored in the bot's database.js.
+  await step('season_action_requests', `
+    CREATE TABLE IF NOT EXISTS season_action_requests (
+      id SERIAL PRIMARY KEY,
+      action TEXT NOT NULL,
+      season_id INTEGER,
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      initiated_by_discord_id TEXT,
+      initiated_by_username TEXT,
+      verify_string TEXT,
+      status TEXT NOT NULL DEFAULT 'pending_post',
+      approval_channel_id TEXT,
+      approval_message_id TEXT,
+      approver_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+      declined_by TEXT,
+      expires_at TIMESTAMP,
+      result TEXT,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      posted_at TIMESTAMP,
+      executed_at TIMESTAMP
+    )
+  `)
+  await step('idx_season_action_requests_status', `CREATE INDEX IF NOT EXISTS idx_season_action_requests_status ON season_action_requests(status, created_at)`)
+
   // Franchise-level Discord wiring: a franchise has ONE GM and ONE NP role across
   // all its division teams (operator rule), plus an invite link for /franchise.
   await step('team_franchises.gm_role_id', `ALTER TABLE team_franchises ADD COLUMN IF NOT EXISTS gm_role_id TEXT`)
@@ -692,6 +725,19 @@ async function runMigrations() {
       role_id TEXT NOT NULL,
       discord_id TEXT NOT NULL,
       synced_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (role_id, discord_id)
+    )
+  `)
+
+  // Durable "last-known award roles per member" — survives a member leaving the
+  // server so the bot can re-grant those roles on rejoin. Pruned only when staff
+  // removes a role from an in-guild member (guildMemberUpdate); mirrors the bot's
+  // ensureAwardMemoryTable() in Beluga Bot/src/utils/awardSync.js.
+  await step('award_role_memory', `
+    CREATE TABLE IF NOT EXISTS award_role_memory (
+      role_id TEXT NOT NULL,
+      discord_id TEXT NOT NULL,
+      remembered_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (role_id, discord_id)
     )
   `)

@@ -15,6 +15,7 @@
  */
 
 const Logger = require('./logger');
+const { safeFetch } = require('./ssrfGuard');
 
 const fetch = global.fetch || require('node-fetch');
 
@@ -45,7 +46,7 @@ async function resolveLinkToImage(pageUrl) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), LINK_RESOLVE_TIMEOUT_MS);
     try {
-        const res = await fetch(pageUrl, {
+        const res = await safeFetch(pageUrl, {
             signal: controller.signal,
             headers: { 'User-Agent': 'Mozilla/5.0 (compatible; BelugaBot/1.0)' },
         });

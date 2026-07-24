@@ -6,7 +6,7 @@ const { config } = require('../config/config');
 const Logger = require('../utils/logger');
 const { LeagueDB, TransactionDB, isDatabaseAvailable } = require('../utils/database');
 const { ROLES, TEAM_ROLES, NP_ROLES, TEAM_NAMES, getTeamChoices, getDivisionChoices } = require('../constants/roles');
-const { attachTeamLogo } = require('../utils/teamRoles');
+const { attachTeamLogo, teamAutocomplete } = require('../utils/teamRoles');
 
 // Command-specific constants
 const TRANSACTION_REQUEST_CHANNEL_ID = '1178913188750823544';
@@ -257,11 +257,16 @@ module.exports = {
             option.setName('team')
                 .setDescription('The team to sign the player to')
                 .setRequired(true)
-                .addChoices(...getTeamChoices()))
+                .setAutocomplete(true))
         .addUserOption(option =>
             option.setName('player')
                 .setDescription('The player to sign')
                 .setRequired(true)),
+
+    // Live team list from the current season (DB), filtered by the chosen division.
+    async autocomplete(interaction) {
+        await teamAutocomplete(interaction, { valueField: 'name', divisionOptionName: 'division' });
+    },
 
     async execute(interaction) {
         try {

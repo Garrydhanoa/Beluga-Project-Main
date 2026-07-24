@@ -2,7 +2,7 @@ const { SlashCommandBuilder, EmbedBuilder, AttachmentBuilder } = require('discor
 const Logger = require('../utils/logger');
 const { TEAM_ROLES, TEAM_COLORS } = require('../constants/roles');
 const { getTeamSchedule, AAA_AA_ONLY_TEAMS, ALL_DIVISION_TEAMS } = require('../constants/schedule');
-const { attachTeamLogo } = require('../utils/teamRoles');
+const { attachTeamLogo, teamAutocomplete } = require('../utils/teamRoles');
 
 // Team logo for embeds — DB only (team→franchise logo). Returns an
 // AttachmentBuilder named team_logo.png or null. (Was IMAGES/logos/*.png.)
@@ -46,27 +46,9 @@ module.exports = {
                 .setAutocomplete(true)
         ),
 
+    // Live team list from the current season (DB), filtered by the chosen division.
     async autocomplete(interaction) {
-        const focusedOption = interaction.options.getFocused(true);
-        const division = interaction.options.getString('division');
-        
-        if (focusedOption.name === 'team') {
-            let teams = ALL_TEAMS;
-            
-            // Filter teams based on division if selected
-            if (division === 'MAJORS') {
-                teams = ALL_DIVISION_TEAMS;
-            }
-            
-            // Filter based on user input
-            const filtered = teams.filter(team => 
-                team.toLowerCase().includes(focusedOption.value.toLowerCase())
-            );
-            
-            await interaction.respond(
-                filtered.slice(0, 25).map(team => ({ name: team, value: team }))
-            );
-        }
+        await teamAutocomplete(interaction, { valueField: 'name', divisionOptionName: 'division' });
     },
 
     async execute(interaction) {

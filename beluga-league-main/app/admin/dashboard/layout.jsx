@@ -16,6 +16,8 @@ const NAV = [
   { label: 'Transactions', href: '/admin/dashboard/transactions', icon: 'arrows' },
   { label: 'Power Rankings', href: '/admin/dashboard/rankings', icon: 'trending' },
   { label: 'MMR Updater', href: '/admin/dashboard/mmr', icon: 'trending' },
+  { label: 'Tracker Linking', href: '/admin/dashboard/tracker-linking', icon: 'link' },
+  { label: 'Salary', href: '/admin/dashboard/salary', icon: 'dollar' },
   { label: 'Site Content', href: '/admin/dashboard/site-content', icon: 'grid' },
   { label: 'Ticket Setup', href: '/admin/dashboard/ticket-setup', icon: 'alert' },
   { label: 'Applications', href: '/admin/dashboard/applications', icon: 'user' },
@@ -39,6 +41,8 @@ const ICON_PATHS = {
   thread: 'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z',
   bell: 'M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9',
   alert: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z',
+  link: 'M13.828 10.172a4 4 0 010 5.656l-3 3a4 4 0 01-5.656-5.656l1.5-1.5m6.828-6.828a4 4 0 015.656 5.656l-1.5 1.5',
+  dollar: 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V6m0 10v2m0-2c-1.11 0-2.08-.402-2.599-1',
 }
 
 function Icon({ name, className = 'h-4 w-4' }) {

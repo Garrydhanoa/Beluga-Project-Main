@@ -7,6 +7,7 @@ import { motion } from 'framer-motion'
 import { majorsSchedule, aaaSchedule, getTeamInitials } from '../../../lib/scheduleData'
 import Avatar from '../../components/Avatar'
 import TeamLogoImg from '../../components/TeamLogo'
+import { useSeason, seasonQuerySuffix } from '../../components/SeasonContext'
 
 const ROLE_LABEL = { gm: 'General Manager', captain: 'Captain', player: 'Player', sub: 'Sub', np: 'Non-Playing' }
 // fakePlayers retired — when the API has no roster data, getTeamRoster()
@@ -194,18 +195,19 @@ export default function TeamPage() {
   const params = useParams()
   const teamName = decodeURIComponent(params.teamName)
 
+  const { season } = useSeason()
   const [activeTab, setActiveTab] = useState('roster')
   const [apiData, setApiData] = useState(null)
   const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
     let cancelled = false
-    fetch(`/api/public/team/${encodeURIComponent(teamName)}`, { cache: 'no-store' })
+    fetch(`/api/public/team/${encodeURIComponent(teamName)}?${seasonQuerySuffix(season).replace(/^&/, '')}`, { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => { if (!cancelled) { setApiData(d); setLoaded(true) } })
       .catch(() => { if (!cancelled) setLoaded(true) })
     return () => { cancelled = true }
-  }, [teamName])
+  }, [teamName, season])
 
   // Division keys come from the DB (e.g. ['Majors','AAA','AA']). Map to the
   // lowercase keys the UI uses. Fall back to hardcoded inference pre-load.

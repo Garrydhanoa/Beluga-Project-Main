@@ -142,7 +142,10 @@ export default function PlayerProfilePage() {
   // dense visualization with achievements, stat bars, match history, etc.).
   const player = useMemo(() => {
     if (!apiData?.player) return null
-    const current = (apiData.rosterHistory || []).find((r) => r.rosterActive) || (apiData.rosterHistory || [])[0]
+    // Current team comes from the API (active roster slot in the active season on an
+    // active team) — NOT a fallback to the most-recent stint, which would show a
+    // dropped player's old team. lastStint is only for last-known division display.
+    const lastStint = (apiData.rosterHistory || [])[0] || null
     const totalStats = (apiData.stats || []).reduce((acc, s) => ({
       goals: acc.goals + (s.goals || 0),
       assists: acc.assists + (s.assists || 0),
@@ -150,7 +153,7 @@ export default function PlayerProfilePage() {
       shots: acc.shots + (s.shots || 0),
       gp: acc.gp + (s.gamesPlayed || 0),
     }), { goals: 0, assists: 0, saves: 0, shots: 0, gp: 0 })
-    const divLabel = apiData.player.division || current?.division || null
+    const divLabel = apiData.player.division || lastStint?.division || null
     const divKey = (() => {
       const d = String(divLabel || '').toLowerCase()
       if (d.includes('major')) return 'major'
@@ -163,12 +166,12 @@ export default function PlayerProfilePage() {
       discordId: apiData.player.discordId || null,
       avatarUrl: apiData.player.avatarUrl || null,
       displayName: apiData.player.displayName,
-      team: current?.teamName || apiData.player.currentTeam || null,
-      teamId: current?.teamId ?? apiData.player.currentTeamId ?? null,
+      team: apiData.player.currentTeam || null,
+      teamId: apiData.player.currentTeamId ?? null,
       divisionLabel: divKey === 'major' ? 'Majors' : divKey.toUpperCase(),
-      isCaptain: current?.role === 'captain',
-      isFreeAgent: !current?.rosterActive,
-      role: current?.role || null,
+      isCaptain: apiData.player.role === 'captain',
+      isFreeAgent: apiData.player.isFreeAgent ?? !apiData.player.currentTeam,
+      role: apiData.player.role || null,
       goals: totalStats.goals,
       assists: totalStats.assists,
       saves: totalStats.saves,

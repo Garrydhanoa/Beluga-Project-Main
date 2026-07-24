@@ -4,6 +4,7 @@ const { getActiveProvider, AI_LOG_CHANNEL_ID } = require('./aiSettings');
 
 // Use built-in fetch for Node.js 18+
 const fetch = global.fetch || require('node-fetch');
+const { safeFetch } = require('./ssrfGuard');
 
 /**
  * Provider catalogue. Models chosen as the best current option per provider
@@ -393,7 +394,9 @@ Read the display name of whoever you're talking to and address them naturally wh
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 6000);
         try {
-            const res = await fetch(url, { signal: controller.signal });
+            // SSRF guard: user-supplied URL — reject internal/private/metadata targets
+            // and re-validate across redirects before the server fetches the bytes.
+            const res = await safeFetch(url, { signal: controller.signal });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const mime = (res.headers.get('content-type') || 'image/png').split(';')[0].trim();
             const arrayBuf = await res.arrayBuffer();

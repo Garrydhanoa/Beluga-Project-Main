@@ -4,11 +4,13 @@ import { useEffect, useState } from "react"
 import Link from "next/link"
 import { motion } from "framer-motion"
 import TeamLogo from "../components/TeamLogo"
+import SeasonPicker from "../components/SeasonPicker"
+import { useSeason, seasonQuerySuffix } from "../components/SeasonContext"
 
 const DIVISIONS = [
-  { key: 'aa', label: 'AA', tagline: 'Amateur Division', teams: 14 },
-  { key: 'aaa', label: 'AAA', tagline: 'Challenger Division', teams: 14 },
-  { key: 'majors', label: 'MAJORS', tagline: 'Elite Division', teams: 10 },
+  { key: 'aa', label: 'AA', tagline: 'AA Division', teams: 14 },
+  { key: 'aaa', label: 'AAA', tagline: 'AAA Division', teams: 14 },
+  { key: 'majors', label: 'MAJORS', tagline: 'Majors Division', teams: 10 },
 ]
 
 function FadeIn({ children, delay = 0, y = 30, className = "" }) {
@@ -98,21 +100,22 @@ function TeamSide({ name, teamId, side }) {
 }
 
 export default function SchedulesPage() {
+  const { season } = useSeason()
   const [activeTab, setActiveTab] = useState('aa')
   const [regular, setRegular] = useState({ aa: {}, aaa: {}, majors: {} })
   const [playoffs, setPlayoffs] = useState({ aa: [], aaa: [], majors: [] })
   const [seasonLabel, setSeasonLabel] = useState('Season')
 
   useEffect(() => {
-    fetch('/api/schedule', { cache: 'no-store' })
+    fetch(`/api/schedule?${seasonQuerySuffix(season).replace(/^&/, '')}`, { cache: 'no-store' })
       .then((r) => r.json())
       .then((data) => {
-        if (data?.regular) setRegular(data.regular)
-        if (data?.playoffs) setPlayoffs(data.playoffs)
-        if (data?.season?.seasonNumber) setSeasonLabel(`Season ${data.season.seasonNumber}`)
+        setRegular(data?.regular || { aa: {}, aaa: {}, majors: {} })
+        setPlayoffs(data?.playoffs || { aa: [], aaa: [], majors: [] })
+        setSeasonLabel(data?.season?.seasonNumber ? `Season ${data.season.seasonNumber}` : 'Season')
       })
       .catch(() => {})
-  }, [])
+  }, [season])
 
   const currentSchedule = regular[activeTab] || {}
   const currentPlayoffs = playoffs[activeTab] || []
@@ -146,6 +149,7 @@ export default function SchedulesPage() {
       {/* Division Tabs */}
       <section className="container mx-auto px-4 mb-10">
         <FadeIn delay={0.1}>
+          <div className="flex justify-center mb-4"><SeasonPicker /></div>
           <div className="flex justify-center gap-2 sm:gap-3 flex-wrap">
             {DIVISIONS.map((div) => {
               const active = activeTab === div.key

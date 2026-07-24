@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { query } from '../../../../../lib/db'
 import { ensureLeagueSchema } from '../../../../../lib/leagueSchema'
-import { getActiveSeason } from '../../../../../lib/leagueStore'
+import { resolveSeason } from '../../../../../lib/leagueStore'
 import { getMemberMap } from '../../../../../lib/discordMembers'
 import { getSalaryMap } from '../../../../../lib/salarySheet'
 import { getTeamStatsBundle } from '../../../../../lib/belugaStats'
@@ -10,13 +10,14 @@ export const dynamic = 'force-dynamic'
 
 const DIV_ORDER = { Majors: 0, AAA: 1, AA: 2 }
 
-export async function GET(_request, { params }) {
+export async function GET(request, { params }) {
   await ensureLeagueSchema()
   const { name } = await params
   const teamName = decodeURIComponent(name || '').trim()
   if (!teamName) return NextResponse.json({ error: 'name required' }, { status: 400 })
 
-  const season = await getActiveSeason()
+  const seasonParam = new URL(request.url).searchParams.get('season')
+  const season = await resolveSeason(seasonParam)
   if (!season) return NextResponse.json({ season: null, name: teamName, divisions: [], byDivision: {} })
 
   // Find every active-season team row matching this name (one per division it plays in),

@@ -6,7 +6,7 @@ const { config } = require('../config/config');
 const Logger = require('../utils/logger');
 const { ROLES, TEAM_ROLES, TEAM_NAMES, getTeamChoices } = require('../constants/roles');
 const { TransactionDB } = require('../utils/database');
-const { attachTeamLogo } = require('../utils/teamRoles');
+const { attachTeamLogo, teamAutocomplete } = require('../utils/teamRoles');
 
 // Command-specific constants
 const TRANSACTION_REQUEST_CHANNEL_ID = '1178913188750823544';
@@ -16,9 +16,6 @@ const SPREADSHEET_ID = '1cnrCOiAX5PfcxqpTX16YvbPVYnBxZiCk_zSCDqoeDGs';
 
 // Team names in order (columns B-Q)
 const TEAM_COLUMNS = TEAM_NAMES;
-
-// Team choices for dropdown
-const TEAM_CHOICES = getTeamChoices();
 
 // Division rows (AA=2, AAA=3, MAJORS=4)
 const DIVISION_ROWS = {
@@ -164,7 +161,7 @@ module.exports = {
                 .setName('team')
                 .setDescription('Team name')
                 .setRequired(true)
-                .addChoices(...TEAM_CHOICES)
+                .setAutocomplete(true)
         )
         .addStringOption(option =>
             option
@@ -183,6 +180,11 @@ module.exports = {
                 .setDescription('The player')
                 .setRequired(true)
         ),
+
+    // Live team list from the current season (DB), filtered by the chosen division.
+    async autocomplete(interaction) {
+        await teamAutocomplete(interaction, { valueField: 'name', divisionOptionName: 'division' });
+    },
 
     async execute(interaction) {
         try {

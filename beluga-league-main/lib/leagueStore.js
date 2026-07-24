@@ -56,6 +56,32 @@ export async function getActiveSeason() {
   return null
 }
 
+export async function getSeasonByNumber(seasonNumber) {
+  await ensureLeagueSchema()
+  const n = Number(seasonNumber)
+  if (!Number.isFinite(n)) return null
+  const result = await query('SELECT * FROM seasons WHERE season_number = $1', [n])
+  return result.rows.length ? mapSeason(result.rows[0]) : null
+}
+
+/**
+ * Resolve a public `?season=` query param to a season row.
+ * Accepts a season NUMBER, or 'active'/'current'/'' → the active season. Falls
+ * back to the active season when the requested one doesn't exist, so every public
+ * page keeps working (and defaults to current) with no param.
+ */
+export async function resolveSeason(seasonParam) {
+  if (seasonParam === null || seasonParam === undefined) return getActiveSeason()
+  const raw = String(seasonParam).trim().toLowerCase()
+  if (!raw || raw === 'active' || raw === 'current') return getActiveSeason()
+  const n = Number(raw)
+  if (Number.isFinite(n) && n > 0) {
+    const byNum = await getSeasonByNumber(n)
+    if (byNum) return byNum
+  }
+  return getActiveSeason()
+}
+
 export async function createSeason(seasonNumber, name = null) {
   await ensureLeagueSchema()
   const result = await query(

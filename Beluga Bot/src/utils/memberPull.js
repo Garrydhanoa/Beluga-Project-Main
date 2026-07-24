@@ -59,7 +59,23 @@ async function performMemberPull(client, confirmationChannelId = '14039614617760
         // Persist members + roles to Postgres so the website has a single source
         // of identity (display names, avatars) + an exact member count. Non-fatal.
         try {
-            await syncGuildToDb(guild);
+            const syncResult = await syncGuildToDb(guild);
+            // Safety net for rejoins the bot missed while offline (the realtime
+            // guildMemberAdd handler covers online rejoins): re-grant remembered
+            // award roles to anyone who came back since the last sync. Best-effort.
+            const rejoinedIds = (syncResult && syncResult.rejoinedIds) || [];
+            if (rejoinedIds.length) {
+                const { restoreAwardRoles } = require('./awardSync');
+                for (const id of rejoinedIds) {
+                    const member = guild.members.cache.get(id);
+                    if (!member || member.user?.bot) continue;
+                    try {
+                        await restoreAwardRoles(member);
+                    } catch (restoreErr) {
+                        Logger.error(`Award-role restore for rejoiner ${id} failed`, restoreErr);
+                    }
+                }
+            }
         } catch (dbErr) {
             Logger.error('Member DB sync failed (continuing with sheet pull)', dbErr);
         }

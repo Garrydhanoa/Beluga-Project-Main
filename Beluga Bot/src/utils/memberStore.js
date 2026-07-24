@@ -64,10 +64,23 @@ async function syncGuildToDb(guild) {
         if (!ok) return false;
     }
 
+    let rejoinedIds = [];
     try {
         // ---- Members ----
         const members = Array.from(guild.members.cache.values());
+        const currentIds = members.map((m) => m.user.id);
         if (members.length > 0) {
+            // Detect rejoiners BEFORE the upsert below flips is_in_guild → TRUE:
+            // members present in the snapshot whose stored row still says they had
+            // left. Their award roles should be re-granted (handled by the caller).
+            try {
+                const prior = await pool.query(
+                    `SELECT discord_id FROM discord_members WHERE is_in_guild = FALSE AND discord_id = ANY($1::text[])`,
+                    [currentIds]
+                );
+                rejoinedIds = prior.rows.map((r) => String(r.discord_id)).filter(Boolean);
+            } catch { rejoinedIds = []; }
+
             // Batched multi-row upsert to keep round-trips down.
             const CHUNK = 200;
             for (let i = 0; i < members.length; i += CHUNK) {
@@ -109,7 +122,6 @@ async function syncGuildToDb(guild) {
             }
 
             // Anyone in the table but not in the current guild snapshot has left.
-            const currentIds = members.map((m) => m.user.id);
             await pool.query(
                 `UPDATE discord_members
                  SET is_in_guild = FALSE, synced_at = CURRENT_TIMESTAMP
@@ -175,10 +187,10 @@ async function syncGuildToDb(guild) {
         }
 
         Logger.success(`Synced ${members.length} members + ${roles.length} roles to DB`);
-        return true;
+        return { ok: true, rejoinedIds };
     } catch (err) {
         Logger.error('syncGuildToDb failed', err);
-        return false;
+        return { ok: false, rejoinedIds };
     }
 }
 

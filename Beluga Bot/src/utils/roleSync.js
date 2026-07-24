@@ -704,6 +704,12 @@ async function performRoleSync(client) {
                 if (!hasSalary) {
                     // No salary - remove all league-related roles and keep only NO_SALARY role
                     await cleanupNoSalaryPlayer(member);
+                    // A no-salary player can STILL be explicitly Ineligible: if their
+                    // eligible column (J) is an explicit "NO" they must get BOTH the
+                    // No Salary role AND the Ineligible role. cleanupNoSalaryPlayer no
+                    // longer touches Ineligible — syncEligibleRole owns it here too, so
+                    // an explicit "NO" adds Ineligible while a BLANK cell adds nothing.
+                    await syncEligibleRole(member, playerData);
                     syncedCount++;
                     continue;
                 }
@@ -1057,11 +1063,11 @@ async function cleanupNoSalaryPlayer(member) {
         changesMade = true;
     }
 
-    // Remove ineligible role if present
-    if (member.roles.cache.has(ROLES.INELIGIBLE)) {
-        await member.roles.remove(ROLES.INELIGIBLE);
-        changesMade = true;
-    }
+    // NOTE: Ineligible is intentionally NOT removed here. It is owned by
+    // syncEligibleRole (now called on BOTH the salary and no-salary paths) so a
+    // no-salary player with an explicit eligible=NO keeps/gets Ineligible, while a
+    // blank eligible cell has it removed. Removing it here would cause a remove→add
+    // flicker every cycle for ineligible no-salary players.
 
     if (changesMade) {
         Logger.info(`Cleaned up roles for no-salary player (kept team roles): ${member.user.username}`);

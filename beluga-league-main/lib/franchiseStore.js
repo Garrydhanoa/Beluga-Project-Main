@@ -248,3 +248,66 @@ export async function addFranchiseToSeason({ franchiseId, seasonId, division, na
     client.release()
   }
 }
+
+// The franchise's teams in a given season (one per division it fields), for the
+// per-franchise add/remove-team panel.
+export async function getFranchiseSeasonTeams(franchiseId, seasonId) {
+  await ensureLeagueSchema()
+  const r = await query(
+    `SELECT id, division, name, is_active, (logo_data IS NOT NULL) AS has_logo
+     FROM teams WHERE franchise_id = $1 AND season_id = $2
+     ORDER BY CASE division WHEN 'Majors' THEN 0 WHEN 'AAA' THEN 1 WHEN 'AA' THEN 2 ELSE 3 END`,
+    [franchiseId, seasonId]
+  )
+  return r.rows.map((row) => ({
+    teamId: row.id, division: row.division, name: row.name,
+    isActive: row.is_active, hasLogo: row.has_logo,
+  }))
+}
+
+// Teams in a season not owned by any franchise (orphaned/untaken) — claimable by a
+// franchise. Excludes teams already linked to a franchise.
+export async function listOrphanTeams(seasonId) {
+  await ensureLeagueSchema()
+  const r = await query(
+    `SELECT id, division, name FROM teams
+     WHERE season_id = $1 AND franchise_id IS NULL AND is_active = TRUE
+     ORDER BY division, name`,
+    [seasonId]
+  )
+  return r.rows.map((row) => ({ teamId: row.id, division: row.division, name: row.name }))
+}
+
+// Claim an untaken/orphaned team into a franchise. Refuses to steal a team already
+// owned by a different franchise. Copies the franchise logo onto the team when it
+// has none, so logo/color/roles resolve from the franchise everywhere.
+export async function linkTeamToFranchise(teamId, franchiseId) {
+  await ensureLeagueSchema()
+  const franchise = await getFranchise(franchiseId)
+  if (!franchise) throw new Error('Franchise not found')
+  const cur = await query('SELECT id, franchise_id, logo_data FROM teams WHERE id = $1', [teamId])
+  if (!cur.rows.length) throw new Error('Team not found')
+  const ownedBy = cur.rows[0].franchise_id
+  if (ownedBy && Number(ownedBy) !== Number(franchiseId)) {
+    throw new Error('That team is already taken by another franchise')
+  }
+  await query(
+    'UPDATE teams SET franchise_id = $1, is_active = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+    [franchiseId, teamId]
+  )
+  if (!cur.rows[0].logo_data && franchise.hasLogo) {
+    const logo = await getFranchiseLogo(franchiseId)
+    if (logo?.data) {
+      await query('UPDATE teams SET logo_mime = $1, logo_data = $2 WHERE id = $3', [franchise.logoMime, logo.data, teamId])
+    }
+  }
+  return { teamId: Number(teamId), franchiseId: Number(franchiseId) }
+}
+
+// Remove a team from its franchise, freeing it as an orphan another franchise can
+// claim. The team row survives (schedule/stats intact); only the franchise link clears.
+export async function unlinkTeamFromFranchise(teamId) {
+  await ensureLeagueSchema()
+  await query('UPDATE teams SET franchise_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1', [teamId])
+  return { teamId: Number(teamId) }
+}

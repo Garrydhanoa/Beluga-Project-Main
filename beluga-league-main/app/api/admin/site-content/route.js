@@ -117,6 +117,9 @@ async function postHandler(request) {
     list = list.filter((r) => r.roleId !== String(body.roleId))
     await query(`UPDATE app_config SET value = $1, updated_at = CURRENT_TIMESTAMP WHERE key = 'award_roles'`, [JSON.stringify(list)])
     await query(`DELETE FROM award_role_holders WHERE role_id = $1`, [String(body.roleId)]).catch(() => {})
+    // Also purge durable award-role memory so a de-configured role is never
+    // re-granted to a member on rejoin.
+    await query(`DELETE FROM award_role_memory WHERE role_id = $1`, [String(body.roleId)]).catch(() => {})
     return NextResponse.json({ ok: true })
   }
 

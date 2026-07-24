@@ -206,7 +206,7 @@ export async function getTeamTotals({ scope = 'season', seasonId = null, divisio
     where += ` AND ts.division = $${params.length}`
   }
   const r = await query(
-    `SELECT t.name AS team, ts.division,
+    `SELECT t.id AS team_id, t.name AS team, ts.division,
         SUM(ts.games_played)::int AS games_played,
         SUM(ts.score)::int AS score, SUM(ts.goals)::int AS goals, SUM(ts.assists)::int AS assists,
         SUM(ts.saves)::int AS saves, SUM(ts.shots)::int AS shots,
@@ -215,11 +215,13 @@ export async function getTeamTotals({ scope = 'season', seasonId = null, divisio
      FROM stats_team_season ts
      JOIN teams t ON t.id = ts.team_id
      WHERE ${where}
-     GROUP BY t.name, ts.division
+     GROUP BY t.id, t.name, ts.division
      ORDER BY SUM(ts.score) DESC`,
     params
   ).catch(() => ({ rows: [] }))
-  return r.rows
+  // teamId lets the leaderboard logo resolve by EXACT DB match (team→franchise
+  // fallback) instead of a name lookup that can miss.
+  return r.rows.map((row) => ({ ...row, teamId: row.team_id }))
 }
 
 /** Franchise records: combined W-L of a franchise's teams across all 3 divisions. */
@@ -232,6 +234,7 @@ export async function getFranchiseRecords({ scope = 'season', seasonId = null })
   }
   const r = await query(
     `SELECT COALESCE(f.name, t.name) AS franchise,
+        MAX(t.id) FILTER (WHERE t.franchise_id IS NOT NULL) AS team_id,
         SUM(ts.series_wins)::int AS wins, SUM(ts.series_losses)::int AS losses
      FROM stats_team_season ts
      JOIN teams t ON t.id = ts.team_id
@@ -241,9 +244,13 @@ export async function getFranchiseRecords({ scope = 'season', seasonId = null })
      ORDER BY SUM(ts.series_wins) DESC, SUM(ts.series_losses) ASC`,
     params
   ).catch(() => ({ rows: [] }))
+  // teamId of a FRANCHISED member team resolves to the franchise logo via the logo
+  // API's team→franchise fallback. Passing the franchise NAME alone can 404 when a
+  // logo-less same-named team row shadows the franchise — so prefer the id.
   return r.rows.map((row, i) => ({
     rank: i + 1,
     franchise: row.franchise,
+    teamId: row.team_id || null,
     wins: Number(row.wins || 0),
     losses: Number(row.losses || 0),
     record: `${row.wins}-${row.losses}`,

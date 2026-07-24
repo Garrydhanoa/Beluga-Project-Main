@@ -5,6 +5,8 @@ import Link from 'next/link'
 import { motion } from 'framer-motion'
 import Avatar from '../components/Avatar'
 import TeamLogo from '../components/TeamLogo'
+import SeasonPicker from '../components/SeasonPicker'
+import { useSeason, seasonQuerySuffix } from '../components/SeasonContext'
 
 const DIVISIONS = [
   { key: 'Majors', label: 'Majors' },
@@ -42,17 +44,19 @@ function TrendChip({ trend }) {
 }
 
 export default function PowerRankingsPage() {
+  const { season } = useSeason()
   const [division, setDivision] = useState('Majors')
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetch('/api/power-rankings', { cache: 'no-store' })
+    setLoading(true)
+    fetch(`/api/power-rankings?${seasonQuerySuffix(season).replace(/^&/, '')}`, { cache: 'no-store' })
       .then((r) => r.json())
       .then((d) => setData(d))
       .catch(() => setData(null))
       .finally(() => setLoading(false))
-  }, [])
+  }, [season])
 
   const seasonNum = data?.season?.season_number
   const teams = useMemo(() => data?.rankings?.team?.[division] || [], [data, division])
@@ -89,7 +93,8 @@ export default function PowerRankingsPage() {
       {/* DIVISION TABS */}
       <section className="container mx-auto px-4 mb-10">
         <FadeIn delay={0.1}>
-          <div className="flex gap-2 flex-wrap justify-center">
+          <div className="flex gap-2 flex-wrap justify-center items-center">
+            <SeasonPicker />
             {DIVISIONS.map((d) => {
               const active = division === d.key
               return (

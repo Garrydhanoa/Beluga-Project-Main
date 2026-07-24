@@ -1,0 +1,13 @@
+# Server/run logs — never commit (a run that logs a token/connection string would
+# otherwise leak it into the repo).
+*.log
+dev-server.log
+
+# Secrets — belt-and-suspenders (each app also ignores these in its own .gitignore).
+.env
+.env.*
+!.env.example
+credentials.json
+**/credentials.json
+*.pem
+*.key

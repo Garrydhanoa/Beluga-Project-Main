@@ -4,6 +4,7 @@ import { ensureLeagueSchema } from '../../../../lib/leagueSchema'
 import { getSalaryMap } from '../../../../lib/salarySheet'
 import { getMemberMap } from '../../../../lib/discordMembers'
 import { getPlayerStatsBundle } from '../../../../lib/belugaStats'
+import { getActiveSeason } from '../../../../lib/leagueStore'
 
 export const dynamic = 'force-dynamic'
 
@@ -79,7 +80,7 @@ export async function GET(_request, { params }) {
   // Step 3: Roster history.
   const rosterRes = await query(`
     SELECT rm.season_id, s.season_number, s.year, s.status AS season_status,
-      rm.team_id, t.name AS team_name, t.division,
+      rm.team_id, t.name AS team_name, t.division, t.is_active AS team_active,
       rm.role, rm.is_active AS roster_active
     FROM team_roster_members rm
     JOIN teams t ON t.id = rm.team_id
@@ -127,7 +128,17 @@ export async function GET(_request, { params }) {
   // Discord identity (display name + avatar) — the authoritative name source.
   const memberMap = await getMemberMap().catch(() => new Map())
   const member = memberMap.get(String(discordId)) || null
-  const currentRoster = (rosterRes.rows || []).find((r) => r.roster_active) || (rosterRes.rows || [])[0]
+  // "Current team" must match the player DIRECTORY exactly: an ACTIVE roster slot
+  // in the ACTIVE season on an ACTIVE team. A lingering inactive / past-season row
+  // is NOT a current team — falling back to the most-recent stint was the "shows
+  // old team while actually a free agent" bug (a dropped player kept their team).
+  const activeSeason = await getActiveSeason()
+  const activeSeasonId = activeSeason?.id || null
+  const currentRoster = (rosterRes.rows || []).find(
+    (r) => r.roster_active && r.season_id === activeSeasonId && r.team_active !== false
+  ) || null
+  // Most-recent stint of any season — used ONLY for last-known division display.
+  const lastStint = (rosterRes.rows || [])[0] || null
 
   const resolvedName =
     member?.displayName ||
@@ -147,9 +158,12 @@ export async function GET(_request, { params }) {
       inGuild: member?.isInGuild ?? null,
       lastSeen: identity?.last_seen || null,
       salary: sheet?.salary ?? null,
-      division: currentRoster?.division || sheet?.league || null,
+      division: currentRoster?.division || lastStint?.division || sheet?.league || null,
       eligible: sheet?.eligible ?? null,
       currentTeam: currentRoster?.team_name || null,
+      currentTeamId: currentRoster?.team_id || null,
+      isFreeAgent: !currentRoster,
+      role: currentRoster?.role || null,
     },
     transactions: txRes.rows.map((r) => ({
       id: r.id,

@@ -227,7 +227,7 @@ export async function GET(request, { params }) {
   } catch (error) {
     console.error('Error fetching roster:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch roster data', details: error.message },
+      { error: 'Failed to fetch roster data' },
       { status: 500 }
     );
   }

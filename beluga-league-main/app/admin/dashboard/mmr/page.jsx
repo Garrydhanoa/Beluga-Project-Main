@@ -3,10 +3,25 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Avatar from '../../../components/Avatar'
 
-const API = '/api/admin/mmr'
+const API = '/api/admin/mmr'        // proxy → scraper (ACTIONS + sheet-backed reads)
+const DB_API = '/api/admin/mmr-db'  // DB-direct (status/players/config — works offline)
 
 async function call(path, method = 'GET', body) {
   const res = await fetch(`${API}/${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+    cache: 'no-store',
+  })
+  const text = await res.text()
+  try { return { ok: res.ok, status: res.status, data: JSON.parse(text) } }
+  catch { return { ok: res.ok, status: res.status, data: text } }
+}
+
+// Same shape as call(), but hits the website's DB-direct mirror of the scraper's
+// status/players/config — so the panel populates even when the scraper is offline.
+async function dbCall(path, method = 'GET', body) {
+  const res = await fetch(`${DB_API}/${path}`, {
     method,
     headers: { 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
@@ -101,6 +116,7 @@ function PlayerCard({ p, member }) {
           {p.any_invalid && <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-200 border border-yellow-400/30" title="A tracker returned 404 (not found) — player notified to open a ticket">404 TRACKER</span>}
           {ping404 && <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-200 border border-amber-400/30" title="Player pinged to open a ticket">pinged ticket</span>}
           {anyBlocked && <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-purple-500/20 text-purple-200 border border-purple-400/30" title="A tracker was blocked by Cloudflare (valid, not invalid) — will retry next run">BLOCKED</span>}
+          {ch.mmr_withheld && <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-orange-500/20 text-orange-200 border border-orange-400/30" title="Not all trackers were pulled this run — MMR was held (only allowed to go up, never down)">MMR HELD</span>}
           {ch.insufficient && <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-orange-500/20 text-orange-200 border border-orange-400/30">INSUFFICIENT</span>}
           {flip === 'to_eligible' && <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-green-500/20 text-green-200 border border-green-400/30">→ ELIGIBLE</span>}
           {(flip === 'to_ineligible' || flip === 'to_ineligible_new') && <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-red-500/20 text-red-200 border border-red-400/30">→ INELIGIBLE{flip === 'to_ineligible' ? ' (staff)' : ''}</span>}
@@ -124,6 +140,13 @@ function PlayerCard({ p, member }) {
         <Cat label="2s cur" cell={cells.cur_2s} source={best.cur_2s?.source} />
         <Cat label="3s cur" cell={cells.cur_3s} source={best.cur_3s?.source} />
       </div>
+
+      {/* win rating (col Z): summed lifetime wins across all trackers; held when not all pulled */}
+      {cells.win_rating && (
+        <div className="grid grid-cols-4 gap-1.5 mb-2">
+          <Cat label="win rating" cell={cells.win_rating} />
+        </div>
+      )}
 
       {/* per-account breakdown (main + alts only — column Y is not used) */}
       <div className="flex flex-wrap gap-1 mb-1">
@@ -184,6 +207,7 @@ export default function MmrUpdaterPage() {
   const [snap, setSnap] = useState(null)
   const [players, setPlayers] = useState([])
   const [loadedOnce, setLoadedOnce] = useState(false)
+  const [offline, setOffline] = useState(false) // scraper service unreachable/timed out
   const [config, setConfig] = useState({ player_ping_channel_id: '', staff_review_channel_id: '', tracker_404_channel_id: '', write_armed: '', auto_sal_lock_enabled: '', auto_roling_naming_enabled: '' })
   const [toggleSaving, setToggleSaving] = useState('') // '' | 'sal' | 'role' (which is mid-save)
   const [search, setSearch] = useState('')
@@ -203,28 +227,46 @@ export default function MmrUpdaterPage() {
   const timer = useRef(null)
   const searchTimer = useRef(null)
   const editingChannels = useRef(false) // don't let the 1s refresh stomp typing
+  const inflight = useRef(false)        // skip overlapping polls (e.g. when scraper hangs)
 
   const refresh = useCallback(async () => {
-    const [s, p] = await Promise.all([call('status'), call('players?limit=2000')])
-    if (s.ok) setSnap(s.data)
-    if (p.ok && Array.isArray(p.data)) {
-      // Don't blank out an already-populated list on a transient empty read (the
-      // idle "everything resets then comes back" flicker). Only accept an EMPTY
-      // payload once we've genuinely never loaded, so the first paint can settle;
-      // after that, an empty result is ignored unless it stays empty (a real reset
-      // re-fills within a tick anyway). Non-empty payloads always apply.
-      setPlayers(prev => {
-        if (p.data.length > 0) return p.data
-        if (prev.length === 0) return p.data        // still empty — fine
-        return prev                                  // keep what we have; ignore blip
-      })
-      setLoadedOnce(true)
+    if (inflight.current) return        // don't stack requests if the last poll is still pending
+    inflight.current = true
+    try {
+      // Read live state straight from the SHARED DB (the scraper persists trn_run /
+      // trn_players / trn_config there). This works even when the scraper is offline
+      // and stops the per-second scraper flood that was choking its event loop.
+      const [s, p] = await Promise.all([dbCall('status'), dbCall('players?limit=2000')])
+      if (s.ok) setSnap(s.data)
+      if (p.ok && Array.isArray(p.data)) {
+        // Don't blank out an already-populated list on a transient empty read (the
+        // idle "everything resets then comes back" flicker). Only accept an EMPTY
+        // payload once we've genuinely never loaded, so the first paint can settle;
+        // after that, an empty result is ignored unless it stays empty (a real reset
+        // re-fills within a tick anyway). Non-empty payloads always apply.
+        setPlayers(prev => {
+          if (p.data.length > 0) return p.data
+          if (prev.length === 0) return p.data        // still empty — fine
+          return prev                                  // keep what we have; ignore blip
+        })
+        setLoadedOnce(true)
+      }
+      // Keep config in sync, but never overwrite inputs the operator is editing.
+      if (!editingChannels.current) {
+        const r = await dbCall('config')
+        if (r.ok && r.data && typeof r.data === 'object') setConfig(r.data)
+      }
+    } finally {
+      inflight.current = false
     }
-    // Keep config in sync, but never overwrite inputs the operator is editing.
-    if (!editingChannels.current) {
-      const r = await call('config')
-      if (r.ok && r.data && typeof r.data === 'object') setConfig(r.data)
-    }
+  }, [])
+
+  // Cheap, low-frequency scraper liveness probe — drives the "offline" banner and
+  // disables the live ACTION buttons (Start/Stop/single pulls) that genuinely need
+  // the scraper. Reads keep working from the DB regardless.
+  const pingScraper = useCallback(async () => {
+    const h = await call('health')
+    setOffline(!h.ok)
   }, [])
 
   // Build a discord_id → member map from the website's own player directory.
@@ -255,15 +297,18 @@ export default function MmrUpdaterPage() {
   }, [])
 
   useEffect(() => {
-    // Live update every second (the operator's hard requirement).
+    // Live update every second (the operator's hard requirement) — now DB-direct.
     refresh()
     loadMembers()
     loadSheetIndex()
+    pingScraper()
     timer.current = setInterval(refresh, 1000)
+    // Probe the scraper for liveness at a low rate (cheap /health, drives the banner).
+    const ping = setInterval(pingScraper, 12000)
     // Refresh the heavier directory + sheet index less often.
     const slow = setInterval(() => { loadMembers(); loadSheetIndex() }, 60000)
-    return () => { clearInterval(timer.current); clearInterval(slow) }
-  }, [refresh, loadMembers, loadSheetIndex])
+    return () => { clearInterval(timer.current); clearInterval(ping); clearInterval(slow) }
+  }, [refresh, loadMembers, loadSheetIndex, pingScraper])
 
   const action = async (path, method = 'POST', body) => {
     setBusy(true)
@@ -290,13 +335,13 @@ export default function MmrUpdaterPage() {
 
   const saveChannels = async () => {
     setSaveState('saving')
-    const res = await call('config', 'POST', {
+    const res = await dbCall('config', 'POST', {
       player_ping_channel_id: config.player_ping_channel_id || '',
       staff_review_channel_id: config.staff_review_channel_id || '',
       tracker_404_channel_id: config.tracker_404_channel_id || '',
     })
     // Re-read to confirm it actually landed in the DB (the operator's "won't save" bug).
-    const r = await call('config')
+    const r = await dbCall('config')
     editingChannels.current = false
     if (r.ok && r.data && typeof r.data === 'object') {
       setConfig(r.data)
@@ -312,13 +357,13 @@ export default function MmrUpdaterPage() {
 
   const armWrite = async () => {
     if (armStep === 0) { setArmStep(1); return }
-    await call('config', 'POST', { write_armed: true, confirm: true })
-    const r = await call('config'); if (r.ok) setConfig(r.data)
+    await dbCall('config', 'POST', { write_armed: true, confirm: true })
+    const r = await dbCall('config'); if (r.ok) setConfig(r.data)
     setArmStep(0)
   }
   const disarmWrite = async () => {
-    await call('config', 'POST', { write_armed: false })
-    const r = await call('config'); if (r.ok) setConfig(r.data)
+    await dbCall('config', 'POST', { write_armed: false })
+    const r = await dbCall('config'); if (r.ok) setConfig(r.data)
     setArmStep(0)
   }
 
@@ -329,8 +374,8 @@ export default function MmrUpdaterPage() {
   const toggleBot = async (key, nextOn) => {
     setToggleSaving(key)
     setConfig(c => ({ ...c, [key]: nextOn ? '2' : '0' })) // optimistic
-    await call('config', 'POST', { [key]: nextOn ? '2' : '0' })
-    const r = await call('config'); if (r.ok && r.data && typeof r.data === 'object') setConfig(r.data)
+    await dbCall('config', 'POST', { [key]: nextOn ? '2' : '0' })
+    const r = await dbCall('config'); if (r.ok && r.data && typeof r.data === 'object') setConfig(r.data)
     setToggleSaving('')
   }
 
@@ -339,9 +384,16 @@ export default function MmrUpdaterPage() {
   const cp = snap?.checkpoint || {}
   const running = snap?.status === 'running' || snap?.status === 'stopping'
   const singleActive = !!snap?.single_active
-  const busyAny = busy || running || singleActive
+  // Action buttons also disable when the scraper is offline (they need it to run);
+  // reads keep working from the DB.
+  const busyAny = busy || running || singleActive || offline
   const armed = config.write_armed === '1'
   const pct = c.total ? Math.round((c.completed / c.total) * 100) : 0
+
+  // Players whose last run had a Cloudflare-blocked tracker — surface them so the
+  // operator can re-pull them as a group (separate from the bulk checkpoint).
+  const blocked = players.filter((p) => (p.accounts || []).some((a) => a.status === 'CLOUDFLARE_BLOCKED'))
+  const blockedRows = blocked.map((p) => p.row_index)
 
   // Mirror the bot's truthiness so the toggle UI shows the same ON/OFF the bot sees.
   const toggleOn = (v) => ['1', '2', 'on', 'yes', 'true'].includes(String(v ?? '').trim().toLowerCase())
@@ -380,12 +432,20 @@ export default function MmrUpdaterPage() {
         </div>
       </div>
 
+      {offline && (
+        <div className="mb-4 px-4 py-3 rounded-xl border border-amber-400/40 bg-amber-500/10 text-sm text-amber-100">
+          <span className="font-bold">⚠ Scraper offline — showing saved pulls &amp; configuration from the database.</span>{' '}
+          You can still review the last run and edit configuration here. Live actions (Start / Stop / Resume / single
+          pulls / player search) need the scraper online — restart the <span className="font-mono">rl-scraper</span> service on Railway.
+        </div>
+      )}
+
       {/* Controls */}
       <div className="flex flex-wrap gap-2 mb-4">
         <button disabled={busyAny} onClick={() => action('run')} className="px-4 py-2 rounded-lg bg-green-500/20 text-green-200 border border-green-400/40 font-bold text-sm disabled:opacity-40 hover:bg-green-500/30">▶ Start (reset checkpoint)</button>
-        <button disabled={busy || !running} onClick={() => action('stop')} className="px-4 py-2 rounded-lg bg-yellow-500/20 text-yellow-200 border border-yellow-400/40 font-bold text-sm disabled:opacity-40 hover:bg-yellow-500/30">⏸ Stop (keep checkpoint)</button>
+        <button disabled={busy || !running || offline} onClick={() => action('stop')} className="px-4 py-2 rounded-lg bg-yellow-500/20 text-yellow-200 border border-yellow-400/40 font-bold text-sm disabled:opacity-40 hover:bg-yellow-500/30">⏸ Stop (keep checkpoint)</button>
         <button disabled={busyAny || !cp.has_checkpoint} onClick={() => action('resume')} className="px-4 py-2 rounded-lg bg-blue-500/20 text-blue-200 border border-blue-400/40 font-bold text-sm disabled:opacity-40 hover:bg-blue-500/30">⏵ Resume from checkpoint</button>
-        <button disabled={busy} onClick={() => action('rotate-ip')} className="px-4 py-2 rounded-lg bg-purple-500/20 text-purple-200 border border-purple-400/40 font-bold text-sm disabled:opacity-40 hover:bg-purple-500/30">⟳ Reset IP (redeploy)</button>
+        <button disabled={busy || offline} onClick={() => action('rotate-ip')} className="px-4 py-2 rounded-lg bg-purple-500/20 text-purple-200 border border-purple-400/40 font-bold text-sm disabled:opacity-40 hover:bg-purple-500/30">⟳ Reset IP (redeploy)</button>
       </div>
 
       {/* Progress + current */}
@@ -406,11 +466,16 @@ export default function MmrUpdaterPage() {
             <span className="text-white/40">rate {snap?.rate_per_s || 0}/s</span>
             {snap?.eta_s ? <span className="text-white/40">ETA {Math.round(snap.eta_s / 60)}m</span> : null}
           </div>
+          {(c.skipped_left || c.skipped_no_id || c.skipped_no_tracker) ? (
+            <div className="text-[11px] text-white/35 mt-1" title="Players NOT pulled this bulk run">
+              skipped: {c.skipped_left || 0} left server · {c.skipped_no_id || 0} no Discord ID · {c.skipped_no_tracker || 0} no tracker
+            </div>
+          ) : null}
         </div>
         <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
           <div className="text-white/60 text-sm mb-1 flex items-center gap-2">
             Currently
-            {singleActive && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-200 border border-cyan-400/40">updating one player</span>}
+            {singleActive && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-200 border border-cyan-400/40">updating player(s)</span>}
           </div>
           <div className="font-bold text-white truncate">{cur.name || (running || singleActive ? '…' : 'idle')}</div>
           <div className="text-xs text-cyan-300/70 truncate">{cur.step || ''} {cur.label ? `· ${cur.label}` : ''}</div>
@@ -418,6 +483,34 @@ export default function MmrUpdaterPage() {
           {cp.has_checkpoint && <div className="text-[11px] text-orange-300/70 mt-1">checkpoint: {cp.done} done · {cp.status} (single updates don&apos;t reset it)</div>}
         </div>
       </div>
+
+      {/* Blocked-last-run group — re-pull the Cloudflare-blocked players as a batch */}
+      {blocked.length > 0 && (
+        <div className="rounded-xl border border-purple-400/30 bg-purple-500/[0.06] p-4 mb-4">
+          <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+            <div className="text-sm font-bold text-purple-100">
+              Blocked last run ({blocked.length})
+              <span className="font-normal text-white/40"> · Cloudflare-blocked trackers — re-pull to retry</span>
+            </div>
+            <button disabled={busyAny} onClick={() => action('update-players', 'POST', { rows: blockedRows })}
+                    className="px-3 py-1.5 rounded-lg bg-purple-500/25 text-purple-100 border border-purple-400/50 text-xs font-bold disabled:opacity-40 hover:bg-purple-500/35">⟳ Re-pull all blocked</button>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {blocked.map((p) => {
+              const m = memberMap[String(p.discord_id)]
+              const nm = m?.displayName || p.name || `Row ${p.row_index}`
+              return (
+                <button key={p.row_index} disabled={busyAny} onClick={() => action('update-player', 'POST', { row_index: p.row_index })}
+                        className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-white/5 border border-white/10 text-xs text-white/80 hover:bg-white/10 disabled:opacity-40"
+                        title={`Re-pull row ${p.row_index}`}>
+                  <Avatar src={m?.avatarUrl} name={nm} size={18} ring={false} />
+                  <span className="truncate max-w-[120px]">{nm}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Single-player search — directory-backed (avatar + discord name), joined to SalSheet by discord_id */}
       <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 mb-4">
@@ -534,7 +627,7 @@ export default function MmrUpdaterPage() {
         {players.map(p => <PlayerCard key={p.row_index} p={p} member={memberMap[String(p.discord_id)]} />)}
         {players.length === 0 && (
           <div className="text-white/40 text-sm py-8 text-center col-span-2">
-            {loadedOnce ? 'No players processed yet. Press Start.' : 'Loading…'}
+            {loadedOnce ? 'No players in the last run.' : 'Loading…'}
           </div>
         )}
       </div>

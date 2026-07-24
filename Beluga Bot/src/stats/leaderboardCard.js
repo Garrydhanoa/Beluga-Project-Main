@@ -70,6 +70,45 @@ async function getDivisionLeaders(seasonId, division, top = 6) {
     };
 }
 
+/**
+ * Lifetime (all-time) average leaders — league-wide, min-games gated. Lifetime stats
+ * are NOT division-scoped, so this returns a single league-wide board (same shape as
+ * getDivisionLeaders) for the /leaderboard command's all-time card.
+ */
+async function getLifetimeLeaders(top = 6) {
+    if (!db()) return null;
+    const res = await pool.query(
+        `SELECT spl.discord_id, spl.games,
+                spl.score, spl.goals, spl.assists, spl.saves, spl.shots, spl.demos_inflicted, spl.beluga_score,
+                COALESCE(dm.display_name, dm.username, 'User ' || RIGHT(spl.discord_id, 4)) AS name
+           FROM stats_player_lifetime spl
+           LEFT JOIN discord_members dm ON dm.discord_id = spl.discord_id
+          WHERE spl.is_playoff = FALSE AND spl.games >= $1`,
+        [MIN_GAMES]
+    );
+    const rows = res.rows.map((r) => {
+        const g = Number(r.games) || 1;
+        return {
+            name: r.name,
+            beluga: Number(r.beluga_score || 0),
+            goals: Number(r.goals || 0) / g,
+            assists: Number(r.assists || 0) / g,
+            saves: Number(r.saves || 0) / g,
+        };
+    });
+    const board = (key, dp) => [...rows]
+        .sort((a, b) => b[key] - a[key])
+        .slice(0, top)
+        .map((r) => ({ name: r.name, value: r[key].toFixed(dp) }));
+    return {
+        beluga: board('beluga', 2),
+        goals: board('goals', 2),
+        assists: board('assists', 2),
+        saves: board('saves', 2),
+        qualifiers: rows.length,
+    };
+}
+
 function drawBoard(ctx, x, y, w, title, rows, accent) {
     roundRect(ctx, x, y, w, 240, 16);
     ctx.fillStyle = 'rgba(255,255,255,0.03)'; ctx.fill();
@@ -122,11 +161,17 @@ async function buildLeaderboardImage(leaders, meta) {
     ctx.fillStyle = '#7dd3fc'; ctx.font = `bold 18px ${FONT}`;
     ctx.fillText('🐳 BELUGA LEAGUE  ·  LEADERBOARD', 40, 50);
     ctx.fillStyle = '#ffffff'; ctx.font = `bold 40px ${FONT}`;
-    ctx.fillText(`${meta.division} Division`, 40, 96);
+    ctx.fillText(meta.title || `${meta.division} Division`, 40, 96);
     if (meta.seasonNumber != null) {
         ctx.textAlign = 'right';
         ctx.fillStyle = '#9fb6d8'; ctx.font = `bold 22px ${FONT}`;
         ctx.fillText(`Season ${meta.seasonNumber}`, W - 40, 60);
+        ctx.fillStyle = '#6f8fb8'; ctx.font = `14px ${FONT}`;
+        ctx.fillText(`min. ${MIN_GAMES} games · ${leaders?.qualifiers ?? 0} qualifiers`, W - 40, 86);
+    } else if (meta.scopeLabel) {
+        ctx.textAlign = 'right';
+        ctx.fillStyle = '#9fb6d8'; ctx.font = `bold 22px ${FONT}`;
+        ctx.fillText(meta.scopeLabel, W - 40, 60);
         ctx.fillStyle = '#6f8fb8'; ctx.font = `14px ${FONT}`;
         ctx.fillText(`min. ${MIN_GAMES} games · ${leaders?.qualifiers ?? 0} qualifiers`, W - 40, 86);
     }
@@ -177,4 +222,4 @@ async function buildLeaderboardImage(leaders, meta) {
     return canvas.toBuffer('image/png');
 }
 
-module.exports = { getDivisionLeaders, buildLeaderboardImage, MIN_GAMES };
+module.exports = { getDivisionLeaders, getLifetimeLeaders, buildLeaderboardImage, MIN_GAMES };

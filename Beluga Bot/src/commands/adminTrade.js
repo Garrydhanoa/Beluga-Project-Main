@@ -6,6 +6,7 @@ const { config } = require('../config/config');
 const Logger = require('../utils/logger');
 const { LeagueDB, TransactionDB, isDatabaseAvailable } = require('../utils/database');
 const { ROLES, TEAM_ROLES, TEAM_NAMES, getTeamChoices } = require('../constants/roles');
+const { teamAutocomplete } = require('../utils/teamRoles');
 
 // Command-specific constants
 const TRANSACTION_REQUEST_CHANNEL_ID = '1178913188750823544';
@@ -80,14 +81,14 @@ module.exports = {
                 .setName('team1')
                 .setDescription('First team in the trade')
                 .setRequired(true)
-                .addChoices(...getTeamChoices())
+                .setAutocomplete(true)
         )
         .addStringOption(option =>
             option
                 .setName('team2')
                 .setDescription('Second team in the trade')
                 .setRequired(true)
-                .addChoices(...getTeamChoices())
+                .setAutocomplete(true)
         )
         .addUserOption(option =>
             option
@@ -137,6 +138,12 @@ module.exports = {
                 .setDescription('Player from Team 2 going to Team 1')
                 .setRequired(false)
         ),
+
+    // Live team list from the current season (DB). No division option here, so
+    // list every active team once; getFocused() targets team1 or team2.
+    async autocomplete(interaction) {
+        await teamAutocomplete(interaction, { valueField: 'name', perDivision: false });
+    },
 
     async execute(interaction) {
         try {

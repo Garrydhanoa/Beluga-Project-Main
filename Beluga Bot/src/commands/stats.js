@@ -54,6 +54,19 @@ async function resolvePlayerDiscordId(interaction) {
     return { discordId: null, label: name };
 }
 
+// Resolve the `season` option to a season row. A given season number views that past
+// season; absent/unknown → the active season. Team stats are per-season; player stats
+// show the resolved season's block PLUS lifetime (which never changes with the option).
+async function resolveSeasonForOption(interaction) {
+    const n = interaction.options.getInteger('season');
+    if (n && n > 0) {
+        const r = await pool.query('SELECT * FROM seasons WHERE season_number = $1', [n]).catch(() => ({ rows: [] }));
+        if (r.rows.length) return { season: r.rows[0], isActive: r.rows[0].status === 'active' };
+    }
+    const active = await LeagueDB.getActiveSeason();
+    return { season: active, isActive: true };
+}
+
 function statBlock(title, t) {
     const games = Number(t.games || 0);
     return {
@@ -75,16 +88,18 @@ module.exports = {
         .setDescription('Look up league stats for a player or team.')
         .addSubcommand((sc) => sc
             .setName('player')
-            .setDescription('Player stats (defaults to yourself).')
+            .setDescription('Player stats (defaults to yourself). Lifetime always shown.')
             .addUserOption((o) => o.setName('player').setDescription('The player (mention)').setRequired(false))
-            .addStringOption((o) => o.setName('name').setDescription('…or look up by name').setRequired(false)))
+            .addStringOption((o) => o.setName('name').setDescription('…or look up by name').setRequired(false))
+            .addIntegerOption((o) => o.setName('season').setDescription('Season number (default: current). Lifetime is unaffected.').setRequired(false).setMinValue(1)))
         .addSubcommand((sc) => sc
             .setName('team')
-            .setDescription('Team stats for the current season.')
+            .setDescription('Team stats (defaults to the current season).')
             .addStringOption((o) => o.setName('team').setDescription('Team').setRequired(true)
                 .addChoices(...TEAM_NAMES.map((t) => ({ name: t, value: t }))))
             .addStringOption((o) => o.setName('division').setDescription('Division').setRequired(true)
-                .addChoices({ name: 'Majors', value: 'Majors' }, { name: 'AAA', value: 'AAA' }, { name: 'AA', value: 'AA' }))),
+                .addChoices({ name: 'Majors', value: 'Majors' }, { name: 'AAA', value: 'AAA' }, { name: 'AA', value: 'AA' }))
+            .addIntegerOption((o) => o.setName('season').setDescription('Season number (default: current)').setRequired(false).setMinValue(1))),
 
     async execute(interaction) {
         const now = Date.now();
@@ -119,7 +134,7 @@ module.exports = {
             return;
         }
 
-        const season = await LeagueDB.getActiveSeason();
+        const { season, isActive } = await resolveSeasonForOption(interaction);
         const [seasonRows, lifeRows, memRows] = await Promise.all([
             season
                 ? pool.query(
@@ -165,7 +180,7 @@ module.exports = {
                 teamName: primary.team_name || null,
                 teamLogoBuffer: teamLogo,
                 division: primary.division || null,
-                seasonLabel: `THIS SEASON · S${seasonNo}`,
+                seasonLabel: `${isActive ? 'THIS SEASON' : 'SEASON'} · S${seasonNo}`,
                 season: primary,
                 lifetime: lifeRows.rows[0] || {},
                 siteUrl: url ? url.replace(/^https?:\/\//, '') : null,
@@ -189,9 +204,9 @@ module.exports = {
     async teamStats(interaction) {
         const teamName = interaction.options.getString('team');
         const division = interaction.options.getString('division');
-        const season = await LeagueDB.getActiveSeason();
+        const { season } = await resolveSeasonForOption(interaction);
         if (!season) {
-            await interaction.editReply('❌ No active season.');
+            await interaction.editReply('❌ No season found.');
             return;
         }
 

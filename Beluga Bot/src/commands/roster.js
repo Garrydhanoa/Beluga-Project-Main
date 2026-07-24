@@ -1,6 +1,6 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { getTeamRoster, createRosterEmbed, getLogoAttachment } = require('../utils/rosterManager');
-const { findTeam } = require('../utils/teamRoles');
+const { findTeam, teamAutocomplete } = require('../utils/teamRoles');
 const { getTeamChoices, getDivisionChoices } = require('../constants/roles');
 const Logger = require('../utils/logger');
 
@@ -13,7 +13,7 @@ module.exports = {
                 .setName('team')
                 .setDescription('Select a team')
                 .setRequired(true)
-                .addChoices(...getTeamChoices())
+                .setAutocomplete(true)
         )
         .addStringOption(option =>
             option
@@ -22,6 +22,11 @@ module.exports = {
                 .setRequired(true)
                 .addChoices(...getDivisionChoices())
         ),
+
+    // Live team list from the current season (DB), filtered by the chosen division.
+    async autocomplete(interaction) {
+        await teamAutocomplete(interaction, { valueField: 'name', divisionOptionName: 'division' });
+    },
 
     async execute(interaction) {
         try {

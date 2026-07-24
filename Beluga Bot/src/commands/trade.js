@@ -4,6 +4,7 @@ const { config } = require('../config/config');
 const Logger = require('../utils/logger');
 const { LeagueDB, TransactionDB, isDatabaseAvailable } = require('../utils/database');
 const { ROLES, TEAM_ROLES, TEAM_NAMES, getTeamChoices } = require('../constants/roles');
+const { teamAutocomplete } = require('../utils/teamRoles');
 
 // Command-specific constants
 const TRANSACTION_REQUEST_CHANNEL_ID = '1178913188750823544';
@@ -89,7 +90,7 @@ module.exports = {
                 .setName('receiving_team')
                 .setDescription('The team you want to trade with')
                 .setRequired(true)
-                .addChoices(...getTeamChoices())
+                .setAutocomplete(true)
         )
         .addUserOption(option =>
             option
@@ -139,6 +140,12 @@ module.exports = {
                 .setDescription('Player you are requesting (from their team)')
                 .setRequired(false)
         ),
+
+    // Live team list from the current season (DB); execute derives divisions from
+    // the players' roles, so no division filter here.
+    async autocomplete(interaction) {
+        await teamAutocomplete(interaction, { valueField: 'name', perDivision: false });
+    },
 
     async execute(interaction) {
         try {

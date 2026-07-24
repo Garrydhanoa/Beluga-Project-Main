@@ -58,7 +58,11 @@ async function postHandler(request) {
        ORDER BY created_at DESC NULLS LAST LIMIT 1`,
       [platform, platformId]
     ).catch(() => ({ rows: [] }))
-    const resolvedName = prev.rows[0]?.current_name || nameRow.rows[0]?.ingame_name || null
+    // A caller may pass an explicit name (e.g. linking a brand-new Ballchasing
+    // account from the Tracker Linking tab, which has no game rows yet) so the
+    // account doesn't land with current_name NULL. Existing names still win.
+    const providedName = body.name ? String(body.name).trim() : null
+    const resolvedName = prev.rows[0]?.current_name || nameRow.rows[0]?.ingame_name || providedName || null
 
     await query(
       `INSERT INTO stats_player_accounts (discord_id, platform, platform_id, current_name, linked_by)
@@ -76,6 +80,20 @@ async function postHandler(request) {
     )
     if (prevDiscordId && prevDiscordId !== String(discordId)) await recomputePlayer(prevDiscordId)
     await recomputePlayer(String(discordId))
+    // Record the name in history when an explicit name was supplied and isn't already
+    // logged for this account (keeps the name-history audit trail complete for
+    // manually-linked accounts that have no game rows yet).
+    if (providedName) {
+      await query(
+        `INSERT INTO stats_name_history (discord_id, name, platform, platform_id, source)
+         SELECT $1, $2, $3, $4, 'manual'
+         WHERE NOT EXISTS (
+           SELECT 1 FROM stats_name_history
+           WHERE platform = $3 AND platform_id = $4 AND lower(name) = lower($2)
+         )`,
+        [String(discordId), providedName, platform, platformId]
+      ).catch(() => {})
+    }
     await logAudit({ action: body.action === 'link' ? 'account_linked' : 'account_remapped', actor, detail: { platform, platformId, from: prevDiscordId, to: String(discordId), movedRows: moved.rows.length } })
     return NextResponse.json({ ok: true, movedRows: moved.rows.length, previousDiscordId: prevDiscordId })
   }

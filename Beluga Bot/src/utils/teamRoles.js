@@ -81,11 +81,14 @@ async function findTeam(name, division = null) {
 }
 
 /**
- * Autocomplete responder for team options. Value format "id" (team row id) —
- * resolve back with resolveTeamOption(). Optionally filter by a division the
- * user already picked on the command.
+ * Autocomplete responder for team options. Two value formats:
+ *   - valueField:'id'   → value = team row id (default; resolve with resolveTeamOption())
+ *   - valueField:'name' → value = team name; the list is deduped by name so the
+ *     same franchise fielded across divisions appears once. Use this when the
+ *     command's execute reads a team-NAME string (the transaction/roster commands).
+ * Optionally filter by a division the user already picked on the command.
  */
-async function teamAutocomplete(interaction, { divisionOptionName = 'division', perDivision = true } = {}) {
+async function teamAutocomplete(interaction, { divisionOptionName = 'division', perDivision = true, valueField = 'id' } = {}) {
     try {
         const q = String(interaction.options.getFocused() || '').toLowerCase();
         let division = null;
@@ -94,11 +97,27 @@ async function teamAutocomplete(interaction, { divisionOptionName = 'division', 
         }
         let teams = await getActiveTeams();
         if (division) teams = teams.filter((t) => t.division.toLowerCase() === String(division).toLowerCase());
-        const filtered = teams.filter((t) => t.name.toLowerCase().includes(q)).slice(0, 25);
-        await interaction.respond(filtered.map((t) => ({
-            name: division ? t.name : `${t.name} (${t.division})`,
-            value: String(t.id),
-        })));
+        teams = teams.filter((t) => t.name.toLowerCase().includes(q));
+
+        let choices;
+        if (valueField === 'name') {
+            // Value is the name — collapse duplicate names (across divisions) so the
+            // dropdown shows each team once and execute gets a plain name string.
+            const seen = new Set();
+            choices = [];
+            for (const t of teams) {
+                if (seen.has(t.name)) continue;
+                seen.add(t.name);
+                choices.push({ name: t.name, value: t.name });
+                if (choices.length >= 25) break;
+            }
+        } else {
+            choices = teams.slice(0, 25).map((t) => ({
+                name: division ? t.name : `${t.name} (${t.division})`,
+                value: String(t.id),
+            }));
+        }
+        await interaction.respond(choices);
     } catch (err) {
         if (err?.code !== 10062) Logger.error('teamAutocomplete failed', err);
     }

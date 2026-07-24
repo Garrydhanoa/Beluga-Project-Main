@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import {
-  getActiveSeason,
+  resolveSeason,
   getScheduleMatches,
   getPlayoffMatchups,
 } from '../../../lib/leagueStore'
@@ -63,8 +63,9 @@ function groupedPlayoffs(brackets) {
   return out
 }
 
-export async function GET() {
-  const season = await getActiveSeason()
+export async function GET(request) {
+  const seasonParam = new URL(request.url).searchParams.get('season')
+  const season = await resolveSeason(seasonParam)
   if (!season) {
     return NextResponse.json({ season: null, regular: { aa: {}, aaa: {}, majors: {} }, playoffs: { aa: [], aaa: [], majors: [] } })
   }

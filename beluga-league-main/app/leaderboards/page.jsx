@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import TeamLogo from '../components/TeamLogo'
+import SeasonPicker from '../components/SeasonPicker'
+import { useSeason } from '../components/SeasonContext'
 
 const DIVISIONS = ['all', 'Majors', 'AAA', 'AA']
 const DIVISION_LABEL = { all: 'All Divisions', Majors: 'Majors', AAA: 'AAA', AA: 'AA' }
@@ -52,6 +54,7 @@ function StatBoard({ icon, label, rows, highlight }) {
 }
 
 export default function LeaderboardsPage() {
+  const { season } = useSeason()
   const [scope, setScope] = useState('season')
   const [division, setDivision] = useState('all')
   const [data, setData] = useState(null)
@@ -64,13 +67,15 @@ export default function LeaderboardsPage() {
     setError(null)
     const params = new URLSearchParams({ scope })
     if (division !== 'all') params.set('division', division)
+    // Season only matters for the "This Season" scope (all-time reads lifetime).
+    if (scope === 'season' && season) params.set('season', season)
     fetch(`/api/public/stats/leaderboards?${params}`, { cache: 'no-store' })
       .then((r) => r.json())
       .then((d) => { if (alive) setData(d) })
       .catch((e) => { if (alive) setError(e.message || 'Failed to load') })
       .finally(() => { if (alive) setLoading(false) })
     return () => { alive = false }
-  }, [scope, division])
+  }, [scope, division, season])
 
   const leaders = data?.leaders
   const boards = leaders?.boards || {}
@@ -94,7 +99,7 @@ export default function LeaderboardsPage() {
 
       {/* Controls: scope toggle + prominent division tabs */}
       <div className="mb-8 space-y-3">
-        <div className="flex justify-center sm:justify-start">
+        <div className="flex flex-wrap items-center justify-center sm:justify-start gap-3">
           <div className="inline-flex rounded-xl overflow-hidden border border-white/10 bg-black/30">
             {['season', 'alltime'].map((s) => (
               <button key={s} onClick={() => setScope(s)}
@@ -103,6 +108,7 @@ export default function LeaderboardsPage() {
               </button>
             ))}
           </div>
+          {scope === 'season' && <SeasonPicker />}
         </div>
         <div className="flex flex-wrap justify-center sm:justify-start gap-2">
           {DIVISIONS.map((d) => (
@@ -156,7 +162,7 @@ export default function LeaderboardsPage() {
                     <div key={f.franchise} className="flex items-center gap-3 rounded-2xl bg-white/[0.02] border border-white/10 p-3 hover:border-cyan-400/30 transition">
                       <span className={`w-7 text-center text-lg font-black ${rankColor(i)}`}>{i < 3 ? MEDAL[i] : f.rank}</span>
                       <div className="w-10 h-10 flex-shrink-0 flex items-center justify-center">
-                        <TeamLogo name={f.franchise} className="w-full h-full" imgClassName="w-full h-full object-contain drop-shadow" />
+                        <TeamLogo name={f.franchise} teamId={f.teamId} className="w-full h-full" imgClassName="w-full h-full object-contain drop-shadow" />
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="text-white font-bold truncate">{f.franchise}</div>
@@ -204,7 +210,7 @@ export default function LeaderboardsPage() {
                         <td className="px-3 py-2">
                           <Link href={`/teams/${encodeURIComponent(t.team)}`} className="flex items-center gap-2 text-white font-medium hover:text-cyan-200">
                             <span className="w-6 h-6 flex-shrink-0 flex items-center justify-center">
-                              <TeamLogo name={t.team} className="w-full h-full" imgClassName="w-full h-full object-contain" />
+                              <TeamLogo name={t.team} teamId={t.teamId} className="w-full h-full" imgClassName="w-full h-full object-contain" />
                             </span>
                             <span className="truncate">{t.team}</span>
                           </Link>

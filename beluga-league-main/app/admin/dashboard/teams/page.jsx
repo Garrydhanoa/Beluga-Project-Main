@@ -662,9 +662,112 @@ function FranchiseRow({ franchise, expanded, onToggle, onChanged }) {
 
       {expanded && (
         <>
+          <FranchiseSeasonTeams franchise={franchise} onChanged={onChanged} />
           <FranchiseDiscordRow franchise={franchise} onChanged={onChanged} />
           <FranchiseHistory franchiseId={franchise.id} />
         </>
+      )}
+    </div>
+  )
+}
+
+// Per-franchise division-team management for the active season: add a team in a
+// division the franchise doesn't have (new OR claim an orphaned/untaken team), or
+// remove one (frees it). Logo/color/roles link from the franchise automatically.
+function FranchiseSeasonTeams({ franchise, onChanged }) {
+  const [data, setData] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [addDiv, setAddDiv] = useState('')
+  const [orphanId, setOrphanId] = useState('')
+
+  const load = () =>
+    fetch(`/api/admin/franchises/${franchise.id}/teams`, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then(setData)
+      .catch(() => {})
+
+  useEffect(() => { load() }, [franchise.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function act(payload) {
+    setBusy(true)
+    await fetch(`/api/admin/franchises/${franchise.id}/teams`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
+      body: JSON.stringify(payload),
+    }).catch(() => {})
+    setBusy(false)
+    setAddDiv(''); setOrphanId('')
+    await load()
+    onChanged?.()
+  }
+
+  if (!data) return null
+  if (!data.activeSeason) {
+    return (
+      <div className="bg-black/10 border-t border-white/5 px-4 py-3 text-[11px] text-white/40">
+        No active season — start one to manage this franchise&apos;s division teams.
+      </div>
+    )
+  }
+
+  const orphansForDiv = (data.orphans || []).filter((o) => o.division === addDiv)
+
+  return (
+    <div className="bg-black/10 border-t border-white/5 px-4 py-3">
+      <div className="text-[10px] font-bold uppercase tracking-wider text-blue-300/70 mb-2">
+        Season {data.activeSeason.seasonNumber} teams
+      </div>
+
+      {(data.teams || []).length === 0 ? (
+        <div className="text-[11px] text-white/40 mb-2">Not fielding a team this season.</div>
+      ) : (
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {data.teams.map((t) => (
+            <span key={t.teamId} className="inline-flex items-center gap-1.5 pl-2 pr-1 py-1 rounded bg-white/5 border border-white/10 text-[11px] text-white/80">
+              <b className="text-blue-200">{t.division}</b> · {t.name}
+              <button
+                onClick={() => act({ action: 'unlink', teamId: t.teamId })}
+                disabled={busy}
+                title="Remove — frees this team as an orphan another franchise can claim"
+                className="px-1 rounded text-red-300 hover:bg-red-500/20 disabled:opacity-50"
+              >
+                ✕
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {(data.availableDivisions || []).length > 0 ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            value={addDiv}
+            onChange={(e) => { setAddDiv(e.target.value); setOrphanId('') }}
+            className="px-2 py-1 bg-black/40 border border-white/10 rounded text-white text-[11px]"
+          >
+            <option value="">Add to division…</option>
+            {data.availableDivisions.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+          {addDiv && orphansForDiv.length > 0 && (
+            <select
+              value={orphanId}
+              onChange={(e) => setOrphanId(e.target.value)}
+              className="px-2 py-1 bg-black/40 border border-white/10 rounded text-white text-[11px]"
+            >
+              <option value="">New team ({franchise.name})</option>
+              {orphansForDiv.map((o) => <option key={o.teamId} value={o.teamId}>Claim orphan: {o.name}</option>)}
+            </select>
+          )}
+          <button
+            onClick={() => (orphanId ? act({ action: 'link', teamId: Number(orphanId) }) : act({ division: addDiv }))}
+            disabled={busy || !addDiv}
+            className="px-2 py-1 text-[10px] font-bold text-white bg-blue-500 hover:bg-blue-400 disabled:opacity-50 rounded"
+          >
+            {orphanId ? 'Claim team' : 'Add team'}
+          </button>
+          <span className="text-[10px] text-white/40 ml-auto">Logo, color &amp; roles link from the franchise.</span>
+        </div>
+      ) : (
+        <div className="text-[10px] text-white/30">Fielding all three divisions.</div>
       )}
     </div>
   )

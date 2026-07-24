@@ -6,13 +6,24 @@ const DATABASE_URL = process.env.DATABASE_URL;
 let pool = null;
 let isDatabaseAvailable = false;
 
+// TLS config for the Postgres link. If DATABASE_CA_CERT (PEM contents) is provided we
+// verify the server cert strictly (defeats MITM). Without it we fall back to relaxed
+// verification because the prod connection is over Railway's PRIVATE network
+// (postgres.railway.internal), whose self-signed cert can't be strictly verified
+// without Railway's CA. Set DATABASE_CA_CERT to enable strict TLS.
+function buildSslConfig() {
+    const ca = process.env.DATABASE_CA_CERT;
+    if (ca && ca.includes('BEGIN CERTIFICATE')) {
+        return { ca, rejectUnauthorized: true };
+    }
+    return { rejectUnauthorized: false };
+}
+
 // Create PostgreSQL connection pool only if DATABASE_URL exists
 if (DATABASE_URL) {
     pool = new Pool({
         connectionString: DATABASE_URL,
-        ssl: {
-            rejectUnauthorized: false
-        }
+        ssl: buildSslConfig()
     });
     isDatabaseAvailable = true;
     Logger.info('Database connection configured with DATABASE_URL');
@@ -260,6 +271,38 @@ async function initializeDatabase() {
                 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE (season_id, division, team_id, player_name, platform, platform_id)
             )
+        `);
+
+        // season_action_requests — website-owned queue for the director-gated
+        // "Start New Season" / "Delete Season" flow. The website inserts a row
+        // (status='pending_post'); the bot posts an approval embed to the director
+        // channel, collects 3 Director ✅ reactions (any ❌ withdraws, 24h expiry),
+        // then EXECUTES the archive+new-season / delete DB writes itself. Mirrored
+        // in the website's leagueSchema.js.
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS season_action_requests (
+                id SERIAL PRIMARY KEY,
+                action TEXT NOT NULL,
+                season_id INTEGER,
+                payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+                initiated_by_discord_id TEXT,
+                initiated_by_username TEXT,
+                verify_string TEXT,
+                status TEXT NOT NULL DEFAULT 'pending_post',
+                approval_channel_id TEXT,
+                approval_message_id TEXT,
+                approver_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+                declined_by TEXT,
+                expires_at TIMESTAMP,
+                result TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                posted_at TIMESTAMP,
+                executed_at TIMESTAMP
+            )
+        `);
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS idx_season_action_requests_status
+            ON season_action_requests(status, created_at)
         `);
 
         // New Ballchasing-based stats system schema (series, per-game rows,

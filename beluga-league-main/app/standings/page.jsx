@@ -4,6 +4,8 @@ import { useMemo, useState, useEffect } from 'react'
 import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
 import TeamLogo from '../components/TeamLogo'
+import SeasonPicker from '../components/SeasonPicker'
+import { useSeason, seasonQuerySuffix } from '../components/SeasonContext'
 
 // ====================================================================
 // Config — divisions only. ALL standings data is live from /api/standings
@@ -61,6 +63,7 @@ function TrendChip({ trend }) {
 // ====================================================================
 
 export default function StandingsPage() {
+  const { season } = useSeason()
   const [division, setDivision] = useState('majors')
   const [query, setQuery] = useState('')
   const [apiData, setApiData] = useState(null)
@@ -68,21 +71,21 @@ export default function StandingsPage() {
   const [trendByTeam, setTrendByTeam] = useState({})
   const [expanded, setExpanded] = useState(null)
 
-  // Standings (live)
+  // Standings (live) — follows the site-wide season selection (archive viewer).
   useEffect(() => {
     setLoading(true)
     setExpanded(null)
-    fetch(`/api/standings?division=${division}`, { cache: 'no-store' })
+    fetch(`/api/standings?division=${division}${seasonQuerySuffix(season)}`, { cache: 'no-store' })
       .then((r) => r.json())
       .then((d) => setApiData(d))
       .catch(() => setApiData({ data: [] }))
       .finally(() => setLoading(false))
-  }, [division])
+  }, [division, season])
 
   // Power-rankings trend (▲▼ movement) — best-effort; standings still render without it.
   useEffect(() => {
     const divKey = division === 'majors' ? 'Majors' : division === 'aaa' ? 'AAA' : 'AA'
-    fetch('/api/power-rankings', { cache: 'no-store' })
+    fetch(`/api/power-rankings?${season ? `season=${encodeURIComponent(season)}` : ''}`, { cache: 'no-store' })
       .then((r) => r.json())
       .then((d) => {
         const teams = d?.rankings?.team?.[divKey] || []
@@ -91,7 +94,7 @@ export default function StandingsPage() {
         setTrendByTeam(map)
       })
       .catch(() => setTrendByTeam({}))
-  }, [division])
+  }, [division, season])
 
   const standings = useMemo(() => {
     if (!apiData || !Array.isArray(apiData.data)) return []
@@ -155,7 +158,8 @@ export default function StandingsPage() {
       <section className="container mx-auto px-4 mb-8 max-w-5xl">
         <FadeIn delay={0.1}>
           <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-            <div className="flex gap-2 flex-wrap">
+            <div className="flex gap-2 flex-wrap items-center">
+              <SeasonPicker />
               {DIVISIONS.map((d) => {
                 const active = division === d.key
                 return (

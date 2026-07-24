@@ -256,7 +256,7 @@ export async function GET(request, { params }) {
     }
     
     return NextResponse.json(
-      { error: 'Failed to fetch roster data', message: error.message },
+      { error: 'Failed to fetch roster data' },
       { status: 500 }
     );
   }

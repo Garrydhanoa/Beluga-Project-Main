@@ -14,6 +14,7 @@ const NAV_LINKS = [
   { label: 'Standings', href: '/standings' },
   { label: 'Power Rankings', href: '/power-rankings' },
   { label: 'Leaderboards', href: '/leaderboards' },
+  { label: 'Seasons', href: '/seasons' },
   { label: 'Players', href: '/players' },
   { label: 'Applications', href: '/applications' },
   { label: 'Rulebook', href: '/rulebook' },

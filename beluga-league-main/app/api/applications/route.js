@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '../../../lib/authOptions'
 import { ensureLeagueSchema } from '../../../lib/leagueSchema'
 import { query } from '../../../lib/db'
+import { rateLimit, getClientIp } from '../../../lib/rateLimit'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,6 +31,20 @@ export async function POST(request) {
   const session = await getServerSession(authOptions)
   if (!session?.discordUserId) {
     return NextResponse.json({ error: 'Sign in with Discord first.' }, { status: 401 })
+  }
+
+  // Throttle submissions (each stores up to 3×8MB in Postgres): 5 per 10 min per user
+  // and per IP, to prevent storage-exhaustion abuse.
+  const uid = String(session.discordUserId)
+  const ip = getClientIp(request)
+  for (const key of [`apply:uid:${uid}`, `apply:ip:${ip}`]) {
+    const rl = rateLimit(key, { limit: 5, windowMs: 10 * 60_000 })
+    if (!rl.ok) {
+      return NextResponse.json(
+        { error: 'Too many submissions. Please wait a few minutes and try again.' },
+        { status: 429, headers: { 'Retry-After': String(rl.retryAfter) } }
+      )
+    }
   }
 
   const formData = await request.formData()
