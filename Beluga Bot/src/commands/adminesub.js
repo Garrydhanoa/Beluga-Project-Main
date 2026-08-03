@@ -1,28 +1,14 @@
 const { SlashCommandBuilder, EmbedBuilder, AttachmentBuilder, PermissionFlagsBits } = require('discord.js');
-const { google } = require('googleapis');
-const fs = require('fs');
-const path = require('path');
-const { config } = require('../config/config');
 const Logger = require('../utils/logger');
-const { ROLES, TEAM_ROLES, TEAM_NAMES, getTeamChoices } = require('../constants/roles');
+const { ROLES } = require('../constants/roles');
 const { TransactionDB } = require('../utils/database');
-const { attachTeamLogo, teamAutocomplete } = require('../utils/teamRoles');
+const { attachTeamLogo, teamAutocomplete, findTeam, getActiveSeasonId } = require('../utils/teamRoles');
+const { getEsubLimit, getEsubUsed, consumeEsub, refundEsub } = require('../utils/esubStore');
 
 // Command-specific constants
 const TRANSACTION_REQUEST_CHANNEL_ID = '1178913188750823544';
 const TRANSACTION_CONFIRMATION_CHANNEL_ID = '1156814623371169801';
 const ESUB_TRACKING_CHANNEL_ID = '1265781513660923945';
-const SPREADSHEET_ID = '1cnrCOiAX5PfcxqpTX16YvbPVYnBxZiCk_zSCDqoeDGs';
-
-// Team names in order (columns B-Q)
-const TEAM_COLUMNS = TEAM_NAMES;
-
-// Division rows (AA=2, AAA=3, MAJORS=4)
-const DIVISION_ROWS = {
-    'AA': 2,
-    'AAA': 3,
-    'MAJORS': 4
-};
 
 // Pending admin esub transactions (for SIGN action)
 const pendingAdminEsubTransactions = new Map();
@@ -31,115 +17,8 @@ const pendingAdminEsubTransactions = new Map();
  * Team logo for embeds — DB only (team→franchise logo). Returns an
  * AttachmentBuilder named team_logo.png or null. (Was IMAGES/logos/*.png.)
  */
-async function teamLogoAttachment(teamName) {
-    return attachTeamLogo(null, teamName);
-}
-
-/**
- * Get esub count from One Day Sub Tracker sheet
- */
-async function getEsubCount(teamName, division) {
-    try {
-        let credentials;
-        if (config.sheets.credentialsJson) {
-            credentials = config.sheets.credentialsJson;
-        } else {
-            const credentialsPath = path.join(__dirname, '../../', config.sheets.credentials);
-            if (!fs.existsSync(credentialsPath)) {
-                throw new Error('Google Sheets credentials not found');
-            }
-            credentials = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'));
-        }
-
-        const { client_email, private_key } = credentials;
-        
-        const auth = new google.auth.JWT(
-            client_email,
-            null,
-            private_key.replace(/\\n/g, '\n'),
-            ['https://www.googleapis.com/auth/spreadsheets']
-        );
-        
-        const sheets = google.sheets({ version: 'v4', auth });
-        
-        const columnIndex = TEAM_COLUMNS.indexOf(teamName);
-        if (columnIndex === -1) {
-            throw new Error(`Team ${teamName} not found`);
-        }
-        
-        const columnLetter = String.fromCharCode(66 + columnIndex);
-        const rowIndex = DIVISION_ROWS[division];
-        const range = `One Day Sub Tracker!${columnLetter}${rowIndex}`;
-        
-        const response = await sheets.spreadsheets.values.get({
-            spreadsheetId: SPREADSHEET_ID,
-            range: range,
-        });
-        
-        const value = response.data.values?.[0]?.[0];
-        const count = parseInt(value) || 0;
-        
-        Logger.info(`Esub count for ${teamName} ${division}: ${count}/3`);
-        return count;
-        
-    } catch (error) {
-        Logger.error('Failed to get esub count', error);
-        return 0;
-    }
-}
-
-/**
- * Update esub count in sheet
- */
-async function updateEsubCount(teamName, division, newCount) {
-    try {
-        let credentials;
-        if (config.sheets.credentialsJson) {
-            credentials = config.sheets.credentialsJson;
-        } else {
-            const credentialsPath = path.join(__dirname, '../../', config.sheets.credentials);
-            if (!fs.existsSync(credentialsPath)) {
-                throw new Error('Google Sheets credentials not found');
-            }
-            credentials = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'));
-        }
-
-        const { client_email, private_key } = credentials;
-        
-        const auth = new google.auth.JWT(
-            client_email,
-            null,
-            private_key.replace(/\\n/g, '\n'),
-            ['https://www.googleapis.com/auth/spreadsheets']
-        );
-        
-        const sheets = google.sheets({ version: 'v4', auth });
-        
-        const columnIndex = TEAM_COLUMNS.indexOf(teamName);
-        if (columnIndex === -1) {
-            throw new Error(`Team ${teamName} not found`);
-        }
-        
-        const columnLetter = String.fromCharCode(66 + columnIndex);
-        const rowIndex = DIVISION_ROWS[division];
-        const range = `One Day Sub Tracker!${columnLetter}${rowIndex}`;
-        
-        await sheets.spreadsheets.values.update({
-            spreadsheetId: SPREADSHEET_ID,
-            range: range,
-            valueInputOption: 'RAW',
-            resource: {
-                values: [[newCount]]
-            }
-        });
-        
-        Logger.success(`Updated esub count for ${teamName} ${division} to ${newCount}`);
-        return true;
-        
-    } catch (error) {
-        Logger.error('Failed to update esub count', error);
-        throw error;
-    }
+async function teamLogoAttachment(teamId, teamName) {
+    return attachTeamLogo(teamId, teamName);
 }
 
 module.exports = {
@@ -205,12 +84,22 @@ module.exports = {
             const player = interaction.options.getUser('player');
             const playerMember = await interaction.guild.members.fetch(player.id);
 
-            // Check if the team exists in the specified division
-            if (!TEAM_ROLES[division] || !TEAM_ROLES[division][teamName]) {
+            const seasonId = await getActiveSeasonId();
+            if (!seasonId) {
+                return await interaction.editReply({
+                    content: '❌ No active season — one-day subs cannot be tracked right now.',
+                });
+            }
+
+            // Resolve the team from the DB for this division (the constants team
+            // list is stale — franchises have been renamed since).
+            const team = await findTeam(teamName, division);
+            if (!team) {
                 return await interaction.editReply({
                     content: `❌ **${teamName}** does not exist in the ${division} division.`,
                 });
             }
+            const esubLimit = await getEsubLimit(seasonId);
 
             if (action === 'SIGN') {
                 // SIGN action - requires approval from another Salary Crew member
@@ -223,11 +112,11 @@ module.exports = {
                     });
                 }
 
-                // Check esub count
-                const currentEsubCount = await getEsubCount(teamName, division);
-                if (currentEsubCount >= 3) {
+                // Check esub count (DB — resets automatically each season)
+                const currentEsubCount = await getEsubUsed(seasonId, team.id);
+                if (currentEsubCount >= esubLimit) {
                     return await interaction.editReply({
-                        content: `❌ ${teamName} has already used all 3 one-day subs for ${division} this season (${currentEsubCount}/3).`,
+                        content: `❌ ${teamName} has already used all ${esubLimit} one-day subs for ${division} this season (${currentEsubCount}/${esubLimit}).`,
                     });
                 }
 
@@ -247,7 +136,7 @@ module.exports = {
                         { name: 'Player', value: `<@${player.id}>`, inline: true },
                         { name: 'Team', value: teamName, inline: true },
                         { name: 'Division', value: division, inline: true },
-                        { name: 'E-Subs Used', value: `${currentEsubCount}/3 (will be ${currentEsubCount + 1}/3)`, inline: true },
+                        { name: 'E-Subs Used', value: `${currentEsubCount}/${esubLimit} (will be ${currentEsubCount + 1}/${esubLimit})`, inline: true },
                         { name: 'Requested By', value: `${interaction.user.username} (Salary Crew)`, inline: false },
                         { name: 'Required Approvals', value: '⏳ One other Salary Crew member', inline: false }
                     )
@@ -268,10 +157,13 @@ module.exports = {
 
                 // Store pending transaction
                 pendingAdminEsubTransactions.set(esubMessage.id, {
-                    teamName: teamName,
+                    seasonId,
+                    teamId: team.id,
+                    teamName: team.name,
                     playerId: player.id,
                     playerUsername: player.username,
                     division: division,
+                    esubLimit,
                     currentEsubCount: currentEsubCount,
                     requestedBy: interaction.user.id,
                     requestedByUsername: interaction.user.username,
@@ -296,24 +188,23 @@ module.exports = {
                 }, 12 * 60 * 60 * 1000);
 
                 await interaction.editReply({
-                    content: `✅ Admin one-day sub request sent! Waiting for another Salary Crew member to approve. ${teamName} has used ${currentEsubCount}/3 e-subs for ${division}.`,
+                    content: `✅ Admin one-day sub request sent! Waiting for another Salary Crew member to approve. ${teamName} has used ${currentEsubCount}/${esubLimit} e-subs for ${division}.`,
                 });
 
             } else if (action === 'CANCEL') {
                 // CANCEL action - immediate execution, no approval needed
                 
                 // Get current esub count
-                const currentEsubCount = await getEsubCount(teamName, division);
-                
+                const currentEsubCount = await getEsubUsed(seasonId, team.id);
+
                 if (currentEsubCount <= 0) {
                     return await interaction.editReply({
-                        content: `❌ ${teamName} has no recorded one-day subs to cancel for ${division} (${currentEsubCount}/3).`,
+                        content: `❌ ${teamName} has no recorded one-day subs to cancel for ${division} (${currentEsubCount}/${esubLimit}).`,
                     });
                 }
 
-                // Decrement count
-                const newCount = currentEsubCount - 1;
-                await updateEsubCount(teamName, division, newCount);
+                // Give the e-sub back (never goes below 0)
+                const newCount = await refundEsub(seasonId, team.id, interaction.user.username);
 
                 // E-subs don't receive team roles, so no role removal needed
 
@@ -326,13 +217,13 @@ module.exports = {
                         .addFields(
                             { name: 'Team', value: teamName, inline: true },
                             { name: 'Division', value: division, inline: true },
-                            { name: 'E-Subs Used', value: `${newCount}/3`, inline: true },
+                            { name: 'E-Subs Used', value: `${newCount}/${esubLimit}`, inline: true },
                             { name: 'Cancelled By', value: `${interaction.user.username} (Salary Crew)`, inline: true }
                         )
                         .setColor(0xFF0000)
                         .setTimestamp();
 
-                    const logoAttachment = await teamLogoAttachment(teamName);
+                    const logoAttachment = await teamLogoAttachment(team.id, team.name);
                     if (logoAttachment) {
                         cancelEmbed.setThumbnail('attachment://team_logo.png');
                         await transactionChannel.send({
@@ -349,11 +240,11 @@ module.exports = {
                 const esubChannel = await interaction.guild.channels.fetch(ESUB_TRACKING_CHANNEL_ID);
                 if (esubChannel) {
                     const trackingEmbed = new EmbedBuilder()
-                        .setDescription(`**${teamName}** cancelled <@${player.id}>'s one-day sub for **${division}** (${newCount}/3 used)`)
+                        .setDescription(`**${teamName}** cancelled <@${player.id}>'s one-day sub for **${division}** (${newCount}/${esubLimit} used)`)
                         .setColor(0xFF0000)
                         .setTimestamp();
 
-                    const logoAttachment = await teamLogoAttachment(teamName);
+                    const logoAttachment = await teamLogoAttachment(team.id, team.name);
                     if (logoAttachment) {
                         trackingEmbed.setThumbnail('attachment://team_logo.png');
                         await esubChannel.send({
@@ -366,7 +257,7 @@ module.exports = {
                 }
 
                 await interaction.editReply({
-                    content: `✅ One-day sub cancelled! ${teamName} now has ${newCount}/3 e-subs used for ${division}. ${player.username} has been removed from the team.`,
+                    content: `✅ One-day sub cancelled! ${teamName} now has ${newCount}/${esubLimit} e-subs used for ${division}.`,
                 });
 
                 Logger.success(`One-day sub cancelled: ${player.username} from ${teamName} ${division} by ${interaction.user.username}`);
@@ -400,15 +291,25 @@ module.exports = {
                 return;
             }
 
-            // Add team role to player
-            const teamRoleId = TEAM_ROLES[transaction.division][transaction.teamName];
-            if (teamRoleId) {
-                await playerMember.roles.add(teamRoleId);
-            }
+            // E-subs are temporary — no team role is granted (this used to add
+            // one from the stale constants map, which both contradicted /esub
+            // and left the player wearing a team role after the sub was over).
 
-            // Update esub count
-            const newCount = transaction.currentEsubCount + 1;
-            await updateEsubCount(transaction.teamName, transaction.division, newCount);
+            // Consume one e-sub. The count can move during the 12h approval
+            // window, so this is also the atomic limit check.
+            const esubLimit = transaction.esubLimit ?? await getEsubLimit(transaction.seasonId);
+            const newCount = await consumeEsub(
+                transaction.seasonId,
+                transaction.teamId,
+                esubLimit,
+                transaction.requestedByUsername || null
+            );
+            if (newCount === null) {
+                await message.channel.send({
+                    content: `❌ **${transaction.teamName}** has already used all ${esubLimit} ${transaction.division} one-day subs this season — this request was not applied.`
+                });
+                return;
+            }
 
             // Send confirmation to transaction channel
             const transactionChannel = await client.channels.fetch(TRANSACTION_CONFIRMATION_CHANNEL_ID);
@@ -419,13 +320,13 @@ module.exports = {
                 .addFields(
                     { name: 'Team', value: transaction.teamName, inline: true },
                     { name: 'Division', value: transaction.division, inline: true },
-                    { name: 'E-Subs Used', value: `${newCount}/3`, inline: true },
+                    { name: 'E-Subs Used', value: `${newCount}/${esubLimit}`, inline: true },
                     { name: 'Processed By', value: transaction.requestedByUsername, inline: true }
                 )
                 .setColor(0x00FF00)
                 .setTimestamp();
 
-            const logoAttachment = await teamLogoAttachment(transaction.teamName);
+            const logoAttachment = await teamLogoAttachment(transaction.teamId, transaction.teamName);
             if (logoAttachment) {
                 confirmationEmbed.setThumbnail('attachment://team_logo.png');
                 await transactionChannel.send({
@@ -442,11 +343,11 @@ module.exports = {
             const esubChannel = await client.channels.fetch(ESUB_TRACKING_CHANNEL_ID);
             if (esubChannel) {
                 const trackingEmbed = new EmbedBuilder()
-                    .setDescription(`**${transaction.teamName}** signed <@${transaction.playerId}> as a one-day sub for **${transaction.division}** via admin (${newCount}/3 used)`)
+                    .setDescription(`**${transaction.teamName}** signed <@${transaction.playerId}> as a one-day sub for **${transaction.division}** via admin (${newCount}/${esubLimit} used)`)
                     .setColor(0x0099FF)
                     .setTimestamp();
 
-                const trackLogo = await teamLogoAttachment(transaction.teamName);
+                const trackLogo = await teamLogoAttachment(transaction.teamId, transaction.teamName);
                 if (trackLogo) {
                     trackingEmbed.setThumbnail('attachment://team_logo.png');
                     await esubChannel.send({
@@ -459,7 +360,8 @@ module.exports = {
             }
 
             {
-                const teamId = await TransactionDB.findTeamIdByName(transaction.division, transaction.teamName);
+                const teamId = transaction.teamId
+                    || await TransactionDB.findTeamIdByName(transaction.division, transaction.teamName);
                 await TransactionDB.log({
                     discordId: transaction.playerId,
                     discordUsername: transaction.playerUsername,

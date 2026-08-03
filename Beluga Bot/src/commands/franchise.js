@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const { pool, isDatabaseAvailable, LeagueDB } = require('../utils/database');
+const { siteFooter } = require('../utils/siteFooter');
 const Logger = require('../utils/logger');
 
 /**
@@ -106,7 +107,7 @@ module.exports = {
                 embed.setFooter({ text: 'No Discord link set — staff can add one in the admin panel (Teams → Franchises).' });
             }
 
-            await interaction.editReply({ embeds: [embed] });
+            await interaction.editReply({ content: siteFooter(interaction.guild), embeds: [embed] });
         } catch (error) {
             Logger.error('/franchise failed', error);
             await interaction.editReply('❌ Failed to load that franchise.');

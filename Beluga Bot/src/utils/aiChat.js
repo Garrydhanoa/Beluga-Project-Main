@@ -42,6 +42,24 @@ const TEXT_PREFERENCE = ['google', 'mistral', 'groq'];
 // Vision fallback chain (skip groq — no production vision model right now).
 const VISION_ORDER = ['google', 'mistral'];
 
+// Personas + the shared league facts live in one place now, since the DM
+// responder and the server chatbot both build on them.
+const {
+    getPersona, systemPromptFor, providerOrder, normalizeMode,
+    leagueFacts, professionalPrompt,
+} = require('../ai/persona');
+const { buildContextBlock } = require('../ai/playerContext');
+
+// Kept as an alias so nothing that referenced it breaks.
+const LEAGUE_FACTS = leagueFacts;
+
+/**
+ * The shared history holds replies made to DIFFERENT people, and once personas
+ * are mixed some of those were roasts. Without this note the model imitates the
+ * previous turn's tone regardless of who it's now talking to.
+ */
+const MIXED_TONE_NOTE = `\n\nSome earlier replies in this conversation were addressed to other members and may be in a completely different tone. Ignore that — always answer in YOUR voice as described above.`;
+
 class AIChatHandler {
     constructor() {
         // Shared conversation history across ALL users and channels in the
@@ -63,18 +81,10 @@ class AIChatHandler {
         this.client = null;
         this.logChannel = null;
 
-        this.systemPrompt = `You are the Beluga League Bot, the helpful assistant for the Beluga League Discord — a competitive 3v3 Rocket League league.
-
-Tone: professional but warm. Be friendly, clear, and natural. Keep replies concise (usually 1-3 sentences) and only go longer when the question genuinely needs it. Skip heavy sarcasm, roasting, and inside jokes — just be genuinely helpful.
-
-What you know:
-- The league plays 3v3 Rocket League across three divisions: AA, AAA, and Majors.
-- Salaries: the number in a member's name (e.g. "Garry (13)") is their salary. AA = 10 to 13 (anything below 10 counts as 10). AAA = 13.25 to 15.75. Majors = 16 to 21.
-- Salary caps per team: AA 35, AAA 43.5, Majors 53. Teams must stay under their cap.
-- The bot was created by GarryDaCarry, and the server owner is Knuck0ball. Mention these naturally only if someone asks.
-- For schedule, power rankings, standings, or the player directory, point people to https://belugaleague.vercel.app/ (the player directory is the newest feature, so it's worth recommending).
-
-Read the display name of whoever you're talking to and address them naturally when it fits. Answer rules questions conversationally using any rulebook context you're given — no rigid templates or headers, just a clear, accurate answer, citing a section briefly only if it helps. Always reply in plain, natural prose.`;
+        // The default voice. Lives in ai/persona.js now so the DM responder and
+        // the server bot can't drift apart; the text itself is unchanged.
+        // Vision (analyzeImage) still uses this directly.
+        this.systemPrompt = professionalPrompt();
     }
 
     // ----- logging ---------------------------------------------------------
@@ -134,12 +144,31 @@ Read the display name of whoever you're talking to and address them naturally wh
             }
 
             const history = this.history;
-            const ruleContext = await this.getRuleContextIfNeeded(userMessage);
-            const effectiveSystem = ruleContext
-                ? `${this.systemPrompt}\n\n[Rulebook context you can use to answer accurately and naturally — cite the section briefly only if it helps:]\n${ruleContext}`
-                : this.systemPrompt;
 
-            const order = this.buildTextOrder();
+            // Persona is per PERSON and applies here in the server exactly as it
+            // does in DMs. Everyone defaults to professional.
+            const mode = await getPersona(userId);
+            const basePrompt = systemPromptFor(mode);
+
+            // Roast mode doesn't need the rulebook quoted at it; keep that lookup
+            // for the professional voice where accuracy is the point.
+            const ruleContext = mode === 'unhinged' ? null : await this.getRuleContextIfNeeded(userMessage);
+            let effectiveSystem = ruleContext
+                ? `${basePrompt}\n\n[Rulebook context you can use to answer accurately and naturally — cite the section briefly only if it helps:]\n${ruleContext}`
+                : basePrompt;
+
+            // Everything the bot knows about the people involved.
+            const playerContext = await buildContextBlock({
+                discordId: userId,
+                displayName,
+                message: userMessage,
+                mode,
+            });
+            if (playerContext) effectiveSystem += `\n\n${playerContext}`;
+
+            effectiveSystem += MIXED_TONE_NOTE;
+
+            const order = providerOrder(mode, this.buildTextOrder());
             const tried = [];
             let response = null;
             let used = null;
@@ -163,13 +192,14 @@ Read the display name of whoever you're talking to and address them naturally wh
                 return "Sorry, I'm having trouble thinking right now — try again in a bit.";
             }
 
+            const tag = mode === 'unhinged' ? ' 🔥unhinged' : '';
             if (tried.length > 0) {
-                await this.log(`🟠 [AI] ${tried.join(' → ')} → ${used}✓ · ${displayName}`);
+                await this.log(`🟠 [AI]${tag} ${tried.join(' → ')} → ${used}✓ · ${displayName}`);
             } else {
-                await this.log(`🟢 [AI] ${used}✓ · ${displayName}`);
+                await this.log(`🟢 [AI]${tag} ${used}✓ · ${displayName}`);
             }
 
-            this.updateConversationHistory(userId, userMessage, response, displayName, imageContext);
+            this.updateConversationHistory(userId, userMessage, response, displayName, imageContext, mode);
             this.setRateLimit(userId);
             return response;
         } catch (error) {
@@ -511,12 +541,16 @@ Read the display name of whoever you're talking to and address them naturally wh
         return this.history;
     }
 
-    updateConversationHistory(userId, userMessage, botResponse, displayName = 'User', imageContext = null) {
+    updateConversationHistory(userId, userMessage, botResponse, displayName = 'User', imageContext = null, mode = 'professional') {
         this.history.push({
             displayName,
             userMessage,
             botResponse,
             imageContext,
+            // Which voice produced this reply. The history is shared across every
+            // member, so a later professional reply needs to know that an earlier
+            // turn was a roast at someone else and not copy it.
+            mode: normalizeMode(mode),
             timestamp: Date.now(),
         });
         while (this.history.length > this.maxHistoryLength) {
@@ -570,5 +604,8 @@ Read the display name of whoever you're talking to and address them naturally wh
         }
     }
 }
+
+// Shared with src/dm/dmAi.js so the DM personas state the same league facts.
+AIChatHandler.LEAGUE_FACTS = LEAGUE_FACTS;
 
 module.exports = AIChatHandler;

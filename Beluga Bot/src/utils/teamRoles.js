@@ -253,6 +253,72 @@ function getCaptainRoleId(division) {
     return ROLES.CAPTAINS[String(division || '').toUpperCase()] || null;
 }
 
+/**
+ * Which active team in `division` a guild member belongs to, resolved from the
+ * DB (never the stale constants). A member counts as belonging via ANY of:
+ *   - the franchise GM role,
+ *   - the team's own Discord role,
+ *   - the franchise NP (non-playing) role — an NP is franchise staff, so they
+ *     belong to that franchise's team in EVERY division,
+ *   - an active team_roster_members row.
+ *
+ * Division matching is case-insensitive because divisions arrive from slash
+ * command options ('MAJORS') and the DB stores them capitalised ('Majors').
+ *
+ * @param {import('discord.js').GuildMember} member
+ * @param {string} division
+ * @returns {Promise<null | {team, isGM: boolean, isNP: boolean, hasTeamRole: boolean,
+ *   rosterRole: string|null, hasCaptainRole: boolean}>}
+ */
+async function resolveMemberTeamInDivision(member, division) {
+    const discordId = member?.id || member?.user?.id;
+    if (!discordId || !division) return null;
+
+    const seasonId = await getActiveSeasonId();
+    if (!seasonId) return null;
+
+    const wanted = String(division).toLowerCase();
+    const teams = (await getActiveTeams()).filter((t) => String(t.division).toLowerCase() === wanted);
+    if (!teams.length) return null;
+
+    const hasRole = (id) => Boolean(id && member?.roles?.cache?.has(id));
+    const hasCaptainRole = hasRole(getCaptainRoleId(division));
+
+    // Roster rows for this member on any of the division's teams.
+    const rosterByTeam = new Map();
+    if (db()) {
+        try {
+            const r = await pool.query(
+                `SELECT team_id, role FROM team_roster_members
+                 WHERE season_id = $1 AND discord_id = $2 AND is_active = TRUE
+                   AND team_id = ANY($3::int[])`,
+                [seasonId, String(discordId), teams.map((t) => t.id)]
+            );
+            for (const row of r.rows) rosterByTeam.set(row.team_id, row.role);
+        } catch (err) {
+            Logger.error('resolveMemberTeamInDivision roster lookup failed', err);
+        }
+    }
+
+    let npMatch = null;
+    for (const team of teams) {
+        // eslint-disable-next-line no-await-in-loop
+        const roles = await getTeamDiscordRoles(team.id);
+        const isGM = hasRole(roles.gmRoleId);
+        const hasTeamRole = hasRole(roles.teamRoleId);
+        const rosterRole = rosterByTeam.get(team.id) || null;
+        const isNP = hasRole(roles.npRoleId);
+        if (isGM || hasTeamRole || rosterRole) {
+            return { team, isGM, isNP, hasTeamRole, rosterRole, hasCaptainRole };
+        }
+        // NP is the weakest signal — keep looking for a playing/GM link first.
+        if (isNP && !npMatch) {
+            npMatch = { team, isGM: false, isNP: true, hasTeamRole: false, rosterRole: null, hasCaptainRole };
+        }
+    }
+    return npMatch;
+}
+
 function clearTeamRoleCache() {
     _roleCache.clear();
     _logoCache.clear();
@@ -271,5 +337,6 @@ module.exports = {
     getTeamLogoBufferByName,
     attachTeamLogo,
     getCaptainRoleId,
+    resolveMemberTeamInDivision,
     clearTeamRoleCache,
 };

@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import EsubPanel from './EsubPanel'
 
 const TX_TYPES = [
   'sign', 'drop', 'release', 'trade_in', 'trade_out',
@@ -77,6 +78,8 @@ export default function TransactionsAdminPage() {
           + Manual entry
         </button>
       </div>
+
+      <EsubPanel seasons={seasons} />
 
       <div className="mb-4 flex flex-wrap gap-2 items-center p-3 rounded-xl bg-white/[0.03] border border-white/10">
         <input

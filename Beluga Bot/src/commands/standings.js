@@ -3,6 +3,7 @@ const { LeagueDB } = require('../utils/database');
 const { getStandings } = require('../stats/statsStore');
 const { buildStandingsImage } = require('../stats/standingsCard');
 const { resolveWeek, weekHeader } = require('../utils/weekNumber');
+const { siteFooter } = require('../utils/siteFooter');
 const Logger = require('../utils/logger');
 
 /**
@@ -37,8 +38,11 @@ module.exports = {
             const week = resolveWeek(interaction, season);
             const header = weekHeader(week);
 
-            let posted = 0;
+            // Render every division FIRST so we know which one is last — the
+            // website footer rides on the final message rather than adding an
+            // extra one after the images.
             const empty = [];
+            const images = [];
             for (const division of DIVISIONS) {
                 // eslint-disable-next-line no-await-in-loop
                 const rows = await getStandings(season.id, division);
@@ -51,11 +55,19 @@ module.exports = {
                     rows.map((r) => ({ ...r, rank: r.place ?? r.rank })),
                     { division, seasonNumber, playoffLine: 8 }
                 );
-                // First posted image carries the WEEK header; the rest are just images.
-                const content = posted === 0 && header ? header : undefined;
+                images.push({ division, image });
+            }
+
+            let posted = 0;
+            for (const { division, image } of images) {
+                // First image carries the WEEK header; the last carries the site
+                // footer (both, when only one division posts).
+                const lines = [];
+                if (posted === 0 && header) lines.push(header);
+                if (posted === images.length - 1) lines.push(siteFooter(interaction.guild));
                 // eslint-disable-next-line no-await-in-loop
                 await interaction.channel.send({
-                    content,
+                    content: lines.length ? lines.join('\n') : undefined,
                     files: [{ attachment: image, name: `${division.toLowerCase()}-standings.png` }],
                 });
                 posted += 1;

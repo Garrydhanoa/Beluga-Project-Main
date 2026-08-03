@@ -24,6 +24,7 @@ const {
 const { pool, isDatabaseAvailable, TicketDB } = require('../utils/database');
 const { ROLES } = require('../constants/roles');
 const Logger = require('../utils/logger');
+const higgenLog = require('../utils/higgenLog');
 
 const EPHEMERAL = 64;
 
@@ -367,7 +368,20 @@ async function route(interaction) {
         if (action === 'add') return await handleAddMember(interaction, arg);
         if (action === 'adduser' && interaction.isUserSelectMenu()) return await handleAddUserSelect(interaction);
     } catch (err) {
-        if (err?.code === 10062 || err?.code === 40060) return;
+        // Caught here and never rethrown, so bot.js can't see it — report the real
+        // outcome to the audit log or a crashed ticket action would read as success.
+        if (err?.code === 10062 || err?.code === 40060) {
+            higgenLog.markSubRouterOutcome(interaction, {
+                outcome: 'expired',
+                note: 'The ticket control was used after its interaction had timed out.',
+            });
+            return;
+        }
+        higgenLog.markSubRouterOutcome(interaction, {
+            outcome: 'failed',
+            note: `The ticket action "${action}" threw an error.`,
+            error: err,
+        });
         Logger.error(`ticket router error (${action})`, err);
         try {
             if (interaction.isRepliable?.() && !interaction.replied && !interaction.deferred) {

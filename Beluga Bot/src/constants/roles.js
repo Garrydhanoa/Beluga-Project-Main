@@ -169,7 +169,13 @@ const CHANNELS = {
     TRANSACTION_CONFIRMATION: '1156814623371169801', // Where confirmations are posted
 
     // Division channels (for roster updates)
-    MAJORS: '1209370015560769637'  // Majors channel for roster messages
+    MAJORS: '1209370015560769637',  // Majors channel for roster messages
+
+    // Onboarding channels (welcome message + the links inside it)
+    WELCOME: '1156814622070935632',   // Where the join message + welcome card is posted
+    VERIFY: '1509998372227125428',    // Verification instructions
+    REGISTER: '1243372169908588554',  // League registration
+    SUPPORT: '1304231187547684864'    // Ticket / help channel
 };
 
 // Helper function to get team choices for slash commands

@@ -1,21 +1,18 @@
+const { currentLeagueWeek } = require('./leagueWeek');
+
 /**
- * Current league week from the active season's start_date (UTC, matching the
- * website's computeWeekNumber and the week-thread auto-open logic). Returns null
- * if there's no start date or the season hasn't started. Read-only helper so the
- * /standings and /power-rankings commands can label graphics with a week number
- * without duplicating (or touching) the week-thread creation code.
+ * Current league week from the active season's start_date. Rolls over at 9:00 AM
+ * MONDAY US EASTERN (see utils/leagueWeek.js) — the same instant the week-thread
+ * watcher auto-opens the week, so the bot never labels a graphic "Week 6" before
+ * week 6's threads exist. Returns null if there's no start date or the season
+ * hasn't opened yet.
+ *
+ * Read-only helper so /standings and /power-rankings can label graphics without
+ * duplicating (or touching) the week-thread creation code.
  */
 function computeCurrentWeek(season) {
     if (!season || !season.start_date) return null;
-    const start = new Date(season.start_date);
-    if (isNaN(start)) return null;
-    const startUTC = Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate());
-    const ref = new Date();
-    const refUTC = Date.UTC(ref.getUTCFullYear(), ref.getUTCMonth(), ref.getUTCDate());
-    const diffMs = refUTC - startUTC;
-    if (diffMs < 0) return null;
-    const week = Math.floor(diffMs / (7 * 24 * 60 * 60 * 1000)) + 1;
-    return week >= 1 ? week : null;
+    return currentLeagueWeek(season.start_date);
 }
 
 /** Week chosen by the user (option) or the computed current week; may be null. */

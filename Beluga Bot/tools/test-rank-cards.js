@@ -1,8 +1,11 @@
 /**
- * Dev-only: render the redesigned standings + power-rankings cards to PNG using
+ * Dev-only: render the standings + power-rankings + welcome cards to PNG using
  * stubbed team colors/logos (no DB needed) so the layout can be eyeballed.
  * Run from the Beluga Bot folder:  node tools/test-rank-cards.js
- * Output: tools/_cards/standings.png, tools/_cards/power.png
+ * Output: tools/_cards/{standings,power,welcome}.png
+ *
+ * Set REAL_DB=1 (with DATABASE_PUBLIC_URL in .env) to render the welcome card
+ * against the live franchise logos instead of the stubs.
  */
 const fs = require('fs');
 const path = require('path');
@@ -23,20 +26,38 @@ function stubLogo(teamId) {
     return c.toBuffer('image/png');
 }
 
+const REAL_DB = process.env.REAL_DB === '1';
+
+const FRANCHISES = [
+    'Aviators', 'Fallen Angels', 'InTraCate', 'Kingdom', 'Lotus', 'Malfeasance', 'MNML',
+    'Panthers', 'Sublunary', 'Surge', 'Vaelix Esports', 'Valkyries', 'Vipers', 'Voltage',
+];
+
 const teamRolesPath = require.resolve('../src/utils/teamRoles');
 const originalLoad = Module._load;
 Module._load = function (request, parent, isMain) {
-    if (parent && /standingsCard|powerCard/.test(parent.filename) && request === '../utils/teamRoles') {
+    // welcomeCard lives in src/utils, so it requires './teamRoles' not '../utils/teamRoles'.
+    const wantsTeamRoles = request === '../utils/teamRoles' || request === './teamRoles';
+    const stubbable = REAL_DB ? /standingsCard|powerCard/ : /standingsCard|powerCard|welcomeCard/;
+    if (parent && stubbable.test(parent.filename) && wantsTeamRoles) {
         return {
             getTeamLogoBuffer: async (id) => (id == null ? null : stubLogo(id)),
             getTeamColorInt: async (id) => parseInt(PALETTE[(id || 0) % PALETTE.length].slice(1), 16),
+            getActiveTeams: async () => FRANCHISES.flatMap((name, i) => (
+                ['Majors', 'AAA', 'AA'].map((division) => ({
+                    id: i + 1, name, division, franchiseId: i + 1, color: PALETTE[i % PALETTE.length],
+                }))
+            )),
         };
     }
     return originalLoad(request, parent, isMain);
 };
 
+if (REAL_DB) require('dotenv').config();
+
 const { buildStandingsImage } = require('../src/stats/standingsCard');
 const { buildPowerRankingsImage } = require('../src/stats/powerCard');
+const { buildWelcomeCard } = require('../src/utils/welcomeCard');
 
 const TEAMS = ['Lotus', 'Clovis Esports', 'Sublunary', 'Immortals', 'Surge', 'Panthers', 'Aviators', 'InTraCate', 'Malfeasance', '6 Speed'];
 
@@ -71,6 +92,18 @@ function stubAvatar(i) {
     return c.toBuffer('image/png');
 }
 
+// bigger stub for the welcome card's 176px hero circle
+function bigStubAvatar(letter) {
+    const c = createCanvas(256, 256);
+    const x = c.getContext('2d');
+    const g = x.createLinearGradient(0, 0, 256, 256);
+    g.addColorStop(0, '#5dade2'); g.addColorStop(1, '#9b59b6');
+    x.fillStyle = g; x.fillRect(0, 0, 256, 256);
+    x.fillStyle = '#fff'; x.font = 'bold 130px sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
+    x.fillText(letter, 128, 134);
+    return c.toBuffer('image/png');
+}
+
 const prPlayers = ['Twizz', 'Acro', 'Vortex', 'Nyx', 'Blaze', 'Echo', 'Frost', 'Glide', 'Halo', 'Ion'].map((name, i) => ({
     rank: i + 1,
     name,
@@ -88,7 +121,24 @@ const prPlayers = ['Twizz', 'Acro', 'Vortex', 'Nyx', 'Blaze', 'Echo', 'Frost', '
     fs.writeFileSync(path.join(outDir, 'standings.png'), s);
     console.log('wrote', path.join(outDir, 'standings.png'), s.length, 'bytes');
 
-    const p = await buildPowerRankingsImage({ division: 'Majors', seasonNumber: 9, teams: prTeams, players: prPlayers });
+    // week drives the "Season N · Week N" stamp and the footer legend.
+    const p = await buildPowerRankingsImage({ division: 'Majors', seasonNumber: 9, week: 6, teams: prTeams, players: prPlayers });
     fs.writeFileSync(path.join(outDir, 'power.png'), p);
     console.log('wrote', path.join(outDir, 'power.png'), p.length, 'bytes');
+
+    // Welcome card — typical case, then the two edge cases that break layouts:
+    // a very long display name and a member with no usable avatar.
+    const w = await buildWelcomeCard({
+        displayName: 'GurryDhanoa', username: 'gurry.d', avatarBuffer: bigStubAvatar('G'),
+        memberNumber: 268, seasonLabel: 'Season 10', joinedAt: new Date(),
+    });
+    fs.writeFileSync(path.join(outDir, 'welcome.png'), w);
+    console.log('wrote', path.join(outDir, 'welcome.png'), w.length, 'bytes');
+
+    const w2 = await buildWelcomeCard({
+        displayName: 'xX_TheLongestPossibleNameEver_Xx', username: 'thelongestpossiblenameever',
+        avatarBuffer: null, memberNumber: 1204, seasonLabel: 'Season 10', joinedAt: new Date(),
+    });
+    fs.writeFileSync(path.join(outDir, 'welcome-edge.png'), w2);
+    console.log('wrote', path.join(outDir, 'welcome-edge.png'), w2.length, 'bytes');
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -30,7 +30,6 @@ const ADMIN_ROUTES = [
   '/admin/dashboard/transactions',
   '/admin/dashboard/weeks',
   '/admin/dashboard/applications',
-  '/admin/dashboard/logs',
   '/admin/dashboard/notification',
 ]
 

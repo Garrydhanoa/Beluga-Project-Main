@@ -1,20 +1,64 @@
 import { query, getPool } from './db'
 import { ensureLeagueSchema } from './leagueSchema'
 
+/** The league runs on US Eastern; the week turns over at 9am Monday. */
+export const LEAGUE_TZ = 'America/New_York'
+export const WEEK_OPEN_HOUR = 9
+
+/** Wall-clock parts of `date` as seen in `timeZone`. */
+function zonedParts(date, timeZone = LEAGUE_TZ) {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  })
+  const out = {}
+  for (const p of fmt.formatToParts(date)) {
+    if (p.type !== 'literal') out[p.type] = Number(p.value)
+  }
+  // Some ICU builds report midnight as hour 24 under hour12:false.
+  out.hour %= 24
+  return out
+}
+
 /**
  * Given a season start date (ISO yyyy-mm-dd, must be a Monday) and a reference date,
  * compute the week number (1-based). Returns null if startDate is missing or
- * the reference is before startDate.
+ * the reference is before the season opens.
+ *
+ * The week rolls over at 9:00 AM MONDAY US EASTERN, DST included. This was plain
+ * UTC date math, which on a UTC host advanced the week at 00:00 UTC Monday —
+ * 8:00 PM SUNDAY Eastern in summer, so the admin panel (and the bot's
+ * thread auto-open) jumped a week a day early.
+ *
+ * The 9-hour shift is the trick: take the Eastern wall clock, subtract the
+ * opening hour, and the calendar date of the result names the league week.
+ *   Mon 08:59 ET - 9h -> Sun 23:59 -> previous week
+ *   Mon 09:00 ET - 9h -> Mon 00:00 -> new week
+ *
+ * KEEP IN LOCK-STEP with Beluga Bot/src/utils/leagueWeek.js (currentLeagueWeek).
  */
 export function computeWeekNumber(startDateIso, referenceDate = new Date()) {
   if (!startDateIso) return null
-  const start = new Date(startDateIso + 'T00:00:00Z')
+  const iso = startDateIso instanceof Date
+    ? startDateIso.toISOString().slice(0, 10)
+    : String(startDateIso).slice(0, 10)
+  const start = new Date(iso + 'T00:00:00Z')
   if (isNaN(start.getTime())) return null
+
   const ref = referenceDate instanceof Date ? referenceDate : new Date(referenceDate)
-  const refUTC = Date.UTC(ref.getUTCFullYear(), ref.getUTCMonth(), ref.getUTCDate())
-  const diffMs = refUTC - start.getTime()
+  if (isNaN(ref.getTime())) return null
+
+  const p = zonedParts(ref)
+  const wall = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second)
+  const shifted = new Date(wall - WEEK_OPEN_HOUR * 60 * 60 * 1000)
+  const shiftedDayUTC = Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate())
+
+  const diffMs = shiftedDayUTC - start.getTime()
   if (diffMs < 0) return null
-  return Math.floor(diffMs / (7 * 24 * 60 * 60 * 1000)) + 1
+  const week = Math.floor(diffMs / (7 * 24 * 60 * 60 * 1000)) + 1
+  return week >= 1 ? week : null
 }
 
 /**
@@ -179,6 +223,61 @@ export async function closeWeekThread(id, closed = true) {
 export async function deleteWeekThread(id) {
   await ensureLeagueSchema()
   await query(`DELETE FROM week_threads WHERE id = $1`, [id])
+}
+
+/**
+ * Week threads for `weekNumber` with NO confirmed series — i.e. matches that
+ * would lose their only reporting surface if the week were deleted.
+ *
+ * Mirrors `Beluga Bot/src/stats/weekReportCheck.js` exactly; the bot re-runs the
+ * same check before it actually deletes, so this is a preview for the warning
+ * dialog and never the sole gate.
+ */
+export async function getUnreportedForWeek(seasonId, weekNumber) {
+  await ensureLeagueSchema()
+  const r = await query(
+    `SELECT wt.id, wt.division, wt.team1, wt.team2, wt.match_number, wt.thread_id
+       FROM week_threads wt
+      WHERE wt.week_number = $2
+        AND ($1::int IS NULL OR wt.season_id = $1 OR wt.season_id IS NULL)
+        AND NOT EXISTS (
+          SELECT 1
+            FROM stats_series s
+            JOIN teams ht ON ht.id = s.home_team_id
+            JOIN teams at ON at.id = s.away_team_id
+           WHERE s.status = 'confirmed'
+             AND s.is_playoff = FALSE
+             AND s.week = wt.week_number
+             AND (wt.season_id IS NULL OR s.season_id = wt.season_id)
+             AND LOWER(s.division) = LOWER(wt.division)
+             AND (
+                  (LOWER(ht.name) = LOWER(wt.team1) AND LOWER(at.name) = LOWER(wt.team2))
+               OR (LOWER(ht.name) = LOWER(wt.team2) AND LOWER(at.name) = LOWER(wt.team1))
+             )
+        )
+      ORDER BY CASE LOWER(wt.division)
+                 WHEN 'majors' THEN 0 WHEN 'aaa' THEN 1 ELSE 2 END,
+               wt.match_number NULLS LAST, wt.team1`,
+    [seasonId == null ? null : Number(seasonId), Number(weekNumber)]
+  )
+
+  const total = await query(
+    `SELECT COUNT(*)::int AS n FROM week_threads
+      WHERE week_number = $2 AND ($1::int IS NULL OR season_id = $1 OR season_id IS NULL)`,
+    [seasonId == null ? null : Number(seasonId), Number(weekNumber)]
+  )
+
+  return {
+    unreported: r.rows.map((x) => ({
+      id: x.id,
+      division: x.division,
+      team1: x.team1,
+      team2: x.team2,
+      matchNumber: x.match_number,
+      hasThread: Boolean(x.thread_id),
+    })),
+    total: total.rows[0]?.n || 0,
+  }
 }
 
 export async function deleteAllForWeek(seasonId, weekNumber) {

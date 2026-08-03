@@ -99,7 +99,7 @@ function PlayerCard({ p, member }) {
   const ping404 = (ap.queued || []).includes('tracker_404')
   return (
     <div className={`rounded-xl border p-3 ${p.any_invalid ? 'border-yellow-400/40 bg-yellow-500/5' : 'border-white/10 bg-white/[0.03]'}`}>
-      <div className="flex items-center justify-between gap-2 mb-2">
+      <div className="flex items-start justify-between gap-2 mb-2 flex-wrap">
         <div className="flex items-center gap-2 min-w-0">
           <Avatar src={member?.avatarUrl} name={name} size={32} ring={false} className="flex-shrink-0" />
           <div className="min-w-0">
@@ -111,7 +111,7 @@ function PlayerCard({ p, member }) {
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex items-center gap-1.5 flex-wrap">
           {p.source === 'register' && <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-200 border border-indigo-400/30" title="Queued by the /register command">from register command</span>}
           {p.any_invalid && <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-200 border border-yellow-400/30" title="A tracker returned 404 (not found) — player notified to open a ticket">404 TRACKER</span>}
           {ping404 && <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-200 border border-amber-400/30" title="Player pinged to open a ticket">pinged ticket</span>}
@@ -134,7 +134,7 @@ function PlayerCard({ p, member }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-1.5 mb-2">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 mb-2">
         <Cat label="2s peak" cell={cells.peak_2s} source={best.peak_2s?.source} />
         <Cat label="3s peak" cell={cells.peak_3s} source={best.peak_3s?.source} />
         <Cat label="2s cur" cell={cells.cur_2s} source={best.cur_2s?.source} />
@@ -143,7 +143,7 @@ function PlayerCard({ p, member }) {
 
       {/* win rating (col Z): summed lifetime wins across all trackers; held when not all pulled */}
       {cells.win_rating && (
-        <div className="grid grid-cols-4 gap-1.5 mb-2">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 mb-2">
           <Cat label="win rating" cell={cells.win_rating} />
         </div>
       )}
@@ -407,11 +407,11 @@ export default function MmrUpdaterPage() {
           <h1 className="text-2xl font-black text-white">MMR Updater</h1>
           <p className="text-sm text-white/50">Pull peak/current 2s &amp; 3s MMR from Tracker Network · {armed ? <span className="text-red-300 font-bold">LIVE WRITES ARMED</span> : 'dry-run (no sheet writes)'}</p>
         </div>
-        <div className="flex flex-col items-end gap-2">
+        <div className="flex flex-col items-start lg:items-end gap-2 w-full lg:w-auto">
           <StatusPill status={snap?.status} />
           {/* Bot automation toggles — DB-backed (the bot reads trn_config, not the
               SalSheet CONTROL PANEL tab anymore). */}
-          <div className="w-72 space-y-2">
+          <div className="w-full lg:w-72 space-y-2">
             <BotToggle
               label="Auto Sal Lock Updates"
               hint="locks col O & posts salary changes"

@@ -1,27 +1,8 @@
 const { SlashCommandBuilder, EmbedBuilder, AttachmentBuilder } = require('discord.js');
 const Logger = require('../utils/logger');
-const { TEAM_ROLES, TEAM_COLORS } = require('../constants/roles');
-const { getTeamSchedule, AAA_AA_ONLY_TEAMS, ALL_DIVISION_TEAMS } = require('../constants/schedule');
-const { attachTeamLogo, teamAutocomplete } = require('../utils/teamRoles');
-
-// Team logo for embeds — DB only (team→franchise logo). Returns an
-// AttachmentBuilder named team_logo.png or null. (Was IMAGES/logos/*.png.)
-async function teamLogoAttachment(teamName) {
-    return attachTeamLogo(null, teamName);
-}
-
-// Build team choices based on division
-function getTeamChoicesForDivision(division) {
-    if (division === 'MAJORS') {
-        return ALL_DIVISION_TEAMS.map(team => ({ name: team, value: team }));
-    } else {
-        // AAA and AA have all 16 teams
-        return [...ALL_DIVISION_TEAMS, ...AAA_AA_ONLY_TEAMS].map(team => ({ name: team, value: team }));
-    }
-}
-
-// All possible teams for autocomplete
-const ALL_TEAMS = [...ALL_DIVISION_TEAMS, ...AAA_AA_ONLY_TEAMS];
+const { getTeamSchedule } = require('../constants/schedule');
+const { attachTeamLogo, teamAutocomplete, findTeam, getTeamColorInt } = require('../utils/teamRoles');
+const { siteFooter } = require('../utils/siteFooter');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -58,21 +39,21 @@ module.exports = {
             const division = interaction.options.getString('division');
             const teamName = interaction.options.getString('team');
 
-            // Validate team exists in the selected division
-            if (division === 'MAJORS' && AAA_AA_ONLY_TEAMS.includes(teamName)) {
-                return await interaction.editReply({
-                    content: `**${teamName}** does not play in the MAJORS division. They only play in AAA and AA.`,
-                });
-            }
-
-            // Check if team exists
-            if (!ALL_TEAMS.includes(teamName)) {
+            // Validate against the live DB (active season), not a hardcoded list.
+            const team = await findTeam(teamName, division);
+            if (!team) {
+                const inAnyDivision = await findTeam(teamName);
+                if (inAnyDivision) {
+                    return await interaction.editReply({
+                        content: `**${teamName}** does not play in the ${division} division. They play in ${inAnyDivision.division}.`,
+                    });
+                }
                 return await interaction.editReply({
                     content: `Unknown team: **${teamName}**`,
                 });
             }
 
-            // Get the schedule for this team (DB-first, falls back to hardcoded)
+            // Get the schedule for this team (DB-driven).
             const teamSchedule = await getTeamSchedule(teamName, division);
 
             if (Object.keys(teamSchedule).length === 0) {
@@ -81,15 +62,18 @@ module.exports = {
                 });
             }
 
-            // Build the schedule embed
-            const teamColor = TEAM_COLORS[teamName] || 0x3498DB;
-            
-            // Build schedule lines for all weeks
+            // Build the schedule embed (team color from the DB franchise color).
+            const teamColor = await getTeamColorInt(team.id);
+
+            // Build schedule lines for every week actually present (numeric-sorted),
+            // so matches aren't dropped if a season runs beyond week 8.
             const scheduleLines = [];
-            for (let week = 1; week <= 8; week++) {
-                const weekKey = `Week ${week}`;
-                const matches = teamSchedule[weekKey];
-                
+            const weekNums = Object.keys(teamSchedule)
+                .map((k) => parseInt(k.replace(/^Week\s+/i, ''), 10))
+                .filter((n) => Number.isFinite(n))
+                .sort((a, b) => a - b);
+            for (const week of weekNums) {
+                const matches = teamSchedule[`Week ${week}`];
                 if (matches && matches.length > 0) {
                     for (const match of matches) {
                         scheduleLines.push({
@@ -114,8 +98,8 @@ module.exports = {
                 .setFooter({ text: `${division} Division | (H) Home | (A) Away` })
                 .setTimestamp();
 
-            // Try to attach team logo as thumbnail (from DB)
-            const logoAttachment = await teamLogoAttachment(teamName);
+            // Try to attach team logo as thumbnail (from DB, exact team id)
+            const logoAttachment = await attachTeamLogo(team.id, teamName);
             const files = [];
 
             if (logoAttachment) {
@@ -124,6 +108,7 @@ module.exports = {
             }
 
             await interaction.editReply({
+                content: siteFooter(interaction.guild),
                 embeds: [scheduleEmbed],
                 files: files
             });

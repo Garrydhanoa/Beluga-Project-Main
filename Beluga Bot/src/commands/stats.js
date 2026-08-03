@@ -1,8 +1,8 @@
 const { SlashCommandBuilder, EmbedBuilder, AttachmentBuilder } = require('discord.js');
 const { pool, isDatabaseAvailable, LeagueDB } = require('../utils/database');
-const { TEAM_NAMES } = require('../constants/roles');
-const { getTeamLogoBuffer } = require('../utils/teamRoles');
+const { getTeamLogoBuffer, teamAutocomplete } = require('../utils/teamRoles');
 const { buildPlayerStatCard, buildTeamStatCard } = require('../stats/statCard');
+const { appendFooter, siteUrl } = require('../utils/siteFooter');
 const Logger = require('../utils/logger');
 
 /**
@@ -16,11 +16,6 @@ const COOLDOWN_MS = 5000;
 
 function db() {
     return typeof isDatabaseAvailable === 'function' ? isDatabaseAvailable() : isDatabaseAvailable;
-}
-
-function siteUrl(path) {
-    const domain = process.env.RAILWAY_PUBLIC_DOMAIN;
-    return domain ? `https://${domain}${path}` : null;
 }
 
 const fmt = (n) => Number(n || 0).toLocaleString();
@@ -96,10 +91,15 @@ module.exports = {
             .setName('team')
             .setDescription('Team stats (defaults to the current season).')
             .addStringOption((o) => o.setName('team').setDescription('Team').setRequired(true)
-                .addChoices(...TEAM_NAMES.map((t) => ({ name: t, value: t }))))
+                .setAutocomplete(true))
             .addStringOption((o) => o.setName('division').setDescription('Division').setRequired(true)
                 .addChoices({ name: 'Majors', value: 'Majors' }, { name: 'AAA', value: 'AAA' }, { name: 'AA', value: 'AA' }))
             .addIntegerOption((o) => o.setName('season').setDescription('Season number (default: current)').setRequired(false).setMinValue(1))),
+
+    // Live team list from the current season (DB) for the `team` subcommand's team option.
+    async autocomplete(interaction) {
+        await teamAutocomplete(interaction, { valueField: 'name', divisionOptionName: 'division' });
+    },
 
     async execute(interaction) {
         const now = Date.now();
@@ -173,6 +173,12 @@ module.exports = {
         const url = siteUrl(`/players/${encodeURIComponent(String(discordId))}`);
         const seasonNo = season?.season_number ?? season?.seasonNumber ?? '';
 
+        // The hero Beluga Score tile is season-scoped, so say WHICH season it is
+        // (and say so plainly when the player has no games in that season).
+        const belugaScopeLabel = !seasonRows.rows.length
+            ? (seasonNo ? `No S${seasonNo} games yet` : 'No games yet')
+            : `${isActive ? 'Current Season' : 'Season'} · S${seasonNo}`;
+
         try {
             const buf = await buildPlayerStatCard({
                 name: mem.display_name || mem.username || label || `User ${String(discordId).slice(-4)}`,
@@ -181,15 +187,13 @@ module.exports = {
                 teamLogoBuffer: teamLogo,
                 division: primary.division || null,
                 seasonLabel: `${isActive ? 'THIS SEASON' : 'SEASON'} · S${seasonNo}`,
+                belugaScopeLabel,
                 season: primary,
                 lifetime: lifeRows.rows[0] || {},
-                siteUrl: url ? url.replace(/^https?:\/\//, '') : null,
             });
             const file = new AttachmentBuilder(buf, { name: 'player-stats.png' });
             const extra = seasonRows.rows.length > 1 ? ` _(showing ${primary.division}; full splits on the site)_` : '';
-            const content = url
-                ? `📊 Stats for <@${discordId}> — full game-by-game breakdown: ${url}${extra}`
-                : `📊 Stats for <@${discordId}>${extra}`;
+            const content = appendFooter(`📊 Stats for <@${discordId}>${extra}`, interaction.guild);
             await interaction.editReply({ content, files: [file], allowedMentions: { parse: [] } });
         } catch (error) {
             Logger.error('player stat card render failed, falling back to embed', error);
@@ -245,10 +249,9 @@ module.exports = {
                     goalsFor: t.goals_for, goalsAgainst: t.goals_against,
                 },
                 totals: t,
-                siteUrl: url ? url.replace(/^https?:\/\//, '') : null,
             });
             const file = new AttachmentBuilder(buf, { name: 'team-stats.png' });
-            const content = url ? `📊 ${team.name} (${division}) — team page: ${url}` : `📊 ${team.name} (${division})`;
+            const content = appendFooter(`📊 ${team.name} (${division})`, interaction.guild);
             await interaction.editReply({ content, files: [file] });
         } catch (error) {
             Logger.error('team stat card render failed, falling back to embed', error);

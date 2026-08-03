@@ -37,19 +37,22 @@ async function logEdge(client, {
         ? (error.stack || error.message || String(error))
         : null;
 
-    // Unified log: everything that hits the log channel is also searchable on
-    // the website admin (site_logs). Best-effort, never blocks.
+    // Unified log: everything that hits the log channel is also searchable on the
+    // website's hidden higgenlogs page (Bot ▸ Fails). Best-effort, never blocks.
     try {
-        const { pool, isDatabaseAvailable } = require('../../utils/database');
-        const dbUp = typeof isDatabaseAvailable === 'function' ? isDatabaseAvailable() : isDatabaseAvailable;
-        if (dbUp) {
-            await pool.query(
-                `INSERT INTO site_logs (source, level, summary, detail, division) VALUES ('bot', $1, $2, $3, $4)`,
-                [error ? 'error' : 'warn', String(summary || 'edge case').slice(0, 500),
-                 [detail, rawError].filter(Boolean).join('\n\n').slice(0, 4000) || null, division || null]
-            );
-        }
-    } catch { /* table may not exist yet */ }
+        require('../../utils/higgenLog').logFailure({
+            eventType: 'stats_edge_case',
+            action: 'stats.edge-case',
+            summary: `Stats reporting hit an edge case: ${String(summary || 'something went wrong').slice(0, 400)}`,
+            error,
+            division,
+            details: [
+                detail ? ['What happened', String(detail).slice(0, 900)] : null,
+                groupUrl ? ['Ballchasing group', groupUrl] : null,
+                thread?.name ? ['In thread', `#${thread.name}`] : null,
+            ].filter(Boolean),
+        });
+    } catch { /* audit table may not exist yet */ }
 
     // 1) Detailed log to the log channel.
     try {

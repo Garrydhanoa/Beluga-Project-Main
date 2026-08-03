@@ -22,13 +22,14 @@ function buildPanelMessage(ctx) {
             `Report the completed series for **${ctx.homeTeam.name}** vs **${ctx.awayTeam.name}**.\n\n` +
             'Click **Report Series** and paste your **Ballchasing replay group** link. ' +
             'You\'ll then match each replay player to their Discord account, and the other team confirms.\n\n' +
-            '**Who can report:** a **captain or GM** of either team in this matchup, or **salary crew**.'
+            '**Who can report:** a **captain or GM** of either franchise in this matchup ' +
+            '(a captain of this division counts even if you play in another one), or **salary crew**.'
         )
         .addFields(
             { name: 'Division', value: String(ctx.division), inline: true },
             { name: 'Week', value: String(ctx.week ?? '—'), inline: true },
         )
-        .setFooter({ text: 'Only a captain/GM of these teams (or salary crew) can use this.' });
+        .setFooter({ text: 'Only a captain/GM of these franchises (or salary crew) can use this.' });
 
     const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()

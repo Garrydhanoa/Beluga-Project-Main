@@ -6,6 +6,10 @@
  * Full visual overhaul: two paneled columns, per-team franchise-color accent
  * bars + logo rings, reason line under each team, and clearer trend pills.
  */
+// Registers the bundled fonts. MUST come before anything measures or draws
+// text — node-canvas resolves ctx.font at call time against whatever is
+// registered, and Railway's image ships no fonts of its own.
+require('../utils/fontManager');
 const { createCanvas, loadImage } = require('canvas');
 const { getTeamLogoBuffer, getTeamColorInt } = require('../utils/teamRoles');
 const { config } = require('../config/config');
@@ -81,7 +85,7 @@ function drawTrendPill(ctx, x, cy, t) {
     ctx.restore();
 }
 
-async function buildPowerRankingsImage({ division, seasonNumber, teams, players }) {
+async function buildPowerRankingsImage({ division, seasonNumber, week, teams, players }) {
     const rows = Math.max(teams.length, players.length, 1);
     const W = 1240;
     const headerH = 138;
@@ -106,9 +110,14 @@ async function buildPowerRankingsImage({ division, seasonNumber, teams, players 
     ctx.fillText('🐳 BELUGA LEAGUE', W / 2, 48);
     ctx.fillStyle = '#FFFFFF'; ctx.font = `bold 42px ${FONT}`;
     ctx.fillText(`${String(division).toUpperCase()} POWER RANKINGS`, W / 2, 96);
-    if (seasonNumber != null) {
+    // "Season 10 · Week 6" — either half may be missing; render whichever exists.
+    const stamp = [
+        seasonNumber != null ? `Season ${seasonNumber}` : null,
+        week != null ? `Week ${week}` : null,
+    ].filter(Boolean).join('  ·  ');
+    if (stamp) {
         ctx.fillStyle = '#8aa8cc'; ctx.font = `18px ${FONT}`;
-        ctx.fillText(`Season ${seasonNumber}`, W / 2, 122);
+        ctx.fillText(stamp, W / 2, 122);
     }
 
     const gutter = 24;
@@ -176,13 +185,14 @@ async function buildPowerRankingsImage({ division, seasonNumber, teams, players 
             ctx.fillText(String(t.name).slice(0, 20), colTeams.x + 110, cy - 4);
             if (t.reason) {
                 ctx.fillStyle = '#9bb3d4'; ctx.font = `13px ${FONT}`;
-                ctx.fillText(String(t.reason).slice(0, 52), colTeams.x + 110, cy + 17);
+                ctx.fillText(String(t.reason).slice(0, 58), colTeams.x + 110, cy + 17);
             }
 
             // trend pill + score (right)
             drawTrendPill(ctx, colTeams.x + colTeams.w - 96, cy, t.trend);
             ctx.fillStyle = '#c4b5fd'; ctx.font = `bold 22px ${FONT}`; ctx.textAlign = 'right';
-            ctx.fillText(String(t.score), colTeams.x + colTeams.w - 18, cy + 8);
+            // Teams that have not played yet carry a null score.
+            ctx.fillText(t.score == null ? '—' : String(t.score), colTeams.x + colTeams.w - 18, cy + 8);
             ctx.fillStyle = '#5c7aa3'; ctx.font = `10px ${FONT}`;
             ctx.fillText('FORM', colTeams.x + colTeams.w - 18, cy - 12);
         }
@@ -221,9 +231,10 @@ async function buildPowerRankingsImage({ division, seasonNumber, teams, players 
 
             const nameX = colPlayers.x + 108;
             ctx.fillStyle = '#fff'; ctx.font = `bold 21px ${FONT}`; ctx.textAlign = 'left';
-            ctx.fillText(String(p.name).slice(0, 16), nameX, cy - 4);
+            ctx.fillText(String(p.name).slice(0, 22), nameX, cy - 4);
             ctx.fillStyle = '#8aa8cc'; ctx.font = `13px ${FONT}`;
-            ctx.fillText(String(p.team || '').slice(0, 22), nameX, cy + 17);
+            const sub = [p.team, p.record && `${p.record} last ${p.games}`].filter(Boolean).join(' · ');
+            ctx.fillText(sub.slice(0, 26), nameX, cy + 17);
 
             drawTrendPill(ctx, colPlayers.x + colPlayers.w - 96, cy, p.trend);
             ctx.fillStyle = '#9fc3ff'; ctx.font = `bold 22px ${FONT}`; ctx.textAlign = 'right';
@@ -233,8 +244,12 @@ async function buildPowerRankingsImage({ division, seasonNumber, teams, players 
         }
     }
 
+    // Trends compare against the previous WEEK, so say which window this is.
+    const windowText = week != null
+        ? `Form over the last 5 series up to week ${week}, recency-weighted`
+        : 'Form over the last 5 series, recency-weighted';
     ctx.fillStyle = '#5c7aa3'; ctx.font = `13px ${FONT}`; ctx.textAlign = 'center';
-    ctx.fillText('Form-based: recent series & per-game performance, recency-weighted   ·   ▲ up   ▼ down   ★ new', W / 2, H - 18);
+    ctx.fillText(`${windowText}   ·   100 = division average   ·   ▲ up   ▼ down   ★ new`, W / 2, H - 18);
     return canvas.toBuffer('image/png');
 }
 

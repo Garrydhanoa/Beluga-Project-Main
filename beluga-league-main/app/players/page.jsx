@@ -277,7 +277,7 @@ export default function PlayersDirectoryPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {pageItems.map((player, i) => (
               <FadeIn key={player.discordId || player.username} delay={(i % 8) * 0.03}>
-                <PlayerCard player={player} />
+                <PlayerCard player={player} seasonNumber={season?.season_number ?? null} />
               </FadeIn>
             ))}
           </div>
@@ -344,7 +344,7 @@ export default function PlayersDirectoryPage() {
 // Player card
 // ====================================================================
 
-function PlayerCard({ player }) {
+function PlayerCard({ player, seasonNumber }) {
   const hasTeam = !!player.team
   return (
     <Link
@@ -425,11 +425,17 @@ function PlayerCard({ player }) {
         </div>
       </div>
 
-      {/* Stats row */}
-      <div className="relative grid grid-cols-3 gap-2">
-        <Stat label="G" value={player.goals} />
-        <Stat label="A" value={player.assists} />
-        <Stat label="S" value={player.saves} />
+      {/* Stats row — ACTIVE SEASON only. Labelled so it can't be confused with
+          the lifetime totals available on the player's profile page. */}
+      <div className="relative">
+        <div className="text-[8px] font-bold tracking-[0.18em] uppercase text-blue-300/40 text-center mb-1">
+          {seasonNumber ? `Season ${seasonNumber}` : 'This Season'}
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          <Stat label="G" value={player.goals} />
+          <Stat label="A" value={player.assists} />
+          <Stat label="S" value={player.saves} />
+        </div>
       </div>
 
       {/* Salary bar */}

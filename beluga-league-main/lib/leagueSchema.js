@@ -270,6 +270,32 @@ async function runMigrations() {
     )
   `)
 
+  // Per-season e-sub (one-day sub) allowance. Editable from the admin panel's
+  // Transactions tab; the bot reads it and falls back to 3 if it is missing.
+  await step('season_config.esub_limit', `
+    ALTER TABLE season_config ADD COLUMN IF NOT EXISTS esub_limit INTEGER NOT NULL DEFAULT 3
+  `)
+
+  // ---------- E-sub usage ----------
+  // How many one-day subs each team has used, keyed by SEASON + TEAM row. Teams
+  // are per (season, division, name), so this is inherently per-division and
+  // resets itself on a new season: new season → new team ids → no rows → 0 used.
+  //
+  // Replaces the "One Day Sub Tracker" tab of the salary spreadsheet, which
+  // addressed cells by team index into a hardcoded name list. That sheet's
+  // header row had drifted away from the live team names, so every read and
+  // write landed in some other team's column. Mirrored in the bot's database.js.
+  await step('team_esubs', `
+    CREATE TABLE IF NOT EXISTS team_esubs (
+      season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+      team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+      used INTEGER NOT NULL DEFAULT 0,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_by TEXT,
+      PRIMARY KEY (season_id, team_id)
+    )
+  `)
+
   await step('season_champions', `
     CREATE TABLE IF NOT EXISTS season_champions (
       id SERIAL PRIMARY KEY,
@@ -552,6 +578,13 @@ async function runMigrations() {
   `)
   await step('idx_power_rankings', `CREATE INDEX IF NOT EXISTS idx_power_rankings ON power_rankings(season_id, entity_type, division, rank)`)
 
+  // A ranking is a snapshot of ONE WEEK. Recalculating week 3 must not touch week
+  // 2 or 4, and trend arrows compare week N against week N-1. Pre-existing rows
+  // carry week = NULL (legacy, unweeked); the first weeked save per season+division
+  // purges them. Mirrored in Beluga Bot/src/stats/statsSchema.js — keep in sync.
+  await step('power_rankings.week', `ALTER TABLE power_rankings ADD COLUMN IF NOT EXISTS week INTEGER`)
+  await step('idx_power_rankings_week', `CREATE INDEX IF NOT EXISTS idx_power_rankings_week ON power_rankings(season_id, division, week, entity_type, rank)`)
+
   // season_action_requests — director-gated queue for "Start New Season" / "Delete
   // Season". The website (admin panel) inserts a row after the 5-step confirm; the
   // bot posts an approval embed to the director channel, collects 3 Director ✅
@@ -696,28 +729,50 @@ async function runMigrations() {
     )
   `)
 
-  // Unified error/edge log (bot writes everything that goes to the log channel).
-  await step('site_logs', `
-    CREATE TABLE IF NOT EXISTS site_logs (
-      id SERIAL PRIMARY KEY,
-      source TEXT NOT NULL DEFAULT 'bot',
-      level TEXT NOT NULL DEFAULT 'warn',
-      summary TEXT NOT NULL,
-      detail TEXT,
-      division TEXT,
-      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+  // ── Full audit trail (the hidden /higgenlogs page) ────────────────────────
+  // Every interaction and every failure, from BOTH apps, in one table. Written
+  // by the bot (src/utils/higgenLog.js) and the website (lib/activityLog.js).
+  //
+  //   source ∈ bot | website          → the two top-level tabs
+  //   stream ∈ interaction | error    → the two sub-tabs
+  //
+  // Readability contract: `summary` is a finished English sentence and `details`
+  // is ordered {label: value} pairs. The UI never renders raw JSON at the reader.
+  await step('higgen_logs', `
+    CREATE TABLE IF NOT EXISTS higgen_logs (
+      id            BIGSERIAL PRIMARY KEY,
+      occurred_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      source        TEXT NOT NULL,
+      stream        TEXT NOT NULL,
+      event_type    TEXT,
+      actor_name    TEXT,
+      actor_tag     TEXT,
+      actor_id      TEXT,
+      action        TEXT,
+      target        TEXT,
+      location      TEXT,
+      outcome       TEXT,
+      duration_ms   INTEGER,
+      division      TEXT,
+      summary       TEXT NOT NULL,
+      details       JSONB,
+      error_message TEXT,
+      error_stack   TEXT,
+      ip            TEXT,
+      user_agent    TEXT
     )
   `)
-  await step('idx_site_logs_time', `CREATE INDEX IF NOT EXISTS idx_site_logs_time ON site_logs(created_at DESC)`)
-  // Audit-log extension (the hidden /higgenlogs page): who did what, on which surface.
-  //   kind   ∈ activity | error | login   (drives the page's sub-filter)
-  //   source ∈ website | bot               (drives the two tabs)
-  await step('site_logs.kind', `ALTER TABLE site_logs ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'error'`)
-  await step('site_logs.actor_name', `ALTER TABLE site_logs ADD COLUMN IF NOT EXISTS actor_name TEXT`)
-  await step('site_logs.actor_discord_id', `ALTER TABLE site_logs ADD COLUMN IF NOT EXISTS actor_discord_id TEXT`)
-  await step('site_logs.action', `ALTER TABLE site_logs ADD COLUMN IF NOT EXISTS action TEXT`)
-  await step('site_logs.target', `ALTER TABLE site_logs ADD COLUMN IF NOT EXISTS target TEXT`)
-  await step('idx_site_logs_source_kind', `CREATE INDEX IF NOT EXISTS idx_site_logs_source_kind ON site_logs(source, kind, created_at DESC)`)
+  await step('idx_higgen_logs_feed', `CREATE INDEX IF NOT EXISTS idx_higgen_logs_feed ON higgen_logs(source, stream, occurred_at DESC)`)
+  await step('idx_higgen_logs_time', `CREATE INDEX IF NOT EXISTS idx_higgen_logs_time ON higgen_logs(occurred_at DESC)`)
+  await step('idx_higgen_logs_actor', `CREATE INDEX IF NOT EXISTS idx_higgen_logs_actor ON higgen_logs(actor_id, occurred_at DESC)`)
+  await step('idx_higgen_logs_action', `CREATE INDEX IF NOT EXISTS idx_higgen_logs_action ON higgen_logs(action)`)
+
+  // The old two-surface log (`site_logs`, read by the now-deleted Logs tab and the
+  // first higgenlogs build) is retired. Its rows were thin and unreadable — the
+  // operator asked to start fresh on the schema above. Dropped LAST so the new
+  // table is guaranteed to exist first. Note `site_logins` is a different table
+  // and is deliberately untouched.
+  await step('drop site_logs', `DROP TABLE IF EXISTS site_logs`)
 
   // Snapshot of who holds the admin-configured award roles (bot-refreshed).
   await step('award_role_holders', `
@@ -938,6 +993,142 @@ async function runMigrations() {
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `)
+
+  // ---------- DM Center ----------
+  // The website composes + queues a blast here; the BOT drains it (it owns the
+  // Discord token). See Beluga Bot/src/dm/dmSender.js.
+  await step('dm_jobs', `
+    CREATE TABLE IF NOT EXISTS dm_jobs (
+      id SERIAL PRIMARY KEY,
+      created_by TEXT,
+      created_by_name TEXT,
+      status TEXT NOT NULL DEFAULT 'queued',
+      targets JSONB NOT NULL DEFAULT '{}'::jsonb,
+      include_default BOOLEAN NOT NULL DEFAULT TRUE,
+      default_text TEXT,
+      body TEXT NOT NULL,
+      test_only BOOLEAN NOT NULL DEFAULT FALSE,
+      total INTEGER NOT NULL DEFAULT 0,
+      sent_count INTEGER NOT NULL DEFAULT 0,
+      failed_count INTEGER NOT NULL DEFAULT 0,
+      skipped_count INTEGER NOT NULL DEFAULT 0,
+      cancel_requested BOOLEAN NOT NULL DEFAULT FALSE,
+      error TEXT,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      started_at TIMESTAMP,
+      finished_at TIMESTAMP
+    )
+  `)
+  await step('idx_dm_jobs_status', `CREATE INDEX IF NOT EXISTS idx_dm_jobs_status ON dm_jobs(status, id)`)
+
+  await step('dm_job_targets', `
+    CREATE TABLE IF NOT EXISTS dm_job_targets (
+      id SERIAL PRIMARY KEY,
+      job_id INTEGER NOT NULL REFERENCES dm_jobs(id) ON DELETE CASCADE,
+      discord_id TEXT NOT NULL,
+      display_name TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      reason TEXT,
+      rendered TEXT,
+      sent_at TIMESTAMP,
+      UNIQUE (job_id, discord_id)
+    )
+  `)
+  await step('idx_dm_job_targets_job', `CREATE INDEX IF NOT EXISTS idx_dm_job_targets_job ON dm_job_targets(job_id, status)`)
+
+  // Bot-owned mirrors the DM Center reads (created here too so the website can
+  // query them before the bot's first sync of a fresh DB).
+  await step('discord_channels', `
+    CREATE TABLE IF NOT EXISTS discord_channels (
+      channel_id TEXT PRIMARY KEY,
+      name TEXT,
+      type INTEGER,
+      parent_id TEXT,
+      parent_name TEXT,
+      position INTEGER NOT NULL DEFAULT 0,
+      synced_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+  await step('discord_member_roles', `
+    CREATE TABLE IF NOT EXISTS discord_member_roles (
+      discord_id TEXT NOT NULL,
+      role_id TEXT NOT NULL,
+      PRIMARY KEY (discord_id, role_id)
+    )
+  `)
+  await step('idx_discord_member_roles_role', `CREATE INDEX IF NOT EXISTS idx_discord_member_roles_role ON discord_member_roles(role_id)`)
+
+  // ---------- DM inbox (two-way conversations with the bot) ----------
+  // One row per person who has DMed the bot or been DMed by it.
+  await step('dm_conversations', `
+    CREATE TABLE IF NOT EXISTS dm_conversations (
+      discord_id TEXT PRIMARY KEY,
+      display_name TEXT,
+      avatar_url TEXT,
+      last_message_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_message_preview TEXT,
+      last_direction TEXT,
+      unread_count INTEGER NOT NULL DEFAULT 0,
+      ai_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      archived BOOLEAN NOT NULL DEFAULT FALSE,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+  await step('idx_dm_conversations_recent', `CREATE INDEX IF NOT EXISTS idx_dm_conversations_recent ON dm_conversations(last_message_at DESC)`)
+  // Superseded by ai_personas below — the persona applies everywhere, not just
+  // in DMs. Kept (never dropped) so an older bot build mid-deploy still reads.
+  await step('dm_conversations.ai_mode', `
+    ALTER TABLE dm_conversations ADD COLUMN IF NOT EXISTS ai_mode TEXT NOT NULL DEFAULT 'professional'
+  `)
+
+  // ---------- AI persona, per PERSON ----------
+  // Which voice the bot uses with someone: 'professional' (default, the same
+  // voice it uses in the server) or 'unhinged' (roast mode). This is a property
+  // of the PERSON, not of a DM thread — set someone to unhinged and they get
+  // roasted in the server channels too.
+  //
+  // Separate from dm_conversations.ai_enabled on purpose: that one means "should
+  // the bot auto-answer this person's DMs", which really is DM-only. Keeping the
+  // persona here means staff can mark anyone unhinged without the side effect of
+  // creating an empty, message-less conversation just to hold the flag.
+  await step('ai_personas', `
+    CREATE TABLE IF NOT EXISTS ai_personas (
+      discord_id TEXT PRIMARY KEY,
+      mode TEXT NOT NULL DEFAULT 'professional',
+      set_by TEXT,
+      set_by_name TEXT,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `)
+  // Carry over anything already set while the persona lived on the conversation.
+  await step('ai_personas.backfill', `
+    INSERT INTO ai_personas (discord_id, mode)
+    SELECT discord_id, ai_mode FROM dm_conversations
+     WHERE ai_mode IS NOT NULL AND ai_mode <> 'professional'
+    ON CONFLICT (discord_id) DO NOTHING
+  `)
+
+  // Every message either way. `status` only matters for outgoing rows: the
+  // website inserts them as 'queued' and the bot flips them to 'sent'/'failed'.
+  await step('dm_messages', `
+    CREATE TABLE IF NOT EXISTS dm_messages (
+      id SERIAL PRIMARY KEY,
+      discord_id TEXT NOT NULL,
+      direction TEXT NOT NULL,
+      content TEXT,
+      attachments JSONB NOT NULL DEFAULT '[]'::jsonb,
+      author_name TEXT,
+      author_discord_id TEXT,
+      source TEXT NOT NULL DEFAULT 'dm',
+      status TEXT NOT NULL DEFAULT 'sent',
+      error TEXT,
+      discord_message_id TEXT,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      sent_at TIMESTAMP
+    )
+  `)
+  await step('idx_dm_messages_convo', `CREATE INDEX IF NOT EXISTS idx_dm_messages_convo ON dm_messages(discord_id, id DESC)`)
+  await step('idx_dm_messages_queued', `CREATE INDEX IF NOT EXISTS idx_dm_messages_queued ON dm_messages(status, id) WHERE direction = 'out'`)
 
   const elapsedMs = Date.now() - started
   lastReport = { ran, failed, elapsedMs, finishedAt: new Date().toISOString() }

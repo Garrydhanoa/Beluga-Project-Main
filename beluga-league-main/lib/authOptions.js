@@ -43,12 +43,26 @@ const RATE_LIMIT_BACKOFF_MS = 5 * 60 * 1000 // after a 429, don't retry for 5 mi
 // fetch Discord at most once per TTL per user (and not at all during a backoff).
 const roleCache = new Map() // discordUserId -> { roles, isDirector, username, checkedAt, rateLimitedUntil }
 
-function getAdminDiscordIds() {
+export function getAdminDiscordIds() {
   const raw = process.env.ADMIN_DISCORD_IDS || process.env.ADMIN_DISCORD_ID || ''
   return raw
     .split(',')
     .map((id) => id.trim())
     .filter(Boolean)
+}
+
+/**
+ * "Super admin" = an ID explicitly listed in ADMIN_DISCORD_IDS. That list is the
+ * league's privileged-access allowlist (it already bypasses the director check),
+ * so it is also what gates the hidden audit log at /admin/dashboard/higgenlogs.
+ *
+ * Being a director is NOT enough — the whole point of the audit log is that the
+ * people it might incriminate cannot read or curate it. Fails CLOSED: if the env
+ * var is unset, nobody is a super admin.
+ */
+export function isSuperAdminId(discordUserId) {
+  if (!discordUserId) return false
+  return getAdminDiscordIds().includes(String(discordUserId))
 }
 
 function applyBypass(token) {
@@ -225,6 +239,8 @@ export const authOptions = {
       session.accessToken = token.accessToken
       session.roles = token.roles || []
       session.isDirector = !!token.isDirector
+      // Gate for the hidden audit log — operator/owner only, never "any director".
+      session.isSuperAdmin = isSuperAdminId(token.discordUserId)
       session.discordUsername = token.discordUsername || 'Unknown'
       session.rolesCheckedAt = token.rolesCheckedAt || null
       session.viaBypass = token.bypassReason || null

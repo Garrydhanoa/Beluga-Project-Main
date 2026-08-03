@@ -8,6 +8,10 @@
  * rating columns, and a clear playoff cutoff divider.
  */
 
+// Registers the bundled fonts. MUST come before anything measures or draws
+// text — node-canvas resolves ctx.font at call time against whatever is
+// registered, and Railway's image ships no fonts of its own.
+require('../utils/fontManager');
 const { createCanvas, loadImage } = require('canvas');
 const { getTeamLogoBuffer, getTeamColorInt } = require('../utils/teamRoles');
 const { config } = require('../../src/config/config');

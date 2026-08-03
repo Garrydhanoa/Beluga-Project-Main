@@ -16,6 +16,8 @@ export default function WeekThreadsPage() {
   const [showCreate, setShowCreate] = useState(false)
   const [showBulk, setShowBulk] = useState(false)
   const [makeWeekNum, setMakeWeekNum] = useState('')
+  // Set when a delete is refused because the week still has unreported series.
+  const [unreportedBlock, setUnreportedBlock] = useState(null)
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -91,18 +93,31 @@ export default function WeekThreadsPage() {
     await reload()
   }
 
-  async function deleteWeek(week) {
+  async function deleteWeek(week, force = false) {
     if (!data?.season?.id) return
-    if (!confirm(
+    if (!force && !confirm(
       `Delete Week ${week}?\n\nThe bot will delete the Discord thread(s) for this week AND save each transcript on the website — exactly like the /week-thread delete command. This runs within ~1 minute.`
     )) return
     setBusy(true)
-    await fetch('/api/admin/week-threads', {
+    const res = await fetch('/api/admin/week-threads', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
-      body: JSON.stringify({ action: 'delete_week', seasonId: data.season.id, weekNumber: week }),
+      body: JSON.stringify({ action: 'delete_week', seasonId: data.season.id, weekNumber: week, force }),
     })
+    const body = await res.json().catch(() => ({}))
     setBusy(false)
-    alert(`Week ${week} delete queued. The bot will remove the Discord thread(s) and save the transcripts shortly.`)
+
+    // Blocked: some series in this week were never reported. Show exactly which,
+    // and require a second, explicit confirmation to delete anyway.
+    if (res.status === 409 && body.blocked) {
+      setUnreportedBlock(body)
+      await reload()
+      return
+    }
+
+    setUnreportedBlock(null)
+    alert(force
+      ? `Week ${week} FORCE delete queued despite unreported series. The bot will remove the thread(s) and save the transcripts shortly.`
+      : `Week ${week} delete queued. The bot will remove the Discord thread(s) and save the transcripts shortly.`)
     await reload()
   }
 
@@ -229,6 +244,14 @@ export default function WeekThreadsPage() {
           subtitle={`thread ${transcriptThread.threadId}`}
           messagesUrl={`/api/admin/thread-messages/${encodeURIComponent(transcriptThread.threadId)}`}
           onClose={() => setTranscriptThread(null)}
+        />
+      )}
+      {unreportedBlock && (
+        <UnreportedWeekModal
+          info={unreportedBlock}
+          busy={busy}
+          onCancel={() => setUnreportedBlock(null)}
+          onForce={() => { const w = unreportedBlock.weekNumber; setUnreportedBlock(null); deleteWeek(w, true) }}
         />
       )}
     </div>
@@ -527,6 +550,82 @@ function Field({ label, children }) {
     <div>
       <label className="block text-[10px] font-bold tracking-wider uppercase text-blue-300/70 mb-1">{label}</label>
       {children}
+    </div>
+  )
+}
+
+/**
+ * Step 2 of the guarded week delete. The API refuses while any series in the
+ * week is unreported; this lists exactly which, and only unlocks the red delete
+ * once the week number is typed back — deleting the threads destroys the only
+ * place those series can still be reported.
+ */
+function UnreportedWeekModal({ info, busy, onCancel, onForce }) {
+  const [typed, setTyped] = useState('')
+  const week = info.weekNumber
+  const armed = typed.trim() === String(week)
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-6" onClick={onCancel}>
+      <div
+        className="bg-[#160b0b] border-2 border-red-500/60 rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="p-5 border-b border-red-500/30 flex items-start justify-between gap-3">
+          <div>
+            <div className="text-[10px] font-black tracking-[0.2em] uppercase text-red-300 mb-1">Delete blocked</div>
+            <h2 className="text-lg font-black text-white">Week {week} has unreported series</h2>
+          </div>
+          <button onClick={onCancel} className="text-white/50 hover:text-white text-2xl leading-none">×</button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <div className="text-sm text-red-100/90">
+            <b>{info.reported}</b> of <b>{info.total}</b> series are reported.{' '}
+            <b className="text-red-300">{info.unreported.length}</b> {info.unreported.length === 1 ? 'is' : 'are'} still missing.
+          </div>
+
+          <div className="rounded-lg border border-red-500/30 bg-black/40 max-h-56 overflow-y-auto">
+            {info.unreported.map((u) => (
+              <div key={u.id} className="flex items-center gap-2 px-3 py-1.5 border-b border-white/5 last:border-0">
+                <span className="text-[10px] font-black uppercase text-red-300/80 w-14 shrink-0">{u.division}</span>
+                <span className="text-xs text-white/85 truncate">{u.team1} vs {u.team2}</span>
+                {!u.hasThread && <span className="text-[10px] text-white/35 ml-auto shrink-0">no thread</span>}
+              </div>
+            ))}
+          </div>
+
+          <div className="text-xs text-amber-200/80 bg-amber-500/10 border border-amber-500/25 rounded-lg px-3 py-2">
+            Salary crew have been pinged in each unreported thread. Deleting now removes the only
+            place these series can still be reported — transcripts are saved, but the threads are gone.
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-red-200/70 mb-1.5">
+              Type <span className="font-mono text-red-300">{week}</span> to delete anyway
+            </label>
+            <input
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              placeholder={String(week)}
+              className="w-full px-3 py-2 bg-black/50 border border-red-500/40 focus:border-red-400 rounded-lg text-white text-sm font-mono focus:outline-none"
+            />
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <button onClick={onCancel} className="px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-white/80 text-xs font-bold">
+              Cancel
+            </button>
+            <button
+              onClick={onForce}
+              disabled={!armed || busy}
+              className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 disabled:bg-red-900/40 disabled:text-white/30 text-white text-xs font-black transition"
+            >
+              Delete Week {week} anyway
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

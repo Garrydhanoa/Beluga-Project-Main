@@ -4,17 +4,21 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import Avatar from '../../../components/Avatar'
 
 const DIVISIONS = ['Majors', 'AAA', 'AA']
+// 'same' is what the auto formula writes and what the public TrendChip renders —
+// an editor offering 'stable' produced a chip that silently disappeared.
 const TRENDS = [
   { value: '', label: '—' },
   { value: 'up', label: '▲ Up' },
   { value: 'down', label: '▼ Down' },
-  { value: 'stable', label: '= Stable' },
+  { value: 'same', label: '= Same' },
+  { value: 'new', label: '★ New' },
 ]
 
 export default function RankingsPage() {
   const [seasons, setSeasons] = useState([])
   const [seasonId, setSeasonId] = useState(null)
-  const [data, setData] = useState(null) // { rankings, seasonTeams }
+  const [week, setWeek] = useState(null) // null = latest stored week
+  const [data, setData] = useState(null) // { rankings, seasonTeams, weeks, playedWeeks, ... }
   const [entityType, setEntityType] = useState('team')
   const [division, setDivision] = useState('Majors')
   const [list, setList] = useState([])
@@ -22,6 +26,7 @@ export default function RankingsPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [recalcing, setRecalcing] = useState(false)
+  const [backfilling, setBackfilling] = useState(false)
   const [savedAt, setSavedAt] = useState(null)
 
   const reload = useCallback(async () => {
@@ -34,14 +39,18 @@ export default function RankingsPage() {
         if (!seasonId) setSeasonId(sData.activeSeasonId || (sData.seasons?.[0]?.id ?? null))
       }
       const sid = seasonId || 'active'
-      const r = await fetch(`/api/admin/power-rankings?seasonId=${sid}`, { cache: 'no-store' })
+      const qs = week != null ? `&week=${week}` : ''
+      const r = await fetch(`/api/admin/power-rankings?seasonId=${sid}${qs}`, { cache: 'no-store' })
       const d = await r.json()
       setData(d)
       if (!seasonId && d.seasonId) setSeasonId(d.seasonId)
+      // Adopt whichever week the server actually served, so the dropdown and the
+      // list below it can never disagree.
+      if (week == null && d.week != null) setWeek(d.week)
     } finally {
       setLoading(false)
     }
-  }, [seasonId, seasons.length])
+  }, [seasonId, week, seasons.length])
 
   useEffect(() => { reload() }, [reload])
 
@@ -87,7 +96,7 @@ export default function RankingsPage() {
       ))
       const r = await fetch('/api/admin/power-rankings', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
-        body: JSON.stringify({ seasonId, entityType, division, entries }),
+        body: JSON.stringify({ seasonId, entityType, division, week, entries }),
       })
       const d = await r.json()
       if (r.ok) { setData((prev) => ({ ...prev, rankings: d.rankings })); setSavedAt(Date.now()); setDirty(false) }
@@ -96,24 +105,67 @@ export default function RankingsPage() {
     }
   }
 
-  // Auto-recalculate every division's team + player rankings from recent results
-  // (same formula as the bot's /power-rankings + week-close refresh). Overwrites all.
+  // Auto-recalculate every division's team + player rankings for ONE WEEK from
+  // results up to that week (same formula as the bot's /power-rankings +
+  // week-close refresh). Other weeks are left untouched.
   async function recalc() {
     if (!seasonId) return
-    if (!confirm('Auto-recalculate ALL power rankings (teams + players, every division) from recent results?\n\nThis replaces the current saved rankings — manual reorders/notes will be overwritten. Trend arrows are set vs the previous run.')) return
+    const target = week ?? data?.defaultWeek
+    if (!confirm(
+      `Auto-recalculate week ${target ?? '?'} power rankings (teams + players, every division) from results up to that week?\n\n`
+      + `Only week ${target ?? '?'} is replaced — other weeks are left alone. Manual reorders/notes for this week will be overwritten. `
+      + 'Trend arrows are set against the previous week.'
+    )) return
     setRecalcing(true)
     try {
       const r = await fetch('/api/admin/power-rankings', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
-        body: JSON.stringify({ action: 'recalc', seasonId }),
+        body: JSON.stringify({ action: 'recalc', seasonId, week }),
       })
       const d = await r.json()
-      if (r.ok) { setData((prev) => ({ ...prev, rankings: d.rankings })); setSavedAt(Date.now()); setDirty(false) }
-      else alert(d.error || 'Recalc failed')
+      if (r.ok) {
+        setData((prev) => ({ ...prev, rankings: d.rankings, weeks: d.weeks || prev?.weeks }))
+        if (d.week != null) setWeek(d.week)
+        setSavedAt(Date.now()); setDirty(false)
+      } else alert(d.error || 'Recalc failed')
     } finally { setRecalcing(false) }
   }
 
+  // Rebuild EVERY week that has results, oldest first, so trend arrows chain
+  // correctly across the whole season. Used once after deploy, or after a bulk
+  // stats correction.
+  async function backfill() {
+    if (!seasonId) return
+    const played = data?.playedWeeks || []
+    if (!confirm(
+      `Rebuild power rankings for every week with results${played.length ? ` (weeks ${played[0]}–${played[played.length - 1]})` : ''}?\n\n`
+      + 'Each week is recomputed from results up to that week, oldest first, so trend arrows chain correctly. '
+      + 'This overwrites every stored week for this season, including manual edits.'
+    )) return
+    setBackfilling(true)
+    try {
+      const r = await fetch('/api/admin/power-rankings', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
+        body: JSON.stringify({ action: 'backfill', seasonId }),
+      })
+      const d = await r.json()
+      if (r.ok) {
+        setData((prev) => ({ ...prev, rankings: d.rankings, weeks: d.weeks || prev?.weeks }))
+        if (d.week != null) setWeek(d.week)
+        setSavedAt(Date.now()); setDirty(false)
+        alert(`Rebuilt ${(d.weeksRebuilt || []).length} week(s): ${(d.weeksRebuilt || []).join(', ') || '—'}`)
+      } else alert(d.error || 'Backfill failed')
+    } finally { setBackfilling(false) }
+  }
+
   const availableTeams = (data?.seasonTeams || []).filter((t) => t.division === division && !list.some((l) => l.teamId === t.id))
+  // Every week worth offering: already stored, plus any played week not yet ranked.
+  const weekOptions = Array.from(new Set([
+    ...(data?.weeks || []),
+    ...(data?.playedWeeks || []),
+    ...(week != null ? [week] : []),
+  ])).sort((a, b) => b - a)
+  const storedWeeks = new Set(data?.weeks || [])
 
   return (
     <div className="max-w-4xl">
@@ -121,15 +173,27 @@ export default function RankingsPage() {
         <div className="text-xs font-bold tracking-[0.25em] uppercase text-blue-300/70 mb-2">League</div>
         <h1 className="text-3xl font-black text-white mb-2">Power Rankings</h1>
         <p className="text-blue-100/60 text-sm">
-          Season-scoped, DB-backed rankings for teams and players. Reorder with the arrows, add analyst notes, and Save. These appear on the public Power Rankings page.
+          Weekly snapshots per season. Each week is ranked from the last 5 series up to that week, so recalculating one week
+          never touches the others and trend arrows compare against the week before. Reorder with the arrows, add analyst notes,
+          and Save. These appear on the public Power Rankings page.
         </p>
       </div>
 
-      <div className="mb-4 flex flex-wrap items-center gap-2 p-3 rounded-xl bg-white/[0.03] border border-white/10">
-        <select value={seasonId || ''} onChange={(e) => { setSeasonId(e.target.value === '' ? null : Number(e.target.value)); setData(null) }}
+      <div className="mb-4 flex flex-wrap items-center gap-2 p-3 rounded-xl bg-white/[0.03] border border-white/10" data-log-section="power-rankings">
+        <select value={seasonId || ''} onChange={(e) => { setSeasonId(e.target.value === '' ? null : Number(e.target.value)); setWeek(null); setData(null) }}
+          aria-label="Power rankings season"
           className="px-3 py-2 bg-black/40 border border-white/10 rounded-lg text-white text-sm">
           <option value="">— Active —</option>
           {seasons.map((s) => <option key={s.id} value={s.id}>S{s.seasonNumber}{s.name ? ` · ${s.name}` : ''}</option>)}
+        </select>
+        <select value={week ?? ''} onChange={(e) => { setWeek(e.target.value === '' ? null : Number(e.target.value)); setData(null) }}
+          aria-label="Power rankings week"
+          title="Only the selected week is recalculated or saved"
+          className="px-3 py-2 bg-black/40 border border-white/10 rounded-lg text-white text-sm">
+          <option value="">— Latest week —</option>
+          {weekOptions.map((w) => (
+            <option key={w} value={w}>Week {w}{storedWeeks.has(w) ? '' : ' (not ranked yet)'}</option>
+          ))}
         </select>
         <div className="flex gap-1.5 ml-2">
           {['team', 'player'].map((t) => (
@@ -148,16 +212,32 @@ export default function RankingsPage() {
           ))}
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <button onClick={recalc} disabled={recalcing || saving} title="Regenerate all rankings from recent results (overwrites manual edits)"
-            className="px-4 py-2 text-xs font-bold text-purple-100 bg-purple-500/20 hover:bg-purple-500/30 border border-purple-400/40 disabled:opacity-40 rounded-lg">
-            {recalcing ? 'Recalculating…' : '⟳ Recalculate (auto)'}
+          <button onClick={backfill} disabled={backfilling || recalcing || saving}
+            aria-label="Backfill every week"
+            title="Rebuild every week with results, oldest first, so trend arrows chain correctly"
+            className="px-3 py-2 text-xs font-bold text-amber-100 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/40 disabled:opacity-40 rounded-lg">
+            {backfilling ? 'Rebuilding…' : '⤓ Backfill all weeks'}
           </button>
-          <button onClick={save} disabled={saving || !dirty} className="px-4 py-2 text-xs font-bold text-white bg-blue-500 hover:bg-blue-400 disabled:opacity-40 rounded-lg">
+          <button onClick={recalc} disabled={recalcing || backfilling || saving}
+            aria-label="Recalculate this week"
+            title="Regenerate this week's rankings from results up to it (overwrites this week's manual edits only)"
+            className="px-4 py-2 text-xs font-bold text-purple-100 bg-purple-500/20 hover:bg-purple-500/30 border border-purple-400/40 disabled:opacity-40 rounded-lg">
+            {recalcing ? 'Recalculating…' : `⟳ Recalculate week ${week ?? data?.defaultWeek ?? ''}`.trim()}
+          </button>
+          <button onClick={save} disabled={saving || !dirty} aria-label="Save power rankings"
+            className="px-4 py-2 text-xs font-bold text-white bg-blue-500 hover:bg-blue-400 disabled:opacity-40 rounded-lg">
             {saving ? 'Saving…' : dirty ? 'Save changes' : 'Saved'}
           </button>
           {savedAt && !dirty && <span className="text-xs text-green-300">✓</span>}
         </div>
       </div>
+
+      {!!data?.unweekedSeries && (
+        <div className="mb-4 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-400/30 text-amber-100/90 text-xs">
+          {data.unweekedSeries} confirmed series {data.unweekedSeries === 1 ? 'has' : 'have'} no week set (staff reports may omit it).
+          Those count toward every week&apos;s form window.
+        </div>
+      )}
 
       {loading && !data ? (
         <div className="text-blue-200/60">Loading…</div>

@@ -273,6 +273,24 @@ async function initializeDatabase() {
             )
         `);
 
+        // team_esubs — one-day-sub (e-sub) usage, keyed by SEASON + TEAM row.
+        // Teams are per (season, division, name), so this is inherently
+        // per-division and resets itself every season: a new season means new
+        // team ids, which means no rows, which means 0 used. Replaces the
+        // "One Day Sub Tracker" Google sheet, whose header row had drifted out
+        // of sync with the live team names so every read/write hit the wrong
+        // column. Mirrored in the website's leagueSchema.js.
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS team_esubs (
+                season_id INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+                team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+                used INTEGER NOT NULL DEFAULT 0,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_by TEXT,
+                PRIMARY KEY (season_id, team_id)
+            )
+        `);
+
         // season_action_requests — website-owned queue for the director-gated
         // "Start New Season" / "Delete Season" flow. The website inserts a row
         // (status='pending_post'); the bot posts an approval embed to the director
@@ -304,6 +322,39 @@ async function initializeDatabase() {
             CREATE INDEX IF NOT EXISTS idx_season_action_requests_status
             ON season_action_requests(status, created_at)
         `);
+
+        // Full audit trail shared with the website (the hidden /higgenlogs page):
+        // every interaction and every failure from both apps. Created here as well
+        // as in the website's leagueSchema.js so whichever service deploys first can
+        // start writing. Kept in sync with that file.
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS higgen_logs (
+                id            BIGSERIAL PRIMARY KEY,
+                occurred_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                source        TEXT NOT NULL,
+                stream        TEXT NOT NULL,
+                event_type    TEXT,
+                actor_name    TEXT,
+                actor_tag     TEXT,
+                actor_id      TEXT,
+                action        TEXT,
+                target        TEXT,
+                location      TEXT,
+                outcome       TEXT,
+                duration_ms   INTEGER,
+                division      TEXT,
+                summary       TEXT NOT NULL,
+                details       JSONB,
+                error_message TEXT,
+                error_stack   TEXT,
+                ip            TEXT,
+                user_agent    TEXT
+            )
+        `);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_higgen_logs_feed ON higgen_logs(source, stream, occurred_at DESC)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_higgen_logs_time ON higgen_logs(occurred_at DESC)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_higgen_logs_actor ON higgen_logs(actor_id, occurred_at DESC)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_higgen_logs_action ON higgen_logs(action)`);
 
         // New Ballchasing-based stats system schema (series, per-game rows,
         // player/team aggregates, identity map, report sessions, audit log).

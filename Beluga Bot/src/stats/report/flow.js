@@ -235,7 +235,7 @@ async function startReport(interaction) {
     let authed = null;
     if (!isSC) {
         authed = await tc.getUserAuthorizedTeam(interaction.member, ctx.seasonId, ctx.homeTeam, ctx.awayTeam, ctx.division);
-        if (!authed) return safeReply(interaction, '❌ Only a **captain/GM** of one of these teams (or **salary crew**) can report this series.');
+        if (!authed) return safeReply(interaction, '❌ Only a **captain/GM** of one of these franchises (or **salary crew**) can report this series.');
         if (ctx.isClosed) return safeReply(interaction, '❌ This week is closed — only salary crew can report it now.');
     }
     const active = await sessions.getActiveSessionByThread(threadId);

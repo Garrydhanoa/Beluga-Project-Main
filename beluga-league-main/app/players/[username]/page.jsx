@@ -112,6 +112,11 @@ export default function PlayerProfilePage() {
   const [notFound, setNotFound] = useState(false)
   const [loading, setLoading] = useState(true)
   const [headerQuote, setHeaderQuote] = useState(null)
+  // Which stat set the card shows. 'season' matches the player DIRECTORY card
+  // (active season only); 'lifetime' is every season combined. The two used to
+  // silently disagree — the directory summed the active season while this page
+  // summed everything — so the selected scope is always labelled on screen.
+  const [scope, setScope] = useState('season')
 
   useEffect(() => {
     setLoading(true)
@@ -138,6 +143,51 @@ export default function PlayerProfilePage() {
     return () => { alive = false }
   }, [apiData?.player?.discordId])
 
+  // The two stat sets, both straight from the stats system: the ACTIVE season
+  // (summed over a player's division rows, same source the directory uses) and
+  // lifetime (the authoritative stats_player_lifetime row — never re-summed).
+  const statSets = useMemo(() => {
+    const activeSeasonId = apiData?.activeSeason?.id ?? null
+    const activeSeasonNumber = apiData?.activeSeason?.seasonNumber ?? null
+    const rows = (apiData?.stats || []).filter((s) =>
+      activeSeasonId != null ? s.seasonId === activeSeasonId : s.seasonNumber === activeSeasonNumber
+    )
+    const season = rows.reduce((acc, s) => ({
+      games: acc.games + (s.gamesPlayed || 0),
+      goals: acc.goals + (s.goals || 0),
+      assists: acc.assists + (s.assists || 0),
+      saves: acc.saves + (s.saves || 0),
+      shots: acc.shots + (s.shots || 0),
+      mvps: acc.mvps + (s.mvps || 0),
+      belugaScore: acc.belugaScore + Number(s.belugaScore || 0),
+    }), { games: 0, goals: 0, assists: 0, saves: 0, shots: 0, mvps: 0, belugaScore: 0 })
+
+    const lt = apiData?.belugaStats?.lifetime?.regular?.totals || null
+    const lifetime = {
+      games: lt?.games || 0,
+      goals: lt?.goals || 0,
+      assists: lt?.assists || 0,
+      saves: lt?.saves || 0,
+      shots: lt?.shots || 0,
+      mvps: lt?.mvps || 0,
+      belugaScore: Number(lt?.belugaScore || 0),
+    }
+    return {
+      season,
+      lifetime,
+      seasonNumber: activeSeasonNumber,
+      hasSeason: rows.length > 0,
+      hasLifetime: Boolean(lt),
+    }
+  }, [apiData])
+
+  // A player with nothing this season opens on lifetime rather than a wall of zeros.
+  useEffect(() => {
+    if (!statSets.hasSeason && statSets.hasLifetime) setScope('lifetime')
+  }, [statSets.hasSeason, statSets.hasLifetime])
+
+  const totals = scope === 'lifetime' ? statSets.lifetime : statSets.season
+
   // Adapt the API payload to the shape the existing UI expects (preserving the
   // dense visualization with achievements, stat bars, match history, etc.).
   const player = useMemo(() => {
@@ -146,20 +196,16 @@ export default function PlayerProfilePage() {
     // active team) — NOT a fallback to the most-recent stint, which would show a
     // dropped player's old team. lastStint is only for last-known division display.
     const lastStint = (apiData.rosterHistory || [])[0] || null
-    const totalStats = (apiData.stats || []).reduce((acc, s) => ({
-      goals: acc.goals + (s.goals || 0),
-      assists: acc.assists + (s.assists || 0),
-      saves: acc.saves + (s.saves || 0),
-      shots: acc.shots + (s.shots || 0),
-      gp: acc.gp + (s.gamesPlayed || 0),
-    }), { goals: 0, assists: 0, saves: 0, shots: 0, gp: 0 })
     const divLabel = apiData.player.division || lastStint?.division || null
+    // Returns null when the division is genuinely unknown. This used to default
+    // to 'aa', which meant a staff GM with no sheet row and no games was labelled
+    // AA on screen even when the API correctly said "no division".
     const divKey = (() => {
       const d = String(divLabel || '').toLowerCase()
       if (d.includes('major')) return 'major'
       if (d.includes('aaa')) return 'aaa'
       if (d.includes('aa')) return 'aa'
-      return 'aa'
+      return null
     })()
     return {
       username: apiData.player.discordUsername || null,
@@ -168,21 +214,24 @@ export default function PlayerProfilePage() {
       displayName: apiData.player.displayName,
       team: apiData.player.currentTeam || null,
       teamId: apiData.player.currentTeamId ?? null,
-      divisionLabel: divKey === 'major' ? 'Majors' : divKey.toUpperCase(),
+      divisionLabel: divKey ? (divKey === 'major' ? 'Majors' : divKey.toUpperCase()) : null,
       isCaptain: apiData.player.role === 'captain',
       isFreeAgent: apiData.player.isFreeAgent ?? !apiData.player.currentTeam,
       role: apiData.player.role || null,
-      goals: totalStats.goals,
-      assists: totalStats.assists,
-      saves: totalStats.saves,
-      shots: totalStats.shots,
-      mvps: 0,
+      // Stats follow the season/lifetime toggle. MVPs come from the stats system
+      // (they used to be hardcoded to 0 here and shown only as a badge).
+      goals: totals.goals,
+      assists: totals.assists,
+      saves: totals.saves,
+      shots: totals.shots,
+      mvps: totals.mvps,
+      belugaScore: totals.belugaScore,
       salary: apiData.player.salary ?? 0,
       eligible: apiData.player.eligible,
-      shootingPct: totalStats.shots > 0 ? Math.round((totalStats.goals / totalStats.shots) * 100) : 0,
+      shootingPct: totals.shots > 0 ? Math.round((totals.goals / totals.shots) * 100) : 0,
       ranks: { goals: 0, assists: 0, saves: 0, shots: 0, mvps: 0 },
-      // Championships (from season_champions × roster) render as gold badges;
-      // MVP totals from the new stats system get a badge too.
+      // Championships (from season_champions × roster) render as gold badges.
+      // MVPs are NOT a badge — they have their own stat tile below.
       achievements: [
         ...(apiData.championships || []).map((c) => ({
           key: `champ-s${c.seasonNumber}-${c.division}`,
@@ -192,13 +241,9 @@ export default function PlayerProfilePage() {
           key: `award-${a.roleId}`,
           label: `🏅 ${a.label}`,
         })),
-        ...(() => {
-          const mvps = Number(apiData.belugaStats?.lifetime?.regular?.totals?.mvps || 0)
-          return mvps > 0 ? [{ key: 'mvps', label: `⭐ ${mvps} MVP${mvps === 1 ? '' : 's'}` }] : []
-        })(),
       ],
     }
-  }, [apiData])
+  }, [apiData, totals])
 
   const transactions = useMemo(() => apiData?.transactions || [], [apiData])
 
@@ -248,6 +293,13 @@ export default function PlayerProfilePage() {
     )
   }
 
+  // What the stat tiles + Beluga Score are currently showing.
+  const scopeLabel = scope === 'lifetime'
+    ? 'Lifetime'
+    : statSets.seasonNumber
+      ? `Season ${statSets.seasonNumber}`
+      : 'This Season'
+
   // Record (wins / losses / total) from match history
   const wins = history.filter((m) => m.result === 'W').length
   const losses = history.filter((m) => m.result === 'L').length
@@ -273,7 +325,7 @@ export default function PlayerProfilePage() {
   return (
     <div className="relative text-white overflow-hidden">
       {/* ============ HERO ============ */}
-      <section className="relative container mx-auto px-4 pt-16 pb-32">
+      <section className="relative container mx-auto px-4 pt-8 sm:pt-16 pb-12 sm:pb-32">
         {/* Ambient glow */}
         <div className="absolute top-20 left-1/2 -translate-x-1/2 w-[40rem] h-[40rem] rounded-full bg-blue-500/10 blur-3xl pointer-events-none" />
         {/* Ghost team logo */}
@@ -290,6 +342,40 @@ export default function PlayerProfilePage() {
             />
           </div>
         )}
+
+        {/* Beluga Score — the headline number, top-right of the page (stacks
+            under the name on narrow screens). Follows the season/lifetime toggle. */}
+        <div className="pp-beluga-tile">
+          <div
+            style={{
+              padding: '14px 22px',
+              borderRadius: '16px',
+              background: 'linear-gradient(160deg, rgba(34,211,238,0.14), rgba(59,130,246,0.06))',
+              border: '1px solid rgba(34,211,238,0.35)',
+              boxShadow: '0 0 30px rgba(34,211,238,0.15)',
+              textAlign: 'center',
+              minWidth: '150px',
+            }}
+          >
+            <div className="pp-lab-xs" style={{ fontWeight: 800, letterSpacing: '0.22em', textTransform: 'uppercase', color: 'rgba(165,243,252,0.75)' }}>
+              Beluga Score
+            </div>
+            <div
+              className="pp-beluga-num"
+              style={{
+                fontWeight: 900,
+                color: '#67e8f9',
+                textShadow: '0 0 24px rgba(34,211,238,0.45)',
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {Number(player.belugaScore || 0).toFixed(2)}
+            </div>
+            <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.45)' }}>
+              {scopeLabel}
+            </div>
+          </div>
+        </div>
 
         <div className="relative text-center max-w-4xl mx-auto">
           {/* Avatar + team logo row */}
@@ -462,15 +548,12 @@ export default function PlayerProfilePage() {
 
           {/* ---- Info strip ---- */}
           <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(4, 1fr)',
-              borderBottom: '1px solid rgba(255,255,255,0.06)',
-            }}
+            className="pp-info-grid"
+            style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
           >
             {/* TEAM */}
             <div style={{ padding: '22px 16px', textAlign: 'center', borderRight: '1px solid rgba(255,255,255,0.06)' }}>
-              <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)', marginBottom: '10px' }}>
+              <div className="pp-lab" style={{ fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)', marginBottom: '10px' }}>
                 Team
               </div>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
@@ -482,7 +565,7 @@ export default function PlayerProfilePage() {
                     onError={(e) => { e.currentTarget.style.display = 'none' }}
                   />
                 )}
-                <span style={{ fontSize: '15px', fontWeight: 800, color: '#ffffff' }}>
+                <span className="pp-val" style={{ fontWeight: 800, color: '#ffffff' }}>
                   {player.team || 'Free Agent'}
                 </span>
               </div>
@@ -490,43 +573,49 @@ export default function PlayerProfilePage() {
 
             {/* DIVISION */}
             <div style={{ padding: '22px 16px', textAlign: 'center', borderRight: '1px solid rgba(255,255,255,0.06)' }}>
-              <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)', marginBottom: '10px' }}>
+              <div className="pp-lab" style={{ fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)', marginBottom: '10px' }}>
                 Division
               </div>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                <span
-                  style={{
-                    padding: '2px 8px',
-                    borderRadius: '4px',
-                    backgroundColor: 'rgba(234,179,8,0.15)',
-                    border: '1px solid rgba(250,204,21,0.4)',
-                    color: '#fde047',
-                    fontSize: '9px',
-                    fontWeight: 900,
-                    letterSpacing: '0.1em',
-                  }}
-                >
-                  {player.divisionLabel.toUpperCase()}
-                </span>
-                <span style={{ fontSize: '15px', fontWeight: 800, color: '#ffffff' }}>
-                  {player.divisionLabel}
-                </span>
+                {player.divisionLabel ? (
+                  <>
+                    <span
+                      style={{
+                        padding: '2px 8px',
+                        borderRadius: '4px',
+                        backgroundColor: 'rgba(234,179,8,0.15)',
+                        border: '1px solid rgba(250,204,21,0.4)',
+                        color: '#fde047',
+                        fontSize: '9px',
+                        fontWeight: 900,
+                        letterSpacing: '0.1em',
+                      }}
+                    >
+                      {player.divisionLabel.toUpperCase()}
+                    </span>
+                    <span className="pp-val" style={{ fontWeight: 800, color: '#ffffff' }}>
+                      {player.divisionLabel}
+                    </span>
+                  </>
+                ) : (
+                  <span className="pp-val" style={{ fontWeight: 800, color: 'rgba(255,255,255,0.35)' }}>—</span>
+                )}
               </div>
             </div>
 
             {/* SALARY */}
             <div style={{ padding: '22px 16px', textAlign: 'center', borderRight: '1px solid rgba(255,255,255,0.06)' }}>
-              <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)', marginBottom: '10px' }}>
+              <div className="pp-lab" style={{ fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)', marginBottom: '10px' }}>
                 Salary
               </div>
-              <div style={{ fontSize: '15px', fontWeight: 800, color: '#60a5fa' }}>
+              <div className="pp-val" style={{ fontWeight: 800, color: '#60a5fa' }}>
                 {player.salary ? Number(player.salary).toFixed(2) : '—'}
               </div>
             </div>
 
             {/* SHOOTING */}
             <div style={{ padding: '22px 16px', textAlign: 'center' }}>
-              <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)', marginBottom: '10px' }}>
+              <div className="pp-lab" style={{ fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)', marginBottom: '10px' }}>
                 Shooting
               </div>
               <div style={{ fontSize: '15px', fontWeight: 800, color: '#ffffff' }}>
@@ -535,12 +624,52 @@ export default function PlayerProfilePage() {
             </div>
           </div>
 
-          {/* ---- Big stats row ---- */}
+          {/* ---- Scope toggle: which stat set the tiles below show ---- */}
           <div
             style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(5, 1fr)',
-              padding: '24px 16px 20px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexWrap: 'wrap',
+              gap: '8px',
+              padding: '16px 16px 0',
+            }}
+          >
+            {[
+              { key: 'season', label: statSets.seasonNumber ? `Season ${statSets.seasonNumber}` : 'This Season' },
+              { key: 'lifetime', label: 'Lifetime' },
+            ].map((opt) => {
+              const on = scope === opt.key
+              return (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={() => setScope(opt.key)}
+                  style={{
+                    padding: '6px 16px',
+                    borderRadius: '9999px',
+                    fontSize: '11px',
+                    fontWeight: 800,
+                    letterSpacing: '0.12em',
+                    textTransform: 'uppercase',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s',
+                    backgroundColor: on ? 'rgba(34,211,238,0.15)' : 'rgba(255,255,255,0.03)',
+                    border: `1px solid ${on ? 'rgba(34,211,238,0.5)' : 'rgba(255,255,255,0.12)'}`,
+                    color: on ? '#a5f3fc' : 'rgba(255,255,255,0.5)',
+                  }}
+                >
+                  {opt.label}
+                </button>
+              )
+            })}
+          </div>
+
+          {/* ---- Big stats row ---- */}
+          <div
+            className="pp-stat-grid"
+            style={{
+              padding: '18px 16px 20px',
               borderBottom: '1px solid rgba(255,255,255,0.06)',
             }}
           >
@@ -787,12 +916,11 @@ function ColorStat({ label, value, rank, color }) {
   return (
     <div style={{ textAlign: 'center', padding: '6px 8px' }}>
       <div
+        // Size lives in .pp-num (globals.css) — it has to beat the site-wide
+        // mobile `div { font-size: 1rem !important }`, which an inline style can't.
+        className="pp-num"
         style={{
-          // Responsive: shrinks on narrow screens so a 5-up row of stats doesn't
-          // overflow on mobile (was a fixed 52px).
-          fontSize: 'clamp(30px, 9vw, 52px)',
           fontWeight: 900,
-          lineHeight: 1,
           color: color.text,
           textShadow: `0 0 20px ${color.glow}`,
           fontFamily: 'ui-sans-serif, system-ui, sans-serif',
@@ -812,11 +940,13 @@ function ColorStat({ label, value, rank, color }) {
       />
       <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.15em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.55)' }}>
         {label}
-        {rank && (
+        {/* `rank && …` used to leak a literal 0 into the label ("GOALS0") when
+            no rank is set — JSX renders the falsy number. */}
+        {rank ? (
           <span style={{ color: '#60a5fa', marginLeft: '6px', fontWeight: 800 }}>
             #{rank}
           </span>
-        )}
+        ) : null}
       </div>
     </div>
   )

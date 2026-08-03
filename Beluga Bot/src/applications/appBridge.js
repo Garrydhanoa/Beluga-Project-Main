@@ -19,6 +19,7 @@ const {
 } = require('discord.js');
 const { pool, isDatabaseAvailable } = require('../utils/database');
 const Logger = require('../utils/logger');
+const higgenLog = require('../utils/higgenLog');
 
 const EPHEMERAL = 64;
 
@@ -222,7 +223,20 @@ async function route(interaction) {
         if (parts[1] === 'v') return await handleVote(interaction, parts[2], parts[3]);
         if (parts[1] === 'a' || parts[1] === 'd') return await handleDecision(interaction, parts[1], parts[2]);
     } catch (err) {
-        if (err?.code === 10062 || err?.code === 40060) return;
+        // Caught here and never rethrown, so bot.js can't see it — report the real
+        // outcome to the audit log or a failed vote/decision would read as success.
+        if (err?.code === 10062 || err?.code === 40060) {
+            higgenLog.markSubRouterOutcome(interaction, {
+                outcome: 'expired',
+                note: 'The application button was clicked after its interaction had timed out.',
+            });
+            return;
+        }
+        higgenLog.markSubRouterOutcome(interaction, {
+            outcome: 'failed',
+            note: 'The application vote/decision threw an error.',
+            error: err,
+        });
         Logger.error('application router error', err);
     }
     return null;

@@ -67,9 +67,9 @@ export default function TicketsPage() {
                   <tr className="text-[10px] uppercase tracking-wider text-blue-300/70 font-bold">
                     <th className="px-3 py-2 text-left">Channel</th>
                     <th className="px-3 py-2 text-left">Reason</th>
-                    <th className="px-3 py-2 text-left">Created By</th>
-                    <th className="px-3 py-2 text-left">Participants</th>
-                    <th className="px-3 py-2 text-left">Opened</th>
+                    <th className="px-3 py-2 text-left hidden sm:table-cell">Created By</th>
+                    <th className="px-3 py-2 text-left hidden md:table-cell">Participants</th>
+                    <th className="px-3 py-2 text-left hidden md:table-cell">Opened</th>
                     <th className="px-3 py-2 text-right"></th>
                   </tr>
                 </thead>
@@ -81,10 +81,10 @@ export default function TicketsPage() {
                         <div className="text-[10px] font-mono text-white/30">{t.channelId}</div>
                       </td>
                       <td className="px-3 py-1.5 text-blue-200/80 truncate max-w-[160px]">{t.reason || '—'}</td>
-                      <td className="px-3 py-1.5 text-white/80 truncate max-w-[140px]">{t.createdByUsername || t.createdBy}</td>
-                      <td className="px-3 py-1.5 text-white/60 text-[11px]">{(t.userIds || []).length} user{(t.userIds || []).length === 1 ? '' : 's'}</td>
-                      <td className="px-3 py-1.5 text-white/40 text-[10px]">{t.createdAt ? new Date(t.createdAt).toLocaleString() : '—'}</td>
-                      <td className="px-3 py-1.5 text-right">
+                      <td className="px-3 py-1.5 text-white/80 truncate max-w-[140px] hidden sm:table-cell">{t.createdByUsername || t.createdBy}</td>
+                      <td className="px-3 py-1.5 text-white/60 text-[11px] hidden md:table-cell">{(t.userIds || []).length} user{(t.userIds || []).length === 1 ? '' : 's'}</td>
+                      <td className="px-3 py-1.5 text-white/40 text-[10px] hidden md:table-cell">{t.createdAt ? new Date(t.createdAt).toLocaleString() : '—'}</td>
+                      <td className="px-3 py-1.5 text-right whitespace-nowrap">
                         <button
                           onClick={(e) => { e.stopPropagation(); setOpenTicket({ channelId: t.channelId, channelName: t.channelName }) }}
                           className="px-2 py-1 text-[10px] uppercase font-bold text-blue-200 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-400/30 rounded"
@@ -108,10 +108,10 @@ export default function TicketsPage() {
                   <tr className="text-[10px] uppercase tracking-wider text-blue-300/70 font-bold">
                     <th className="px-3 py-2 text-left">Channel</th>
                     <th className="px-3 py-2 text-left">Reason</th>
-                    <th className="px-3 py-2 text-left">Opened By</th>
-                    <th className="px-3 py-2 text-left">Closed By</th>
-                    <th className="px-3 py-2 text-center">Msgs</th>
-                    <th className="px-3 py-2 text-left">Closed</th>
+                    <th className="px-3 py-2 text-left hidden md:table-cell">Opened By</th>
+                    <th className="px-3 py-2 text-left hidden sm:table-cell">Closed By</th>
+                    <th className="px-3 py-2 text-center hidden md:table-cell">Msgs</th>
+                    <th className="px-3 py-2 text-left hidden md:table-cell">Closed</th>
                     <th className="px-3 py-2 text-right"></th>
                   </tr>
                 </thead>
@@ -123,11 +123,11 @@ export default function TicketsPage() {
                         <div className="text-[10px] font-mono text-white/30">{t.channelId}</div>
                       </td>
                       <td className="px-3 py-1.5 text-blue-200/80 truncate max-w-[140px]">{t.reason || '—'}</td>
-                      <td className="px-3 py-1.5 text-white/70 truncate max-w-[120px]">{t.openedByUsername || '—'}</td>
-                      <td className="px-3 py-1.5 text-white/70 truncate max-w-[120px]">{t.closedByUsername || '—'}</td>
-                      <td className="px-3 py-1.5 text-center text-white/60">{t.messageCount ?? '—'}</td>
-                      <td className="px-3 py-1.5 text-white/40 text-[10px]">{t.closedAt ? new Date(t.closedAt).toLocaleString() : '—'}</td>
-                      <td className="px-3 py-1.5 text-right">
+                      <td className="px-3 py-1.5 text-white/70 truncate max-w-[120px] hidden md:table-cell">{t.openedByUsername || '—'}</td>
+                      <td className="px-3 py-1.5 text-white/70 truncate max-w-[120px] hidden sm:table-cell">{t.closedByUsername || '—'}</td>
+                      <td className="px-3 py-1.5 text-center text-white/60 hidden md:table-cell">{t.messageCount ?? '—'}</td>
+                      <td className="px-3 py-1.5 text-white/40 text-[10px] hidden md:table-cell">{t.closedAt ? new Date(t.closedAt).toLocaleString() : '—'}</td>
+                      <td className="px-3 py-1.5 text-right whitespace-nowrap">
                         <button
                           onClick={(e) => { e.stopPropagation(); setOpenTicket({ channelId: t.channelId, channelName: t.channelName }) }}
                           className="px-2 py-1 text-[10px] uppercase font-bold text-blue-200 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-400/30 rounded"
@@ -161,10 +161,10 @@ export default function TicketsPage() {
                 <thead className="bg-black/30">
                   <tr className="text-[10px] uppercase tracking-wider text-blue-300/70 font-bold">
                     <th className="px-3 py-2 text-left">Target</th>
-                    <th className="px-3 py-2 text-left">ID</th>
+                    <th className="px-3 py-2 text-left hidden sm:table-cell">ID</th>
                     <th className="px-3 py-2 text-left">Reason</th>
-                    <th className="px-3 py-2 text-left">Requested By</th>
-                    <th className="px-3 py-2 text-left">Queued</th>
+                    <th className="px-3 py-2 text-left hidden md:table-cell">Requested By</th>
+                    <th className="px-3 py-2 text-left hidden md:table-cell">Queued</th>
                     <th className="px-3 py-2 text-right"></th>
                   </tr>
                 </thead>
@@ -172,11 +172,11 @@ export default function TicketsPage() {
                   {data.pendingRequests.map((r) => (
                     <tr key={r.id} className="border-t border-white/5 hover:bg-white/[0.04]">
                       <td className="px-3 py-1.5 text-blue-200 uppercase text-[10px] font-bold">{r.targetKind}</td>
-                      <td className="px-3 py-1.5 text-white font-mono text-[11px]">{r.targetId}</td>
+                      <td className="px-3 py-1.5 text-white font-mono text-[11px] hidden sm:table-cell">{r.targetId}</td>
                       <td className="px-3 py-1.5 text-white/80 truncate max-w-[200px]">{r.reason || '—'}</td>
-                      <td className="px-3 py-1.5 text-white/80 truncate max-w-[140px]">{r.requestedByUsername || '—'}</td>
-                      <td className="px-3 py-1.5 text-white/40 text-[10px]">{r.requestedAt ? new Date(r.requestedAt).toLocaleString() : '—'}</td>
-                      <td className="px-3 py-1.5 text-right">
+                      <td className="px-3 py-1.5 text-white/80 truncate max-w-[140px] hidden md:table-cell">{r.requestedByUsername || '—'}</td>
+                      <td className="px-3 py-1.5 text-white/40 text-[10px] hidden md:table-cell">{r.requestedAt ? new Date(r.requestedAt).toLocaleString() : '—'}</td>
+                      <td className="px-3 py-1.5 text-right whitespace-nowrap">
                         <button
                           onClick={() => deleteRequest(r.id)}
                           disabled={busy === `r:${r.id}`}
@@ -249,7 +249,9 @@ function Section({ title, children }) {
       <div className="px-4 py-2 border-b border-white/10 bg-black/30">
         <h2 className="text-sm font-black text-white tracking-wide">{title}</h2>
       </div>
-      <div>{children}</div>
+      {/* Tables scroll inside the card on small screens instead of pushing the
+          whole page sideways. */}
+      <div className="overflow-x-auto">{children}</div>
     </section>
   )
 }
@@ -441,13 +443,13 @@ function TargetPicker({ kind, onPick }) {
 
 function Modal({ children, onClose, title }) {
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6" onClick={onClose}>
       <div className="bg-[#0b1220] border border-white/10 rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="p-5 border-b border-white/10 flex items-center justify-between">
+        <div className="p-4 sm:p-5 border-b border-white/10 flex items-center justify-between">
           <h2 className="text-lg font-black text-white">{title}</h2>
           <button onClick={onClose} className="text-white/50 hover:text-white text-2xl leading-none">×</button>
         </div>
-        <div className="p-5">{children}</div>
+        <div className="p-4 sm:p-5">{children}</div>
       </div>
     </div>
   )

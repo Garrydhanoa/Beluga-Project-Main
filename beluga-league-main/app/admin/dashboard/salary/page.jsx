@@ -43,7 +43,7 @@ function LockedRow({ p, member, onAdjust, onUnlock, busy }) {
   const name = member?.displayName || p.name || p.discordId
   return (
     <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex items-start justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2 min-w-0">
           <Avatar src={member?.avatarUrl} name={name} size={32} ring={false} className="flex-shrink-0" />
           <div className="min-w-0">
@@ -70,16 +70,16 @@ function LockedRow({ p, member, onAdjust, onUnlock, busy }) {
       </div>
 
       {!editing ? (
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <button disabled={busy} onClick={() => { setVal(p.locked != null ? String(p.locked) : ''); setEditing(true) }}
                   className="px-3 py-1 rounded bg-cyan-500/20 text-cyan-200 border border-cyan-400/40 text-xs font-bold disabled:opacity-40">Adjust</button>
           <button disabled={busy} onClick={() => onUnlock(p)}
                   className="px-3 py-1 rounded bg-white/5 text-white/70 border border-white/15 text-xs font-bold disabled:opacity-40">Unlock (sync to N)</button>
         </div>
       ) : (
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <input type="number" step="0.25" min="0" value={val} onChange={(e) => setVal(e.target.value)}
-                 className="w-24 px-2 py-1 rounded bg-black/40 border border-white/15 text-white text-sm" />
+                 className="w-full sm:w-24 px-2 py-1 rounded bg-black/40 border border-white/15 text-white text-sm" />
           <button disabled={busy || val === ''} onClick={() => { onAdjust(p.discordId, val); setEditing(false) }}
                   className="px-3 py-1 rounded bg-green-500/20 text-green-200 border border-green-400/40 text-xs font-bold disabled:opacity-40">Save lock</button>
           <button disabled={busy} onClick={() => setEditing(false)} className="text-xs text-white/40">cancel</button>
@@ -173,7 +173,7 @@ export default function SalaryPage() {
               <span className="text-sm text-white truncate">{picked.displayName}</span>
             </div>
             <input type="number" step="0.25" min="0" value={pickVal} onChange={(e) => setPickVal(e.target.value)} placeholder="salary"
-                   className="w-24 px-2 py-1 rounded bg-black/40 border border-white/15 text-white text-sm" />
+                   className="w-full sm:w-24 px-2 py-1 rounded bg-black/40 border border-white/15 text-white text-sm" />
             <button disabled={busy || pickVal === ''} onClick={() => doAdjust(picked.discordId, pickVal)}
                     className="px-3 py-1 rounded bg-green-500/20 text-green-200 border border-green-400/40 text-xs font-bold disabled:opacity-40">Lock salary</button>
             <button disabled={busy} onClick={() => setPicked(null)} className="text-xs text-white/40">change player</button>

@@ -119,12 +119,42 @@ function isSalaryCrew(member) {
 }
 
 /**
+ * Every active team id belonging to the same FRANCHISE as `teamId` (any division,
+ * same season). A franchise fields one team per division, so this is how a member
+ * who plays in one division is linked to their franchise's team in another.
+ * Returns [] when the team has no franchise (behaviour then matches the old rules).
+ */
+async function getFranchiseSiblingTeamIds(seasonId, teamId) {
+    if (!db() || !teamId) return [];
+    try {
+        const r = await pool.query(
+            `SELECT sib.id
+             FROM teams t
+             JOIN teams sib ON sib.franchise_id = t.franchise_id
+             WHERE t.id = $1 AND t.franchise_id IS NOT NULL
+               AND sib.season_id = $2 AND sib.is_active = TRUE`,
+            [teamId, seasonId]
+        );
+        return r.rows.map((row) => row.id);
+    } catch (err) {
+        Logger.error('getFranchiseSiblingTeamIds failed', err);
+        return [];
+    }
+}
+
+/**
  * Which of the two teams (if any) the user is an authorized captain/GM for.
  * Recognised via ANY of:
- *   - the team's GM Discord role (ROLES.GM_ROLES[name]),
- *   - the division captain Discord role + being on that team's roster,
- *   - the DB roster role being 'captain'/'gm' for that team.
- * (The Discord-role checks will move to DB-sourced roles in the B4 migration.)
+ *   - the team's GM Discord role (franchise-wide, so GMs already cross divisions),
+ *   - the division captain Discord role + being on that team (role or roster),
+ *   - the DB roster role being 'captain'/'gm' for that team,
+ *   - the division captain Discord role + the franchise's NP (non-playing) role.
+ *     An NP is franchise staff and carries no team or division role, so an NP
+ *     captain used to fail every other check — this is what stopped e.g. a AAA
+ *     captain wearing only their franchise's NP role from reporting AAA series.
+ *   - the division captain Discord role + belonging to that team's FRANCHISE in
+ *     ANY division (a AAA player holding the AA captain role can report their
+ *     franchise's AA series even though they have no AA team role).
  * @param {import('discord.js').GuildMember} member
  * @param {{id:number,name:string}} homeTeam
  * @param {{id:number,name:string}} awayTeam
@@ -134,14 +164,24 @@ async function getUserAuthorizedTeam(member, seasonId, homeTeam, awayTeam, divis
     const discordId = member?.id || member?.user?.id;
     if (!discordId) return null;
 
-    // DB roster rows for this user on either of the two teams.
+    // Franchise siblings of the two matchup teams (one team per division each).
+    const [homeSiblings, awaySiblings] = await Promise.all([
+        getFranchiseSiblingTeamIds(seasonId, homeTeam.id),
+        getFranchiseSiblingTeamIds(seasonId, awayTeam.id),
+    ]);
+
+    // DB roster rows for this user on either of the two teams OR anywhere in
+    // their franchises. Keyed by team id; the per-team checks below still only
+    // look up the two matchup teams, so the original rules are unchanged.
     const rosterByTeam = new Map();
     if (db()) {
+        const teamIds = Array.from(new Set([homeTeam.id, awayTeam.id, ...homeSiblings, ...awaySiblings]));
         try {
             const r = await pool.query(
                 `SELECT team_id, role FROM team_roster_members
-                 WHERE season_id = $1 AND discord_id = $2 AND is_active = TRUE AND team_id IN ($3, $4)`,
-                [seasonId, String(discordId), homeTeam.id, awayTeam.id]
+                 WHERE season_id = $1 AND discord_id = $2 AND is_active = TRUE
+                   AND team_id = ANY($3::int[])`,
+                [seasonId, String(discordId), teamIds]
             );
             for (const row of r.rows) rosterByTeam.set(row.team_id, row.role);
         } catch (err) {
@@ -153,20 +193,41 @@ async function getUserAuthorizedTeam(member, seasonId, homeTeam, awayTeam, divis
     const captainRoleId = getCaptainRoleId(division);
     const hasRole = (id) => Boolean(id && member?.roles?.cache?.has(id));
 
-    // DB-first role resolution (teams.discord_role_id + franchise GM role),
-    // with the legacy constants as a built-in fallback inside teamRoles.
-    const isAuthorizedFor = async (team) => {
-        const roles = await getTeamDiscordRoles(team.id);
-        if (hasRole(roles.gmRoleId)) return true;                                  // franchise/team GM role
-        if (hasRole(captainRoleId) && hasRole(roles.teamRoleId)) return true;      // division captain + on the team
-        const dbRole = rosterByTeam.get(team.id);
-        if (dbRole === 'captain' || dbRole === 'gm') return true;                  // roster role (DB)
-        if (hasRole(captainRoleId) && rosterByTeam.has(team.id)) return true;      // division captain + on this roster (DB)
+    // Franchise link: a roster row on, or the Discord team/NP role of, ANY of
+    // the franchise's teams. Only consulted for the captain branch below.
+    // The NP role is franchise-wide (one per franchise, shared by all three of
+    // its teams), so it links a non-playing captain to the franchise in every
+    // division without them holding any team role at all.
+    const isInFranchise = async (siblingIds) => {
+        for (const id of siblingIds) {
+            if (rosterByTeam.has(id)) return true;
+        }
+        for (const id of siblingIds) {
+            // eslint-disable-next-line no-await-in-loop
+            const sibRoles = await getTeamDiscordRoles(id);
+            if (hasRole(sibRoles.teamRoleId) || hasRole(sibRoles.npRoleId)) return true;
+        }
         return false;
     };
 
-    if (await isAuthorizedFor(homeTeam)) return 'home';
-    if (await isAuthorizedFor(awayTeam)) return 'away';
+    // DB-first role resolution (teams.discord_role_id + franchise GM role),
+    // with the legacy constants as a built-in fallback inside teamRoles.
+    const isAuthorizedFor = async (team, siblingIds) => {
+        const roles = await getTeamDiscordRoles(team.id);
+        if (hasRole(roles.gmRoleId)) return true;                                  // franchise/team GM role
+        if (hasRole(captainRoleId) && hasRole(roles.teamRoleId)) return true;      // division captain + on the team
+        if (hasRole(captainRoleId) && hasRole(roles.npRoleId)) return true;        // division captain + franchise NP role
+        const dbRole = rosterByTeam.get(team.id);
+        if (dbRole === 'captain' || dbRole === 'gm') return true;                  // roster role (DB)
+        if (hasRole(captainRoleId) && rosterByTeam.has(team.id)) return true;      // division captain + on this roster (DB)
+        // Cross-division captain: holds THIS division's captain role and belongs
+        // to this team's franchise in some other division.
+        if (hasRole(captainRoleId) && await isInFranchise(siblingIds)) return true;
+        return false;
+    };
+
+    if (await isAuthorizedFor(homeTeam, homeSiblings)) return 'home';
+    if (await isAuthorizedFor(awayTeam, awaySiblings)) return 'away';
     return null;
 }
 
@@ -186,5 +247,6 @@ module.exports = {
     getTeamRoster,
     isSalaryCrew,
     getUserAuthorizedTeam,
+    getFranchiseSiblingTeamIds,
     getOnfieldCaps,
 };

@@ -5,6 +5,10 @@
  * leaderboards page and the standings/power-ranking card brand.
  */
 
+// Registers the bundled fonts. MUST come before anything measures or draws
+// text — node-canvas resolves ctx.font at call time against whatever is
+// registered, and Railway's image ships no fonts of its own.
+require('../utils/fontManager');
 const { createCanvas } = require('canvas');
 const { pool, isDatabaseAvailable } = require('../utils/database');
 const { config } = require('../../src/config/config');

@@ -1,6 +1,6 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { pool, LeagueDB } = require('../utils/database');
-const { TEAM_NAMES } = require('../constants/roles');
+const { teamAutocomplete } = require('../utils/teamRoles');
 const { isSalaryCrew } = require('../stats/report/threadContext');
 const flow = require('../stats/report/flow');
 
@@ -18,11 +18,16 @@ module.exports = {
         .addStringOption((o) => o.setName('division').setDescription('Division').setRequired(true)
             .addChoices({ name: 'Majors', value: 'Majors' }, { name: 'AAA', value: 'AAA' }, { name: 'AA', value: 'AA' }))
         .addStringOption((o) => o.setName('home_team').setDescription('Home team').setRequired(true)
-            .addChoices(...TEAM_NAMES.map((t) => ({ name: t, value: t }))))
+            .setAutocomplete(true))
         .addStringOption((o) => o.setName('away_team').setDescription('Away team').setRequired(true)
-            .addChoices(...TEAM_NAMES.map((t) => ({ name: t, value: t }))))
+            .setAutocomplete(true))
         .addIntegerOption((o) => o.setName('week').setDescription('Week number').setRequired(false).setMinValue(1).setMaxValue(30))
         .addBooleanOption((o) => o.setName('playoffs').setDescription('Is this a playoff series?').setRequired(false)),
+
+    // Live team list from the current season (DB), filtered by the chosen division.
+    async autocomplete(interaction) {
+        await teamAutocomplete(interaction, { valueField: 'name', divisionOptionName: 'division' });
+    },
 
     async execute(interaction) {
         // No defer here — showModal must be the first response.

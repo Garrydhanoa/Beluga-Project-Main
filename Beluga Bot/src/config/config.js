@@ -66,7 +66,14 @@ const config = {
     groupOffset: 427,
     logoWidth: 60,
     fontSize: 15,
-    fontFamily: 'Anton, Impact, "Arial Black", "Franklin Gothic Heavy", "Helvetica Bold", Arial, sans-serif',
+    // Barlow leads: it is BUNDLED (Beluga Bot/fonts/) and registered by
+    // utils/fontManager, so it resolves identically here and on Railway. The
+    // rest is a fallback chain for a host where registration somehow failed —
+    // none of those faces exist on the nixpacks image, which is precisely why
+    // the fonts are now shipped rather than assumed.
+    fontFamily: 'Barlow, Anton, Impact, "Arial Black", "Franklin Gothic Heavy", Arial, sans-serif',
+    // Condensed display face for headlines (bundled alongside Barlow).
+    displayFontFamily: 'Anton, Barlow, Impact, "Arial Black", Arial, sans-serif',
     fontWeight: '600',
     textColor: 'white',
     textStroke: true,

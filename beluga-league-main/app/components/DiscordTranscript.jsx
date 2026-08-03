@@ -54,11 +54,11 @@ export function DiscordTranscriptModal({ title, subtitle, messagesUrl, onClose, 
   }, [messages])
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-6" onClick={onClose}>
-      <div className="bg-[#0b1220] border border-white/10 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <div className="p-4 border-b border-white/10 flex items-center justify-between">
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-2 sm:p-6" onClick={onClose}>
+      <div className="bg-[#0b1220] border border-white/10 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[92vh] sm:max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="p-3 sm:p-4 border-b border-white/10 flex items-center justify-between gap-2">
           <div className="min-w-0">
-            <h2 className="text-lg font-black text-white truncate">{title}</h2>
+            <h2 className="text-base sm:text-lg font-black text-white truncate">{title}</h2>
             <div className="text-[10px] font-mono text-white/40 truncate">
               {subtitle} · {isOpen ? <span className="text-green-300">open</span> : <span className="text-white/50">closed</span>}{live ? ' · live' : ''}
             </div>
@@ -69,7 +69,7 @@ export function DiscordTranscriptModal({ title, subtitle, messagesUrl, onClose, 
           </div>
         </div>
 
-        <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3 min-h-[300px] bg-[#0a0d16]">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 min-h-[240px] sm:min-h-[300px] bg-[#0a0d16]">
           {loading ? (
             <div className="text-blue-200/60 text-sm">Loading transcript…</div>
           ) : messages.length === 0 ? (

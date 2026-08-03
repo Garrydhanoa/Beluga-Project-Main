@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, usePathname } from 'next/navigation'
 import { useSession, signOut } from 'next-auth/react'
+import ActivityTracker from './ActivityTracker'
 
 const NAV = [
   { label: 'Overview', href: '/admin/dashboard', icon: 'grid', exact: true },
@@ -23,8 +24,11 @@ const NAV = [
   { label: 'Applications', href: '/admin/dashboard/applications', icon: 'user' },
   { label: 'Week Threads', href: '/admin/dashboard/weeks', icon: 'thread' },
   { label: 'Notification', href: '/admin/dashboard/notification', icon: 'bell' },
+  { label: 'DM Center', href: '/admin/dashboard/dm', icon: 'mail' },
   { label: 'Tickets', href: '/admin/dashboard/tickets', icon: 'alert' },
-  { label: 'Logs', href: '/admin/dashboard/logs', icon: 'chart' },
+  // NOTE: there is no Logs entry. The old Logs tab was removed; the full audit
+  // trail lives at /admin/dashboard/higgenlogs, which is deliberately unlinked and
+  // restricted to the ADMIN_DISCORD_IDS allowlist (see lib/adminAuth.js).
 ]
 
 const ICON_PATHS = {
@@ -43,6 +47,7 @@ const ICON_PATHS = {
   alert: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z',
   link: 'M13.828 10.172a4 4 0 010 5.656l-3 3a4 4 0 01-5.656-5.656l1.5-1.5m6.828-6.828a4 4 0 015.656 5.656l-1.5 1.5',
   dollar: 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V6m0 10v2m0-2c-1.11 0-2.08-.402-2.599-1',
+  mail: 'M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z',
 }
 
 function Icon({ name, className = 'h-4 w-4' }) {
@@ -63,9 +68,23 @@ export default function DashboardLayout({ children }) {
   const router = useRouter()
   const pathname = usePathname()
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const [dmUnread, setDmUnread] = useState(0)
 
   // Close the mobile drawer whenever the route changes.
   useEffect(() => { setMobileNavOpen(false) }, [pathname])
+
+  // Unread DM badge — visible from any admin page so a new message can't be
+  // missed while you're working elsewhere.
+  useEffect(() => {
+    if (!session?.isDirector) return undefined
+    const load = () => fetch('/api/admin/dm/unread', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (j) setDmUnread(j.unread || 0) })
+      .catch(() => {})
+    load()
+    const t = setInterval(load, 5000)
+    return () => clearInterval(t)
+  }, [session?.isDirector])
 
   useEffect(() => {
     if (status === 'unauthenticated') {
@@ -90,6 +109,10 @@ export default function DashboardLayout({ children }) {
 
   return (
     <div className="min-h-screen flex">
+      {/* Records every click / dropdown change / form submit / page view in this
+          panel to the audit log. Renders nothing. */}
+      <ActivityTracker />
+
       {/* Mobile top bar with hamburger (hidden on lg+) */}
       <div className="lg:hidden fixed top-0 left-0 right-0 h-14 z-50 flex items-center gap-3 px-4 border-b border-blue-500/20 bg-black/80 backdrop-blur-xl">
         <button
@@ -128,6 +151,7 @@ export default function DashboardLayout({ children }) {
         <nav className="flex-1 overflow-y-auto p-3 space-y-0.5">
           {NAV.map((item) => {
             const active = isActive(pathname, item)
+            const badge = item.href === '/admin/dashboard/dm' ? dmUnread : 0
             return (
               <Link
                 key={item.href}
@@ -140,7 +164,12 @@ export default function DashboardLayout({ children }) {
               >
                 <Icon name={item.icon} className="h-4 w-4" />
                 <span className="flex-1">{item.label}</span>
-                {active && <span className="w-1 h-1 rounded-full bg-blue-400" />}
+                {badge > 0 && (
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-blue-500 text-white">
+                    {badge > 99 ? '99+' : badge}
+                  </span>
+                )}
+                {active && badge === 0 && <span className="w-1 h-1 rounded-full bg-blue-400" />}
               </Link>
             )
           })}
@@ -171,7 +200,10 @@ export default function DashboardLayout({ children }) {
         </div>
       </aside>
 
-      <main className="flex-1 lg:ml-64 px-4 sm:px-6 lg:px-10 pt-20 lg:pt-10 pb-10 min-w-0">{children}</main>
+      {/* data-dense opts the admin panel out of the site-wide mobile rule that
+          forces every p/span/div to 16px (see mobile-responsive.css) — these
+          screens depend on their own 9-11px label scale to fit on a phone. */}
+      <main data-dense className="flex-1 lg:ml-64 px-4 sm:px-6 lg:px-10 pt-20 lg:pt-10 pb-10 min-w-0">{children}</main>
     </div>
   )
 }

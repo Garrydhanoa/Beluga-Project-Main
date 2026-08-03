@@ -10,6 +10,7 @@ import {
   mondayForWeek,
   materializeWeekFromSchedule,
   createManualWeekThread,
+  getUnreportedForWeek,
 } from '../../../../lib/weekThreadStore'
 
 export const dynamic = 'force-dynamic'
@@ -146,13 +147,45 @@ async function postHandler(request) {
   if (body.action === 'delete_week') {
     const weekNumber = Number(body.weekNumber)
     if (!Number.isInteger(weekNumber) || weekNumber < 1) return badRequest('weekNumber required')
+
+    // Deleting a week's threads IS how the league closes the week, and a deleted
+    // thread is the only place its series can still be reported. Block while
+    // anything is unreported and have the bot ping salary crew in exactly those
+    // threads; `force: true` is the confirmed second step.
+    if (!body.force) {
+      const { unreported, total } = await getUnreportedForWeek(seasonId, weekNumber)
+      if (unreported.length) {
+        await query(
+          `INSERT INTO week_thread_actions (action, season_id, week_number, requested_by_discord_id, requested_by_username)
+           VALUES ('ping_unreported', $1, $2, $3, $4)`,
+          [seasonId, weekNumber, auth.session?.discordUserId || null, auth.session?.discordUsername || null]
+        )
+        return NextResponse.json(
+          {
+            error: 'Unreported series',
+            blocked: true,
+            weekNumber,
+            total,
+            reported: total - unreported.length,
+            unreported,
+            message: `${unreported.length} of ${total} series in Week ${weekNumber} have not been reported.`,
+          },
+          { status: 409 }
+        )
+      }
+    }
+
     const r = await query(
       `INSERT INTO week_thread_actions (action, season_id, week_number, requested_by_discord_id, requested_by_username)
-       VALUES ('delete', $1, $2, $3, $4)
+       VALUES ($5, $1, $2, $3, $4)
        RETURNING id`,
-      [seasonId, weekNumber, auth.session?.discordUserId || null, auth.session?.discordUsername || null]
+      [
+        seasonId, weekNumber,
+        auth.session?.discordUserId || null, auth.session?.discordUsername || null,
+        body.force ? 'force_delete' : 'delete',
+      ]
     )
-    return NextResponse.json({ ok: true, queued: true, actionId: r.rows[0].id })
+    return NextResponse.json({ ok: true, queued: true, forced: Boolean(body.force), actionId: r.rows[0].id })
   }
 
   // Mode 4: create one manual thread row

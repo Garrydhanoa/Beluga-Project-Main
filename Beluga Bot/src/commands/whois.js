@@ -4,6 +4,7 @@ const { google } = require('googleapis');
 const fs = require('fs');
 const path = require('path');
 const { config } = require('../config/config');
+const { siteFooter, appendFooter, siteUrl } = require('../utils/siteFooter');
 const Logger = require('../utils/logger');
 
 const SPREADSHEET_ID = '1cnrCOiAX5PfcxqpTX16YvbPVYnBxZiCk_zSCDqoeDGs';
@@ -472,8 +473,7 @@ module.exports = {
             if (mainT) trackers.push(mainT);
             parseTrackerUrls(playerData.altTrackers).forEach((u) => { const p = trackerParts(u); if (p) trackers.push(p); });
 
-            const site = process.env.RAILWAY_PUBLIC_DOMAIN;
-            const profileUrl = site ? `https://${site}/players/${encodeURIComponent(String(targetUser.id))}` : null;
+            const profileUrl = siteUrl(`/players/${encodeURIComponent(String(targetUser.id))}`);
 
             // Fetch the avatar as a real Buffer (node-canvas loadImage is
             // unreliable on remote URLs, so a URL string can silently render blank).
@@ -528,9 +528,10 @@ module.exports = {
                 const file = new AttachmentBuilder(buf, { name: 'whois.png' });
                 const linkBits = [];
                 if (trackers.length) linkBits.push('Trackers: ' + trackers.slice(0, 5).map((t) => `[${t.name}](${t.url})`).join(' · '));
-                if (profileUrl) linkBits.push(`Full profile: ${profileUrl}`);
+                if (profileUrl) linkBits.push(`Full profile: [${displayName}](<${profileUrl}>)`);
+                const head = `**${displayName}** — ${clickableProfile}${linkBits.length ? `\n${linkBits.join('\n')}` : ''}`;
                 await interaction.editReply({
-                    content: `**${displayName}** — ${clickableProfile}${linkBits.length ? `\n${linkBits.join('\n')}` : ''}`,
+                    content: appendFooter(head, interaction.guild),
                     files: [file],
                     allowedMentions: { parse: [] },
                 });
@@ -601,7 +602,7 @@ module.exports = {
                 embed.addFields({ name: 'Full profile', value: profileUrl, inline: false });
             }
 
-            await interaction.editReply({ embeds: [embed] });
+            await interaction.editReply({ content: siteFooter(interaction.guild), embeds: [embed] });
             Logger.success(`Player info sent for ${targetUser.tag}`);
 
         } catch (error) {

@@ -43,6 +43,32 @@ async function ensureMemberTables() {
         `);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_discord_roles_position ON discord_roles(position DESC)`);
 
+        // Channel mirror — powers the admin DM Center's "#channel" picker so staff
+        // can tag a channel by name instead of pasting a raw id.
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS discord_channels (
+                channel_id TEXT PRIMARY KEY,
+                name TEXT,
+                type INTEGER,
+                parent_id TEXT,
+                parent_name TEXT,
+                position INTEGER NOT NULL DEFAULT 0,
+                synced_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // Member↔role mirror. Used ONLY to preview how many people a role blast
+        // would reach; the bot re-resolves roles live from the guild at send time,
+        // so a stale mirror can never cause a mis-targeted DM.
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS discord_member_roles (
+                discord_id TEXT NOT NULL,
+                role_id TEXT NOT NULL,
+                PRIMARY KEY (discord_id, role_id)
+            )
+        `);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_discord_member_roles_role ON discord_member_roles(role_id)`);
+
         tablesReady = true;
         return true;
     } catch (err) {
@@ -163,6 +189,75 @@ async function syncGuildToDb(guild) {
                 `DELETE FROM discord_roles WHERE role_id <> ALL($1::text[])`,
                 [currentRoleIds]
             );
+        }
+
+        // ---- Member ↔ role pairs (DM Center preview counts only) ----
+        // Best-effort: a failure here must never break the member/role sync.
+        if (members.length > 0) {
+            try {
+                const pairs = [];
+                for (const m of members) {
+                    if (m.user.bot) continue;
+                    for (const roleId of m.roles.cache.keys()) {
+                        if (roleId === guild.id) continue; // @everyone
+                        pairs.push([m.user.id, roleId]);
+                    }
+                }
+                await pool.query('TRUNCATE discord_member_roles');
+                const PAIR_CHUNK = 500;
+                for (let i = 0; i < pairs.length; i += PAIR_CHUNK) {
+                    const slice = pairs.slice(i, i + PAIR_CHUNK);
+                    const values = slice.map((_, idx) => `($${idx * 2 + 1}, $${idx * 2 + 2})`);
+                    await pool.query(
+                        `INSERT INTO discord_member_roles (discord_id, role_id)
+                         VALUES ${values.join(', ')} ON CONFLICT DO NOTHING`,
+                        slice.flat()
+                    );
+                }
+                Logger.info(`Mirrored ${pairs.length} member-role pairs`);
+            } catch (e) {
+                Logger.warning(`member-role mirror skipped: ${e.message}`);
+            }
+        }
+
+        // ---- Channels (DM Center "#channel" picker) ----
+        try {
+            const channels = Array.from(guild.channels.cache.values())
+                .filter((c) => c && c.id && typeof c.type === 'number');
+            if (channels.length > 0) {
+                const values = [];
+                const params = [];
+                channels.forEach((c, idx) => {
+                    const base = idx * 6;
+                    values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6})`);
+                    params.push(
+                        c.id,
+                        c.name || null,
+                        c.type,
+                        c.parentId || null,
+                        c.parent?.name || null,
+                        c.rawPosition ?? c.position ?? 0
+                    );
+                });
+                await pool.query(
+                    `INSERT INTO discord_channels (channel_id, name, type, parent_id, parent_name, position)
+                     VALUES ${values.join(', ')}
+                     ON CONFLICT (channel_id) DO UPDATE SET
+                        name = EXCLUDED.name,
+                        type = EXCLUDED.type,
+                        parent_id = EXCLUDED.parent_id,
+                        parent_name = EXCLUDED.parent_name,
+                        position = EXCLUDED.position,
+                        synced_at = CURRENT_TIMESTAMP`,
+                    params
+                );
+                await pool.query(
+                    `DELETE FROM discord_channels WHERE channel_id <> ALL($1::text[])`,
+                    [channels.map((c) => c.id)]
+                );
+            }
+        } catch (e) {
+            Logger.warning(`channel mirror skipped: ${e.message}`);
         }
 
         // Store the AUTHORITATIVE live counts in site_config so the website shows

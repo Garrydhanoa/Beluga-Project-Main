@@ -5,12 +5,20 @@ import { ensureLeagueSchema } from '../../../../lib/leagueSchema'
 import { query } from '../../../../lib/db'
 import { getActiveSeason } from '../../../../lib/leagueStore'
 import { getRankingsForSeason, replaceRankings } from '../../../../lib/powerRankingsStore'
-import { recalcPowerRankings } from '../../../../lib/powerRankingsAuto'
+import { recalcPowerRankings, recalcAllWeeks } from '../../../../lib/powerRankingsAuto'
+import { resolveRankingWeek, listPlayedWeeks, countUnweekedSeries } from '../../../../lib/rankingWeek'
 
 export const dynamic = 'force-dynamic'
 
 function badRequest(msg) {
   return NextResponse.json({ error: msg }, { status: 400 })
+}
+
+/** A week query/body value, or null for "let the server decide". */
+function parseWeek(raw) {
+  if (raw == null || raw === '' || raw === 'latest') return null
+  const n = Number(raw)
+  return Number.isInteger(n) && n >= 1 ? n : null
 }
 
 export async function GET(request) {
@@ -29,9 +37,17 @@ export async function GET(request) {
     if (!Number.isInteger(seasonId)) seasonId = null
   }
 
-  if (!seasonId) return NextResponse.json({ seasonId: null, rankings: null, seasonTeams: [] })
+  if (!seasonId) {
+    return NextResponse.json({
+      seasonId: null, rankings: null, seasonTeams: [],
+      week: null, weeks: [], playedWeeks: [], defaultWeek: null, unweekedSeries: 0,
+    })
+  }
 
-  const rankings = await getRankingsForSeason(seasonId)
+  const rankings = await getRankingsForSeason(seasonId, parseWeek(searchParams.get('week')))
+  const playedWeeks = await listPlayedWeeks(seasonId)
+  const defaultWeek = await resolveRankingWeek(seasonId)
+  const unweekedSeries = await countUnweekedSeries(seasonId)
 
   // Teams of this season (for the team picker), grouped by division.
   const teamRes = await query(`
@@ -43,12 +59,27 @@ export async function GET(request) {
   `, [seasonId])
   const seasonTeams = teamRes.rows.map((r) => ({ id: r.id, name: r.name, division: r.division }))
 
-  return NextResponse.json({ seasonId, rankings, seasonTeams })
+  // Keys listed explicitly, never spread — a spread once replaced a list with a
+  // count and white-screened the DM Center.
+  return NextResponse.json({
+    seasonId,
+    rankings,
+    seasonTeams,
+    week: rankings.week,
+    weeks: rankings.weeks,
+    playedWeeks,
+    defaultWeek,
+    unweekedSeries,
+  })
 }
 
-// POST { action: 'recalc', seasonId? } → regenerate auto rankings (teams+players,
-// all divisions) from recent results, with trend vs the previous run. Same formula
-// as the bot's /power-rankings + week-close refresh.
+// POST { action, seasonId?, week? }
+//   'recalc'        → regenerate ONE week's auto rankings (teams+players, all
+//                     divisions). Only that week's rows are replaced. Omitting
+//                     week targets the latest week that has results.
+//   'backfill' → rebuild every week that has results, oldest first, so
+//                     trend arrows chain correctly across the whole season.
+// Same formula as the bot's /power-rankings + week-close refresh.
 async function postHandler(request) {
   const auth = await requireAdmin()
   if (!auth.ok) return auth.response
@@ -56,7 +87,8 @@ async function postHandler(request) {
 
   let body
   try { body = await request.json() } catch { body = {} }
-  if (body.action !== 'recalc') return badRequest('Unknown action')
+  const action = body.action === 'backfill' ? 'backfill' : body.action === 'recalc' ? 'recalc' : null
+  if (!action) return badRequest('Unknown action')
 
   let seasonId = body.seasonId
   if (!seasonId || seasonId === 'active') {
@@ -69,9 +101,22 @@ async function postHandler(request) {
   if (!seasonId) return badRequest('No season')
 
   try {
-    const counts = await recalcPowerRankings(seasonId)
-    const rankings = await getRankingsForSeason(seasonId)
-    return NextResponse.json({ ok: true, seasonId, ...counts, rankings })
+    if (action === 'backfill') {
+      const res = await recalcAllWeeks(seasonId)
+      const rankings = await getRankingsForSeason(seasonId)
+      return NextResponse.json({
+        ok: true, action, seasonId,
+        weeksRebuilt: res.weeks, teamCount: res.teamCount, playerCount: res.playerCount,
+        week: rankings.week, weeks: rankings.weeks, rankings,
+      })
+    }
+    const res = await recalcPowerRankings(seasonId, parseWeek(body.week))
+    const rankings = await getRankingsForSeason(seasonId, res.week)
+    return NextResponse.json({
+      ok: true, action, seasonId,
+      teamCount: res.teamCount, playerCount: res.playerCount,
+      week: res.week, weeks: rankings.weeks, rankings,
+    })
   } catch (err) {
     return badRequest(err.message || 'recalc failed')
   }
@@ -95,10 +140,11 @@ async function putHandler(request) {
       seasonId,
       entityType,
       division,
+      week: parseWeek(body.week),
       entries: body.entries,
       updatedByUsername: auth.session?.discordUsername || null,
     })
-    return NextResponse.json({ ok: true, rankings })
+    return NextResponse.json({ ok: true, rankings, week: rankings.week, weeks: rankings.weeks })
   } catch (err) {
     return badRequest(err.message || 'failed')
   }

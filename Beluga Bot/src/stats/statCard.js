@@ -4,6 +4,10 @@
  * pulls team logos from the DB. Designed to look like a pro broadcast stat panel.
  */
 
+// Registers the bundled fonts. MUST come before anything measures or draws
+// text — node-canvas resolves ctx.font at call time against whatever is
+// registered, and Railway's image ships no fonts of its own.
+require('../utils/fontManager');
 const { createCanvas, loadImage } = require('canvas');
 const { config } = require('../../src/config/config');
 
@@ -115,7 +119,16 @@ function drawStatPanel(ctx, x, y, w, h, title, subtitle, t, accent) {
         ctx.fillText(label, x + 20, ry);
         ctx.textAlign = 'right'; ctx.fillStyle = color || '#fff';
         ctx.font = `bold 19px ${FONT}`;
-        const valX = average ? x + w - 70 : x + w - 20;
+        // Reserve the real width of the "/g" column instead of a fixed 70px —
+        // a 4-digit Score (e.g. 5,646) used to overlap its own average.
+        let valX = x + w - 20;
+        if (average) {
+            const avgText = `${average}/g`;
+            ctx.font = `14px ${FONT}`;
+            const avgW = ctx.measureText(avgText).width;
+            ctx.font = `bold 19px ${FONT}`;
+            valX = x + w - 18 - avgW - 10;
+        }
         ctx.fillText(String(total), valX, ry);
         if (average) {
             ctx.textAlign = 'right'; ctx.fillStyle = '#6f8fb8'; ctx.font = `14px ${FONT}`;
@@ -127,7 +140,7 @@ function drawStatPanel(ctx, x, y, w, h, title, subtitle, t, accent) {
 
 /**
  * @param {object} p { name, avatarBuffer, teamName, teamLogoBuffer, division,
- *   seasonLabel, season (row), lifetime (row) }
+ *   seasonLabel, belugaScopeLabel, season (row), lifetime (row) }
  */
 async function buildPlayerStatCard(p) {
     const W = 1040, H = 620;
@@ -149,9 +162,13 @@ async function buildPlayerStatCard(p) {
     const sub = [p.teamName, p.division].filter(Boolean).join('  ·  ');
     if (sub) ctx.fillText(sub, 164, 144);
 
-    // Beluga Score hero (top-right glowing tile)
-    const beluga = p.season?.beluga_score ?? p.lifetime?.beluga_score;
-    const bx = W - 280, by = 70, bw = 240, bh = 96;
+    // Beluga Score hero (top-right glowing tile).
+    // SEASON-SCOPED ONLY — never falls back to lifetime. ~31 players have a
+    // lifetime row but no row for the current season; the old `?? lifetime`
+    // fallback silently showed their career number under a "BELUGA SCORE"
+    // label. The scope caption under the number says which season it is.
+    const beluga = p.season?.beluga_score;
+    const bx = W - 280, by = 70, bw = 240, bh = 116;
     roundRectPath(ctx, bx, by, bw, bh, 18);
     ctx.fillStyle = 'rgba(59,130,246,0.16)'; ctx.fill();
     ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(125,211,252,0.45)'; ctx.stroke();
@@ -160,8 +177,12 @@ async function buildPlayerStatCard(p) {
     ctx.fillText('BELUGA SCORE', bx + bw / 2, by + 26);
     ctx.fillStyle = '#bfe6ff'; ctx.font = `bold 46px ${FONT}`;
     ctx.shadowColor = 'rgba(125,211,252,0.6)'; ctx.shadowBlur = 18;
-    ctx.fillText(beluga != null ? Number(beluga).toFixed(2) : '—', bx + bw / 2, by + 74);
+    ctx.fillText(beluga != null ? Number(beluga).toFixed(2) : '—', bx + bw / 2, by + 76);
     ctx.shadowBlur = 0;
+    if (p.belugaScopeLabel) {
+        ctx.fillStyle = '#6f8fb8'; ctx.font = `12px ${FONT}`;
+        ctx.fillText(String(p.belugaScopeLabel).toUpperCase().slice(0, 30), bx + bw / 2, by + 100);
+    }
 
     // Panels
     const panY = 200, panH = H - panY - 56, gap = 24;

@@ -293,6 +293,24 @@ async function ensureStatsSchema(pool, Logger = console) {
     `);
     await run('idx_audit_series', `CREATE INDEX IF NOT EXISTS idx_stats_audit_series ON stats_audit_log(series_id)`);
 
+    // --- power_rankings.week -------------------------------------------------
+    // power_rankings is CREATED by the website (lib/leagueSchema.js), but the bot
+    // WRITES it, so the bot must be able to add this column itself in case it
+    // deploys first. Guarded on to_regclass so a fresh DB where the website has
+    // never booted doesn't fail the whole stats schema step.
+    // A ranking is a snapshot of ONE WEEK: recalculating week 3 leaves weeks 2
+    // and 4 alone, and trend compares week N against week N-1.
+    await run('power_rankings_week', `
+        DO $$
+        BEGIN
+            IF to_regclass('public.power_rankings') IS NOT NULL THEN
+                ALTER TABLE power_rankings ADD COLUMN IF NOT EXISTS week INTEGER;
+                CREATE INDEX IF NOT EXISTS idx_power_rankings_week
+                    ON power_rankings(season_id, division, week, entity_type, rank);
+            END IF;
+        END $$;
+    `);
+
     (Logger.success || console.log)('Stats system schema ensured');
     return true;
 }

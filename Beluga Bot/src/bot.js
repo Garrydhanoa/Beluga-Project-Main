@@ -22,6 +22,7 @@ const { startPanelReposter } = require('./stats/report/panel');
 const { startTeamConstantsSync } = require('./utils/constantsSync');
 const ticketSystem = require('./tickets/ticketSystem');
 const appBridge = require('./applications/appBridge');
+const higgenLog = require('./utils/higgenLog');
 
 class BelugaLeagueBot {
     constructor() {
@@ -32,7 +33,8 @@ class BelugaLeagueBot {
                 GatewayIntentBits.GuildMembers,  // Required for member fetching
                 GatewayIntentBits.MessageContent, // Required for reading message content
                 GatewayIntentBits.GuildPresences,  // Required for tracking presence updates
-                GatewayIntentBits.GuildMessageReactions  // Required for reaction events
+                GatewayIntentBits.GuildMessageReactions,  // Required for reaction events
+                GatewayIntentBits.DirectMessages  // Required for the DM Center inbox
             ],
             partials: [Partials.Message, Partials.Channel, Partials.Reaction] // Required for reactions on old messages
         });
@@ -129,6 +131,9 @@ class BelugaLeagueBot {
             // Start AI cleanup routine
             this.startAICleanup();
 
+            // Keep the audit log inside its 30-day retention window
+            this.startAuditLogPrune();
+
             // Wire the AI chat bot to the Discord client (for real-time activity
             // logging) and load the persisted active-provider selection.
             this.aiChat.attachClient(client);
@@ -224,6 +229,23 @@ class BelugaLeagueBot {
                 Logger.error('Failed to start MMR outbox poller', mmrError);
             }
 
+            // DM Center: deliver blasts queued from the website admin panel.
+            // Fires on a Postgres NOTIFY (near-instant) with a poll fallback.
+            try {
+                const { startDmSender } = require('./dm/dmSender');
+                startDmSender(client);
+            } catch (dmError) {
+                Logger.error('Failed to start DM sender', dmError);
+            }
+
+            // DM inbox: deliver staff replies typed on the website (2s drain).
+            try {
+                const { startDmInbox } = require('./dm/dmInbox');
+                startDmInbox(client);
+            } catch (dmInboxError) {
+                Logger.error('Failed to start DM inbox', dmInboxError);
+            }
+
             // Director-gated season lifecycle (Start New Season / Delete Season):
             // post approval embeds for website-queued requests, and collect the 3
             // director ✅ reactions that trigger the archive+new-season / delete.
@@ -238,45 +260,79 @@ class BelugaLeagueBot {
         });
 
         this.client.on(Events.InteractionCreate, async (interaction) => {
-            try {
-                // Autocomplete interactions are not repliable, handle them separately
-                if (interaction.isAutocomplete()) {
-                    try {
-                        const command = this.commandHandler.getCommand(interaction.commandName);
-                        if (command && command.autocomplete) {
-                            await command.autocomplete(interaction);
-                        }
-                    } catch (error) {
-                        // Silently handle autocomplete errors (they spam the console)
-                        if (error.code !== 10062 && error.code !== 'InteractionAlreadyReplied') {
-                            Logger.error(`Error in autocomplete for ${interaction.commandName}`, error);
-                        }
+            // Autocomplete interactions are not repliable, handle them separately.
+            // Deliberately NOT audited: it fires on every keystroke and would bury
+            // the log in thousands of useless rows.
+            if (interaction.isAutocomplete()) {
+                try {
+                    const command = this.commandHandler.getCommand(interaction.commandName);
+                    if (command && command.autocomplete) {
+                        await command.autocomplete(interaction);
                     }
-                    return;
+                } catch (error) {
+                    // Silently handle autocomplete errors (they spam the console)
+                    if (error.code !== 10062 && error.code !== 'InteractionAlreadyReplied') {
+                        Logger.error(`Error in autocomplete for ${interaction.commandName}`, error);
+                    }
                 }
+                return;
+            }
 
-                // Check if interaction is still valid for other interaction types
-                if (!interaction.isRepliable()) {
-                    return; // Silently ignore non-repliable interactions
+            // Check if interaction is still valid for other interaction types
+            if (!interaction.isRepliable()) {
+                return; // Silently ignore non-repliable interactions
+            }
+
+            // AUDIT: describe the interaction the moment it lands, before any
+            // dispatch can throw or the token can expire, so the record survives
+            // whatever happens next. The `finally` below always writes the row —
+            // including on the early `return`s in the routing branches.
+            const auditStartedAt = Date.now();
+            let audit = null;
+            try { audit = higgenLog.describeInteraction(interaction); } catch { /* never block a user */ }
+            let auditOutcome = 'success';
+            let auditNote = null;
+            // The sub-routers swallow their own errors, so ask them what really
+            // happened instead of assuming the dispatch succeeded.
+            const drainAudit = (handledBy) => {
+                auditNote = handledBy;
+                const reported = higgenLog.takeSubRouterOutcome(interaction.id);
+                if (reported) {
+                    auditOutcome = reported.outcome;
+                    if (reported.note) auditNote = `${handledBy} ${reported.note}`;
                 }
+            };
 
+            try {
                 // Stats report flow — buttons, select menus, and the group-link
                 // modal all use persistent `rs:` customIds. Route them first.
                 if (typeof interaction.customId === 'string' && reportIds.isReportId(interaction.customId)) {
                     await reportRouter.route(interaction);
+                    drainAudit('Handled by the stats series-report flow.');
                     return;
                 }
 
                 // Configurable ticket system (`tk:` ids — panels, open flow, close controls).
                 if (typeof interaction.customId === 'string' && ticketSystem.isTicketId(interaction.customId)) {
                     await ticketSystem.route(interaction);
+                    drainAudit('Handled by the ticket system.');
                     return;
                 }
 
                 // Applications bridge (`ap:` ids — votes + accept/deny).
                 if (typeof interaction.customId === 'string' && appBridge.isAppId(interaction.customId)) {
                     await appBridge.route(interaction);
+                    drainAudit('Handled by the applications voting panel.');
                     return;
+                }
+
+                // Week-thread guarded delete (`wt:` ids — force-delete confirm).
+                if (typeof interaction.customId === 'string' && interaction.customId.startsWith('wt:')) {
+                    const weekCmd = this.commandHandler.getCommand('week-thread');
+                    if (weekCmd?.handleButton && await weekCmd.handleButton(interaction)) {
+                        auditNote = 'Handled by the week-thread force-delete confirmation.';
+                        return;
+                    }
                 }
 
                 if (interaction.isCommand()) {
@@ -284,9 +340,11 @@ class BelugaLeagueBot {
 
                     if (!command) {
                         Logger.warning(`Unknown command attempted: ${interaction.commandName}`);
+                        auditOutcome = 'unhandled';
+                        auditNote = 'The bot has no command by that name — it may have been renamed or removed without re-registering.';
                         if (!interaction.replied && !interaction.deferred) {
-                            await interaction.reply({ 
-                                content: '❌ Unknown command!', 
+                            await interaction.reply({
+                                content: '❌ Unknown command!',
                                 flags: 64 // MessageFlags.Ephemeral
                             });
                         }
@@ -300,6 +358,9 @@ class BelugaLeagueBot {
                     const registerCommand = this.commandHandler.getCommand('register');
                     if (registerCommand && registerCommand.handleModalSubmit) {
                         await registerCommand.handleModalSubmit(interaction);
+                        auditNote = 'Handled by the registration flow.';
+                    } else {
+                        auditOutcome = 'unhandled';
                     }
                 }
                 else if (interaction.isStringSelectMenu()) {
@@ -307,6 +368,9 @@ class BelugaLeagueBot {
                     const registerCommand = this.commandHandler.getCommand('register');
                     if (registerCommand && registerCommand.handleSelectMenu) {
                         await registerCommand.handleSelectMenu(interaction);
+                        auditNote = 'Handled by the registration flow.';
+                    } else {
+                        auditOutcome = 'unhandled';
                     }
                 }
                 else if (interaction.isButton()) {
@@ -318,12 +382,15 @@ class BelugaLeagueBot {
                         const panelRegister = this.commandHandler.getCommand('panel-register');
                         if (panelRegister && panelRegister.handleButton) {
                             await panelRegister.handleButton(interaction);
+                            auditNote = 'Opened the registration flow from the register panel.';
+                        } else {
+                            auditOutcome = 'unhandled';
                         }
                         return;
                     }
 
                     // Handle button interactions (for navigation) - only for register command buttons
-                    if (interaction.customId.includes('registration') || 
+                    if (interaction.customId.includes('registration') ||
                         interaction.customId.includes('main_account') ||
                         interaction.customId.includes('alt_account') ||
                         interaction.customId.includes('start_') ||
@@ -334,16 +401,25 @@ class BelugaLeagueBot {
                         interaction.customId.includes('remove_') ||
                         interaction.customId.includes('complete_') ||
                         interaction.customId.includes('cancel_')) {
-                        
+
                         const registerCommand = this.commandHandler.getCommand('register');
                         if (registerCommand && registerCommand.handleButton) {
                             await registerCommand.handleButton(interaction);
+                            auditNote = 'Handled by the registration flow.';
+                        } else {
+                            auditOutcome = 'unhandled';
                         }
+                    } else {
+                        // Nothing in the bot claims this customId — the member sees
+                        // "This interaction failed" and previously nothing was logged.
+                        auditOutcome = 'unhandled';
                     }
                 }
             } catch (error) {
+                auditOutcome = 'failed';
                 Logger.error(`Error handling interaction`, error);
-                
+                higgenLog.logFailure({ eventType: 'interaction_error', desc: audit, error });
+
                 // More robust error handling
                 try {
                     const errorMessage = 'There was an error while processing this interaction!';
@@ -364,6 +440,14 @@ class BelugaLeagueBot {
                 } catch (followupError) {
                     Logger.error('Failed to send error message to user', followupError);
                 }
+            } finally {
+                // Always record the interaction — `finally` also runs for the early
+                // `return`s in the routing branches above, so nothing slips through.
+                higgenLog.logInteraction(audit, {
+                    outcome: auditOutcome,
+                    durationMs: Date.now() - auditStartedAt,
+                    note: auditNote,
+                });
             }
         });
 
@@ -393,8 +477,17 @@ class BelugaLeagueBot {
                 // Ignore @everyone/@here pings to prevent spam responses
                 if (message.mentions.everyone) return;
 
-                // Never respond in DMs — server channels only
-                if (!message.guild) return;
+                // DMs go to the DM Center inbox instead of the in-server AI path.
+                // The bot stays silent unless staff enabled AI for that person.
+                if (!message.guild) {
+                    try {
+                        const { captureIncomingDm } = require('./dm/dmInbox');
+                        await captureIncomingDm(message, { aiChat: this.aiChat });
+                    } catch (dmErr) {
+                        Logger.error('DM inbox capture failed', dmErr);
+                    }
+                    return;
+                }
 
                 // AI chat: respond only when the bot is directly mentioned.
                 if (message.mentions.has(this.client.user)) {
@@ -479,6 +572,31 @@ class BelugaLeagueBot {
                     }
                 }
 
+                // AUDIT: the entire transaction workflow (sign / adminsign / drop /
+                // ir / captain / trade / esub / massdrop) and the director-gated
+                // season actions are approved by REACTING, not by clicking — so
+                // without this the most sensitive actions in the league would leave
+                // no trace. Scoped to reactions on the BOT's own messages (that's
+                // what every approval embed is) so casual emoji in general chat
+                // don't flood the log, and skipping the bot's own seed reactions.
+                try {
+                    if (!user?.bot) {
+                        if (reaction.message?.partial) await reaction.message.fetch().catch(() => {});
+                        if (reaction.message?.author?.id === this.client.user?.id) {
+                            const member = reaction.message.guild
+                                ? await reaction.message.guild.members.fetch(user.id).catch(() => null)
+                                : null;
+                            higgenLog.logReaction({
+                                user,
+                                member,
+                                emoji: reaction.emoji?.name || reaction.emoji?.toString() || '?',
+                                message: reaction.message,
+                                guild: reaction.message.guild,
+                            });
+                        }
+                    }
+                } catch { /* auditing must never break an approval */ }
+
                 // Check if it's a transaction message
                 const signCommand = this.commandHandler.getCommand('sign');
                 if (signCommand && signCommand.handleReaction) {
@@ -556,6 +674,16 @@ class BelugaLeagueBot {
             } catch (error) {
                 Logger.error('guildMemberAdd award-role restore failed', error);
             }
+            // Greet them: welcome message + welcome card in the welcome channel AND
+            // as a DM (mirrored into the DM Center). Fires on every join, rejoins
+            // included. Own try/catch so it can't skip the two above.
+            try {
+                if (member.user?.bot) return;
+                const { sendJoinWelcome } = require('./utils/welcome');
+                await sendJoinWelcome(member);
+            } catch (error) {
+                Logger.error('guildMemberAdd welcome failed', error);
+            }
         });
 
         // A member's roles changed while they are IN the guild → keep award-role
@@ -568,6 +696,22 @@ class BelugaLeagueBot {
                 await syncMemberAwardMemory(oldMember, newMember);
             } catch (error) {
                 Logger.error('guildMemberUpdate award-memory sync failed', error);
+            }
+            // Need Rank just landed on them (they verified but aren't in the sheet
+            // yet — roleSync grants it) → DM the "go register" follow-up. This event
+            // is noisy, so bail on the cheap in-memory role check before any DB work;
+            // welcome_log then keeps it to once ever per person.
+            try {
+                if ((newMember || oldMember)?.user?.bot) return;
+                const newRoles = newMember?.roles?.cache;
+                if (!newRoles) return;
+                const { ROLES } = require('./constants/roles');
+                const gained = newRoles.has(ROLES.NEED_RANK) && !oldMember?.roles?.cache?.has(ROLES.NEED_RANK);
+                if (!gained) return;
+                const { sendNeedRankDm } = require('./utils/welcome');
+                await sendNeedRankDm(newMember);
+            } catch (error) {
+                Logger.error('guildMemberUpdate need-rank welcome DM failed', error);
             }
         });
 
@@ -715,6 +859,25 @@ class BelugaLeagueBot {
         Logger.info('AI cleanup routine started');
     }
 
+    /**
+     * Audit-log retention. The log keeps 30 days and prunes itself — the bot is the
+     * always-on service and owns the DB, so it does the sweeping rather than relying
+     * on someone opening the admin page. Runs a minute after boot, then daily.
+     */
+    startAuditLogPrune() {
+        const sweep = async () => {
+            try {
+                const removed = await higgenLog.prune();
+                if (removed) Logger.info(`Audit log pruned: removed ${removed} entries older than ${higgenLog.RETENTION_DAYS} days`);
+            } catch (error) {
+                Logger.error('Audit log prune failed', error);
+            }
+        };
+        setTimeout(sweep, 60 * 1000).unref?.();
+        this.auditPruneInterval = setInterval(sweep, 24 * 60 * 60 * 1000);
+        Logger.info('Audit log retention sweep started (30-day window)');
+    }
+
     async expireAllTransactions() {
         Logger.info('Expiring all pending transactions...');
         const transactionCommands = [
@@ -768,7 +931,20 @@ class BelugaLeagueBot {
             clearInterval(this.aiCleanupInterval);
             Logger.info('AI cleanup interval cleared');
         }
-        
+
+        // Clear the audit retention sweep and drain any buffered log rows, so a
+        // restart (or a crash-triggered shutdown) doesn't lose the last few seconds
+        // of the record — which is exactly when the interesting entries happen.
+        if (this.auditPruneInterval) {
+            clearInterval(this.auditPruneInterval);
+        }
+        try {
+            await higgenLog.flush();
+        } catch (error) {
+            Logger.error('Failed to flush the audit log on shutdown', error);
+        }
+
+
         if (this.healthServer) {
             Logger.info('Closing health server...');
             this.healthServer.close();

@@ -158,8 +158,10 @@ async function checkClosedWeeks(client) {
                 }
                 try {
                     const { refreshPowerRankings } = require('./powerRankings');
+                    // Snapshot THIS week specifically — closing week 4 must not
+                    // overwrite week 3, and trend then reads off week 3.
                     // eslint-disable-next-line no-await-in-loop
-                    await refreshPowerRankings(w.season_id, division);
+                    await refreshPowerRankings(w.season_id, division, w.week_number);
                 } catch (err) {
                     Logger.error(`Power-rankings refresh failed for ${division}`, err);
                 }

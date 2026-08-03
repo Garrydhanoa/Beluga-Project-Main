@@ -2,6 +2,7 @@ const { SlashCommandBuilder } = require('discord.js');
 const { getTeamRoster, createRosterEmbed, getLogoAttachment } = require('../utils/rosterManager');
 const { findTeam, teamAutocomplete } = require('../utils/teamRoles');
 const { getTeamChoices, getDivisionChoices } = require('../constants/roles');
+const { siteFooter } = require('../utils/siteFooter');
 const Logger = require('../utils/logger');
 
 module.exports = {
@@ -53,8 +54,10 @@ module.exports = {
             const dbTeam = await findTeam(teamName, division).catch(() => null);
             const logoAttachment = await getLogoAttachment(dbTeam?.id, teamName);
 
-            // Send roster
-            const replyOptions = { embeds: [embed] };
+            // Send roster. The footer goes in the message CONTENT (not the embed)
+            // so createRosterEmbed stays untouched — it's shared with the
+            // auto-posted roster messages.
+            const replyOptions = { content: siteFooter(interaction.guild), embeds: [embed] };
             if (logoAttachment) {
                 replyOptions.files = [logoAttachment];
             }

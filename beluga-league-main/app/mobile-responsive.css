@@ -19,8 +19,14 @@
     padding-right: 0.875rem !important;
   }
   
-  /* Improve readability on small screens */
-  p, li, span, div {
+  /* Improve readability on small screens.
+     Opt-out: anything inside [data-dense] keeps its own type scale. Dense UIs
+     (the admin panel) rely on 9-11px labels and large numerals; forcing every
+     element to 16px inverts their hierarchy and pushes cards off-screen. */
+  p:not([data-dense] *),
+  li:not([data-dense] *),
+  span:not([data-dense] *),
+  div:not([data-dense] *) {
     font-size: 1rem !important;
     line-height: 1.5 !important;
   }

@@ -4,6 +4,7 @@ import { ensureLeagueSchema } from '../../../lib/leagueSchema'
 import { getActiveSeason } from '../../../lib/leagueStore'
 import { getSalaryMap } from '../../../lib/salarySheet'
 import { getMemberMap } from '../../../lib/discordMembers'
+import { pickPrimaryRoster, primaryDivision } from '../../../lib/primaryDivision'
 
 export const dynamic = 'force-dynamic'
 
@@ -60,7 +61,26 @@ export async function GET() {
     }
   }
 
+  // Salary + division enrichment from the league sheet (keyed by Discord ID).
+  const salaryMap = await getSalaryMap().catch(() => new Map())
+
+  // Which division each player's stats say they played in this season — the
+  // tie-breaker when the sheet has no League for them.
+  const statsDivisionByDiscord = new Map()
+  if (activeSeasonId) {
+    const sd = await query(`
+      SELECT discord_id, division FROM stats_player_season
+      WHERE season_id = $1 AND is_playoff = FALSE
+    `, [activeSeasonId]).catch(() => ({ rows: [] }))
+    for (const row of sd.rows) statsDivisionByDiscord.set(String(row.discord_id), row.division)
+  }
+
   // Current rosters for the active season (if any).
+  //
+  // A GM is rostered on ALL THREE of their franchise's teams, so this collects
+  // rows into a LIST per player and then picks one. It used to `Map.set` in a
+  // loop over an unordered query, which meant a GM's division was whatever row
+  // Postgres happened to return last.
   const currentByDiscord = new Map()
   if (activeSeasonId) {
     const r = await query(`
@@ -71,18 +91,34 @@ export async function GET() {
       WHERE rm.season_id = $1 AND rm.is_active = TRUE AND t.is_active = TRUE
         AND (f.is_active IS DISTINCT FROM FALSE)
     `, [activeSeasonId])
+
+    const rowsByDiscord = new Map()
     for (const row of r.rows) {
-      currentByDiscord.set(row.discord_id, {
+      if (!rowsByDiscord.has(row.discord_id)) rowsByDiscord.set(row.discord_id, [])
+      rowsByDiscord.get(row.discord_id).push({
         teamId: row.team_id,
         teamName: row.team_name,
         division: row.division,
         role: row.role,
       })
     }
+    for (const [discordId, rows] of rowsByDiscord.entries()) {
+      const signals = {
+        sheetLeague: salaryMap.get(String(discordId))?.league || null,
+        statsDivision: statsDivisionByDiscord.get(String(discordId)) || null,
+      }
+      const picked = pickPrimaryRoster(rows, signals)
+      if (!picked) continue
+      // The team pick is always deterministic, but the DIVISION may be genuinely
+      // unknown (a staff GM on all three rosters who has never played). Report
+      // those separately, or this page contradicts the profile page.
+      currentByDiscord.set(discordId, {
+        ...picked,
+        resolvedDivision: primaryDivision({ ...signals, rosterRows: rows }),
+      })
+    }
   }
 
-  // Salary + division enrichment from the league sheet (keyed by Discord ID).
-  const salaryMap = await getSalaryMap().catch(() => new Map())
   // Discord identity (display name + avatar) — the single source of names.
   const memberMap = await getMemberMap().catch(() => new Map())
 
@@ -102,7 +138,7 @@ export async function GET() {
       lastSeen: row.last_seen,
       currentTeam: current?.teamName || null,
       currentTeamId: current?.teamId || null,
-      currentDivision: current?.division || sheet?.league || null,
+      currentDivision: current ? current.resolvedDivision : (sheet?.league || null),
       role: current?.role || null,
       isFreeAgent: !current,
       salary: sheet?.salary ?? null,
@@ -127,7 +163,7 @@ export async function GET() {
       lastSeen: null,
       currentTeam: current?.teamName || sheet.sheetTeam || null,
       currentTeamId: current?.teamId || null,
-      currentDivision: current?.division || sheet.league || null,
+      currentDivision: current ? current.resolvedDivision : (sheet.league || null),
       role: current?.role || null,
       isFreeAgent: !current,
       salary: sheet.salary ?? null,

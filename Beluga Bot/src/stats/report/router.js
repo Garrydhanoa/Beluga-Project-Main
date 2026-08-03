@@ -7,6 +7,7 @@
 const ids = require('./ids');
 const flow = require('./flow');
 const Logger = require('../../utils/logger');
+const higgenLog = require('../../utils/higgenLog');
 
 const HANDLERS = {
     start: (i) => flow.startReport(i),
@@ -26,11 +27,30 @@ const HANDLERS = {
 async function route(interaction) {
     const { action, parts } = ids.parse(interaction.customId);
     const handler = HANDLERS[action];
-    if (!handler) return;
+    if (!handler) {
+        higgenLog.markSubRouterOutcome(interaction, {
+            outcome: 'unhandled',
+            note: `No handler is registered for the report action "${action}".`,
+        });
+        return;
+    }
     try {
         await handler(interaction, parts);
     } catch (err) {
-        if (err?.code === 10062 || err?.code === 40060) return; // expired / already acknowledged
+        // Errors are caught here and never rethrown, so bot.js can't see them —
+        // tell the audit log directly or a crashed report would read as a success.
+        if (err?.code === 10062 || err?.code === 40060) {
+            higgenLog.markSubRouterOutcome(interaction, {
+                outcome: 'expired',
+                note: 'The button was clicked after its interaction had timed out.',
+            });
+            return; // expired / already acknowledged
+        }
+        higgenLog.markSubRouterOutcome(interaction, {
+            outcome: 'failed',
+            note: `The report step "${action}" threw an error.`,
+            error: err,
+        });
         Logger.error(`report router error on '${action}'`, err);
         try {
             if (interaction.isRepliable?.() && !interaction.replied && !interaction.deferred) {

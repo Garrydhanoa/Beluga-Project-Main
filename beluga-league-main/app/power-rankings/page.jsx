@@ -46,19 +46,27 @@ function TrendChip({ trend }) {
 export default function PowerRankingsPage() {
   const { season } = useSeason()
   const [division, setDivision] = useState('Majors')
+  const [week, setWeek] = useState(null) // null = latest stored week
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
 
+  // Changing season invalidates the week — week 6 of S10 is not week 6 of S9.
+  useEffect(() => { setWeek(null) }, [season])
+
   useEffect(() => {
     setLoading(true)
-    fetch(`/api/power-rankings?${seasonQuerySuffix(season).replace(/^&/, '')}`, { cache: 'no-store' })
+    const weekQs = week != null ? `&week=${week}` : ''
+    fetch(`/api/power-rankings?${seasonQuerySuffix(season).replace(/^&/, '')}${weekQs}`, { cache: 'no-store' })
       .then((r) => r.json())
       .then((d) => setData(d))
       .catch(() => setData(null))
       .finally(() => setLoading(false))
-  }, [season])
+  }, [season, week])
 
   const seasonNum = data?.season?.season_number
+  const activeWeek = data?.week ?? null
+  // Guard the list — a malformed payload must not throw inside render.
+  const weeks = useMemo(() => (Array.isArray(data?.weeks) ? data.weeks : []), [data])
   const teams = useMemo(() => data?.rankings?.team?.[division] || [], [data, division])
   const players = useMemo(() => data?.rankings?.player?.[division] || [], [data, division])
   const divisionLabel = DIVISIONS.find((d) => d.key === division)?.label || division
@@ -74,7 +82,8 @@ export default function PowerRankingsPage() {
             <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-blue-500/10 border border-blue-400/30 backdrop-blur-sm mb-6">
               <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
               <span className="text-xs text-blue-200 font-medium tracking-[0.2em] uppercase">
-                {seasonNum ? `Season ${seasonNum} · Power Rankings` : 'Power Rankings'}
+                {[seasonNum ? `Season ${seasonNum}` : null, activeWeek != null ? `Week ${activeWeek}` : null, 'Power Rankings']
+                  .filter(Boolean).join(' · ')}
               </span>
             </div>
             <h1 className="text-5xl sm:text-6xl md:text-7xl font-black tracking-tight mb-4 leading-[0.95]">
@@ -84,7 +93,9 @@ export default function PowerRankingsPage() {
               </span>
             </h1>
             <p className="text-base md:text-lg text-blue-100/70 max-w-xl mx-auto">
-              Form-based team & player rankings — recent series and per-game performance, with movement vs the last ranking.
+              {activeWeek != null
+                ? `Form over the last 5 series up to week ${activeWeek}, recency-weighted, with movement vs the previous week. A score of 100 is an exactly average showing for that division.`
+                : 'Form over the last 5 series, recency-weighted, with movement vs the previous week. A score of 100 is an exactly average showing for that division.'}
             </p>
           </div>
         </FadeIn>
@@ -113,6 +124,33 @@ export default function PowerRankingsPage() {
             })}
           </div>
         </FadeIn>
+
+        {weeks.length > 1 && (
+          <FadeIn delay={0.15}>
+            <div className="mt-5 flex flex-wrap gap-2 justify-center items-center">
+              <span className="text-[11px] font-bold tracking-[0.2em] uppercase text-blue-200/50 mr-1">Week</span>
+              {/* Ascending so the timeline reads left to right; the API sends newest first. */}
+              {[...weeks].sort((a, b) => a - b).map((w) => {
+                const active = activeWeek === w
+                return (
+                  <button
+                    key={w}
+                    onClick={() => setWeek(w)}
+                    aria-label={`Show week ${w} rankings`}
+                    aria-pressed={active}
+                    className={`min-w-[2.5rem] px-3 py-1.5 rounded-full font-bold text-xs transition-all ${
+                      active
+                        ? 'bg-blue-500 text-white shadow-[0_0_20px_rgba(59,130,246,0.45)]'
+                        : 'bg-white/5 hover:bg-white/10 border border-white/15 hover:border-blue-400/50 text-white/60 hover:text-blue-200'
+                    }`}
+                  >
+                    {w}
+                  </button>
+                )
+              })}
+            </div>
+          </FadeIn>
+        )}
       </section>
 
       <section className="container mx-auto px-4 pb-24 max-w-6xl">

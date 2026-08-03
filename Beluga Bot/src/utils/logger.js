@@ -9,25 +9,22 @@ const colors = {
   cyan: '\x1b[36m',
 };
 
-// Best-effort mirror of bot errors into the shared `site_logs` table so the
+// Best-effort mirror of bot errors into the shared `higgen_logs` table so the
 // website's hidden /higgenlogs page shows them (no more digging in Railway logs).
-// Lazy-require to avoid a circular import at startup (database.js pulls Logger).
-// Guarded by `logging` so a DB failure inside here can't recurse forever.
+// Because EVERY error in the bot already funnels through Logger.error, this one
+// hook gives the Fails tab complete coverage: unhandledRejection, uncaughtException,
+// the Discord client error event, and every command's own catch block.
+//
+// higgenLog buffers and lazy-requires the database itself, so this stays cheap and
+// can't deadlock on the logger↔database circular import. Guarded by `logging` so a
+// failure inside the mirror can never recurse back into Logger.
 let logging = false;
-function mirrorToSiteLogs(level, message, error) {
+function mirrorToAuditLog(level, message, error) {
   if (logging) return;
   logging = true;
   try {
-    const { pool, isDatabaseAvailable } = require('./database');
-    const up = typeof isDatabaseAvailable === 'function' ? isDatabaseAvailable() : isDatabaseAvailable;
-    if (up) {
-      const raw = error ? (error.stack || error.message || String(error)) : null;
-      pool.query(
-        `INSERT INTO site_logs (source, level, kind, summary, detail) VALUES ('bot', $1, 'error', $2, $3)`,
-        [level, String(message || 'bot error').slice(0, 500), raw ? raw.slice(0, 4000) : null]
-      ).catch(() => {});
-    }
-  } catch { /* table/db may not exist yet — never block logging */ }
+    require('./higgenLog').logLoggerError(level, message, error);
+  } catch { /* audit table may not exist yet — never block logging */ }
   finally { logging = false; }
 }
 
@@ -49,7 +46,7 @@ class Logger {
     if (error) {
       console.error(`${colors.red}${error.stack || error}${colors.reset}`);
     }
-    mirrorToSiteLogs('error', message, error);
+    mirrorToAuditLog('error', message, error);
   }
 
   static debug(message) {

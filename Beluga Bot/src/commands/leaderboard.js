@@ -1,6 +1,7 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { LeagueDB } = require('../utils/database');
 const { getDivisionLeaders, getLifetimeLeaders, buildLeaderboardImage } = require('../stats/leaderboardCard');
+const { siteFooter } = require('../utils/siteFooter');
 const Logger = require('../utils/logger');
 
 /**
@@ -42,7 +43,9 @@ module.exports = {
             // League-wide all-time (lifetime) card.
             const lifeLeaders = await getLifetimeLeaders();
             const lifeImage = await buildLeaderboardImage(lifeLeaders, { title: 'All-Time · Lifetime', scopeLabel: 'All-Time' });
+            // The all-time card is always the last message, so it carries the footer.
             await interaction.channel.send({
+                content: siteFooter(interaction.guild),
                 files: [{ attachment: lifeImage, name: 'alltime-leaderboard.png' }],
             });
             posted += 1;

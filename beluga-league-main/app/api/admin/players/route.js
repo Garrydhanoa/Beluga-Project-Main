@@ -5,6 +5,7 @@ import { query } from '../../../../lib/db'
 import { getActiveSeason } from '../../../../lib/leagueStore'
 import { getMemberMap } from '../../../../lib/discordMembers'
 import { getSalaryMap } from '../../../../lib/salarySheet'
+import { pickPrimaryRoster, primaryDivision } from '../../../../lib/primaryDivision'
 
 export const dynamic = 'force-dynamic'
 
@@ -99,6 +100,11 @@ export async function GET(request) {
   `)
 
   // Look up current roster slot (if any) for each player.
+  //
+  // A GM is rostered on ALL THREE of their franchise's teams, so rows are
+  // collected per player and then resolved to one. The previous `Map.set` in a
+  // loop over an unordered query kept whichever row came back last, which also
+  // mis-filed GMs under the `division` filter below.
   const currentByDiscord = new Map()
   if (activeSeasonId) {
     const cur = await query(`
@@ -107,12 +113,39 @@ export async function GET(request) {
       JOIN teams t ON t.id = rm.team_id
       WHERE rm.season_id = $1 AND rm.is_active = TRUE AND t.is_active = TRUE
     `, [activeSeasonId])
+
+    const statsDivisionByDiscord = new Map()
+    const sd = await query(`
+      SELECT discord_id, division FROM stats_player_season
+      WHERE season_id = $1 AND is_playoff = FALSE
+    `, [activeSeasonId]).catch(() => ({ rows: [] }))
+    for (const row of sd.rows) statsDivisionByDiscord.set(String(row.discord_id), row.division)
+
+    const sheetMap = await getSalaryMap().catch(() => new Map())
+    const rowsByDiscord = new Map()
     for (const row of cur.rows) {
-      currentByDiscord.set(row.discord_id, {
+      if (!rowsByDiscord.has(row.discord_id)) rowsByDiscord.set(row.discord_id, [])
+      rowsByDiscord.get(row.discord_id).push({
         teamId: row.team_id,
         teamName: row.team_name,
         division: row.division,
         role: row.role,
+      })
+    }
+    for (const [discordId, rows] of rowsByDiscord.entries()) {
+      const signals = {
+        sheetLeague: sheetMap.get(String(discordId))?.league || null,
+        statsDivision: statsDivisionByDiscord.get(String(discordId)) || null,
+      }
+      const picked = pickPrimaryRoster(rows, signals)
+      if (!picked) continue
+      // Team pick is always deterministic; the DIVISION can be genuinely unknown
+      // for a staff GM who has never played. Keep them distinct so the division
+      // filter doesn't file them somewhere arbitrary.
+      currentByDiscord.set(discordId, {
+        ...picked,
+        division: primaryDivision({ ...signals, rosterRows: rows }),
+        resolvedDivision: primaryDivision({ ...signals, rosterRows: rows }),
       })
     }
   }

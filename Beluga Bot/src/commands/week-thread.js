@@ -1,9 +1,17 @@
-const { SlashCommandBuilder, EmbedBuilder, ChannelType, PermissionFlagsBits, ThreadAutoArchiveDuration } = require('discord.js');
+const {
+    SlashCommandBuilder, EmbedBuilder, ChannelType, PermissionFlagsBits, ThreadAutoArchiveDuration,
+    ActionRowBuilder, ButtonBuilder, ButtonStyle,
+} = require('discord.js');
 const Logger = require('../utils/logger');
+const {
+    getUnreportedMatches, countWeekThreads, formatUnreportedList, pingUnreportedThreads,
+} = require('../stats/weekReportCheck');
 // Only the fixed roles remain from constants (division captains, salary crew).
 // Team/GM/NP roles are pulled from the database (teams + franchises).
 const { ROLES } = require('../constants/roles');
 const { pool, isDatabaseAvailable, LeagueDB } = require('../utils/database');
+// Week rollover is 9:00 AM Monday US Eastern, not UTC midnight.
+const { currentLeagueWeek, weekOpensAt, formatEastern } = require('../utils/leagueWeek');
 
 // Channel ID for match threads
 const MATCHES_CHANNEL_ID = '1444621891275985037';
@@ -559,13 +567,23 @@ async function materializeWeekFromDb(seasonId, weekNumber) {
 }
 
 let lastAutoOpenCheck = 0;
-const AUTO_OPEN_INTERVAL_MS = 30 * 60 * 1000; // re-check at most every 30 min
+// Re-check every 5 min. The open time is 9:00 AM Monday Eastern, and a 30-minute
+// throttle meant the threads could land as late as 9:29; the check is one cached
+// season lookup plus one indexed SELECT, so tightening it costs effectively nothing.
+const AUTO_OPEN_INTERVAL_MS = 5 * 60 * 1000;
 
 /**
  * DB-driven auto-open: compute the current week from the active season's
  * start_date and materialize that week's rows from the DB schedule if they don't
- * exist yet. processPendingWeekThreads then creates the Discord threads. Replaces
- * the old hardcoded-date timer.
+ * exist yet. processPendingWeekThreads then creates the Discord threads.
+ *
+ * TIMING: the week rolls over at 9:00 AM US EASTERN on Monday (see
+ * utils/leagueWeek.js). This used to be plain UTC date math, and Railway runs in
+ * UTC — so the week advanced at 00:00 UTC Monday, i.e. 8:00 PM SUNDAY Eastern in
+ * summer, and threads opened a day early by the league's own clock.
+ *
+ * Only the "which week is it" gate changed here; the creation path underneath
+ * (materializeWeekFromDb -> processPendingWeekThreads) is untouched.
  */
 async function autoOpenCurrentWeek(client) {
     if (!isDatabaseAvailable()) return;
@@ -577,15 +595,8 @@ async function autoOpenCurrentWeek(client) {
         const season = await LeagueDB.getActiveSeason();
         if (!season || !season.start_date) return;
 
-        // Week number from start_date (UTC, matches the website's computeWeekNumber).
-        const start = new Date(season.start_date);
-        const startUTC = Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate());
-        const ref = new Date();
-        const refUTC = Date.UTC(ref.getUTCFullYear(), ref.getUTCMonth(), ref.getUTCDate());
-        const diffMs = refUTC - startUTC;
-        if (diffMs < 0) return; // season hasn't started
-        const currentWeek = Math.floor(diffMs / (7 * 24 * 60 * 60 * 1000)) + 1;
-        if (currentWeek < 1) return;
+        const currentWeek = currentLeagueWeek(season.start_date);
+        if (!currentWeek || currentWeek < 1) return; // before 9am ET on opening Monday
 
         // Only materialize if this week has no rows yet for this season.
         const existing = await pool.query(
@@ -596,7 +607,11 @@ async function autoOpenCurrentWeek(client) {
 
         const inserted = await materializeWeekFromDb(season.id, currentWeek);
         if (inserted > 0) {
-            Logger.success(`Auto-opened Week ${currentWeek} (season ${season.season_number}) — materialized ${inserted} matchup(s) from the DB schedule`);
+            const opened = weekOpensAt(season.start_date, currentWeek);
+            Logger.success(
+                `Auto-opened Week ${currentWeek} (season ${season.season_number}) — materialized ${inserted} matchup(s) from the DB schedule`
+                + ` [window opened ${formatEastern(opened)}]`
+            );
         }
     } catch (err) {
         Logger.error('autoOpenCurrentWeek failed', err);
@@ -889,14 +904,55 @@ async function processWeekThreadActions(client) {
     const guild = client.guilds.cache.first();
     for (const row of rows) {
         try {
-            if (row.action !== 'delete') {
+            // Website blocked a delete because of unreported series and asked us
+            // to nudge salary crew in exactly those threads.
+            if (row.action === 'ping_unreported') {
+                const season = await LeagueDB.getActiveSeason();
+                const unreported = await getUnreportedMatches(row.week_number, season?.id ?? null);
+                const { pinged, failed } = await pingUnreportedThreads(
+                    client, unreported, row.week_number, row.requested_by_username || 'Website Admin'
+                );
+                await pool.query(
+                    `UPDATE week_thread_actions SET status = 'fulfilled', result = $2, fulfilled_at = CURRENT_TIMESTAMP WHERE id = $1`,
+                    [row.id, `pinged ${pinged} of ${unreported.length} unreported thread(s)${failed ? `, ${failed} failed` : ''}`]
+                );
+                continue;
+            }
+
+            if (row.action !== 'delete' && row.action !== 'force_delete') {
                 await pool.query(
                     `UPDATE week_thread_actions SET status = 'failed', result = $2, fulfilled_at = CURRENT_TIMESTAMP WHERE id = $1`,
                     [row.id, `unknown action ${row.action}`]
                 );
                 continue;
             }
-            const result = await deleteWeekThreads(guild, row.week_number, client, row.requested_by_username || 'Website Admin');
+
+            // Same gate as the slash command: a plain 'delete' from the website
+            // is refused while any series is unreported, and salary crew get
+            // pinged in exactly those threads. 'force_delete' is the website's
+            // confirmed second step and skips the gate.
+            if (row.action === 'delete') {
+                const season = await LeagueDB.getActiveSeason();
+                const unreported = await getUnreportedMatches(row.week_number, season?.id ?? null);
+                if (unreported.length) {
+                    const { pinged } = await pingUnreportedThreads(
+                        client, unreported, row.week_number, row.requested_by_username || 'Website Admin'
+                    );
+                    await pool.query(
+                        `UPDATE week_thread_actions SET status = 'failed', result = $2, fulfilled_at = CURRENT_TIMESTAMP WHERE id = $1`,
+                        [row.id, `blocked: ${unreported.length} series unreported (pinged salary crew in ${pinged} thread(s))`]
+                    );
+                    Logger.warning(
+                        `Website delete of week ${row.week_number} blocked — ${unreported.length} series unreported`
+                    );
+                    continue;
+                }
+            }
+
+            const result = await deleteWeekThreads(
+                guild, row.week_number, client,
+                `${row.requested_by_username || 'Website Admin'}${row.action === 'force_delete' ? ' (forced)' : ''}`
+            );
             await pool.query(
                 `UPDATE week_thread_actions SET status = $2, result = $3, fulfilled_at = CURRENT_TIMESTAMP WHERE id = $1`,
                 [
@@ -1054,6 +1110,47 @@ module.exports = {
                 });
 
             } else if (action === 'delete') {
+                // Deleting a week's threads IS how the league closes the week, and
+                // a deleted thread is the only place its series could still be
+                // reported. Block on anything unreported, say exactly what, and
+                // ping salary crew in those threads.
+                const season = await LeagueDB.getActiveSeason();
+                const unreported = await getUnreportedMatches(weekNumber, season?.id ?? null);
+
+                if (unreported.length) {
+                    const total = await countWeekThreads(weekNumber, season?.id ?? null);
+                    await interaction.editReply({
+                        content: `⏳ Week ${weekNumber} has unreported series — notifying salary crew…`,
+                    });
+
+                    const { pinged } = await pingUnreportedThreads(
+                        interaction.client, unreported, weekNumber, interaction.user.username
+                    );
+
+                    const embed = new EmbedBuilder()
+                        .setColor(0xE74C3C)
+                        .setTitle(`⚠️ Week ${weekNumber} not deleted — ${unreported.length} series unreported`)
+                        .setDescription(
+                            `**${total - unreported.length} of ${total}** series are reported.\n\n` +
+                            `${formatUnreportedList(unreported)}\n\n` +
+                            `Pinged salary crew in **${pinged}** of those thread(s).`
+                        )
+                        .setFooter({ text: 'Deleting now would destroy the only place these series can be reported.' });
+
+                    const row = new ActionRowBuilder().addComponents(
+                        new ButtonBuilder()
+                            .setCustomId(`wt:forcedel:${weekNumber}`)
+                            .setLabel(`Delete Week ${weekNumber} anyway`)
+                            .setStyle(ButtonStyle.Danger),
+                        new ButtonBuilder()
+                            .setCustomId('wt:cancel')
+                            .setLabel('Cancel')
+                            .setStyle(ButtonStyle.Secondary),
+                    );
+
+                    return await interaction.followUp({ embeds: [embed], components: [row], ephemeral: true });
+                }
+
                 await interaction.editReply({
                     content: `⏳ Deleting Week ${weekNumber} match threads...`,
                 });
@@ -1086,6 +1183,54 @@ module.exports = {
                 Logger.error('Failed to send error message', followupError);
             }
         }
+    },
+
+    /**
+     * Step 2 of the guarded delete. The command blocks and lists the unreported
+     * series; this runs only when salary crew then clicks the red confirm.
+     * customId: `wt:forcedel:<week>` / `wt:cancel` — routed from bot.js.
+     */
+    async handleButton(interaction) {
+        const parts = String(interaction.customId).split(':');
+        if (parts[0] !== 'wt') return false;
+
+        if (!interaction.member?.roles?.cache?.has(ROLES.SALARY_CREW)) {
+            await interaction.reply({ content: '❌ Only Salary Crew can do that.', flags: 64 }).catch(() => {});
+            return true;
+        }
+
+        if (parts[1] === 'cancel') {
+            await interaction.update({
+                content: '✅ Cancelled — nothing was deleted.',
+                embeds: [], components: [],
+            }).catch(() => {});
+            return true;
+        }
+
+        if (parts[1] === 'forcedel') {
+            const weekNumber = Number(parts[2]);
+            await interaction.update({
+                content: `⏳ Force-deleting Week ${weekNumber} match threads…`,
+                embeds: [], components: [],
+            }).catch(() => {});
+
+            const result = await deleteWeekThreads(
+                interaction.guild, weekNumber, interaction.client, `${interaction.user.username} (forced)`
+            );
+
+            Logger.warning(
+                `Week ${weekNumber} force-deleted by ${interaction.user.tag} despite unreported series`
+            );
+            await interaction.followUp({
+                content: result.success
+                    ? `⚠️ Force-deleted **${result.deletedCount}** thread(s) for Week ${weekNumber} with series still unreported. Transcripts were saved.`
+                    : `❌ Failed to delete threads: ${result.error}`,
+                ephemeral: true,
+            }).catch(() => {});
+            return true;
+        }
+
+        return false;
     },
 
     // Export functions for use in bot.js

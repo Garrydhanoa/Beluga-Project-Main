@@ -5,6 +5,7 @@ import { getSalaryMap } from '../../../../lib/salarySheet'
 import { getMemberMap } from '../../../../lib/discordMembers'
 import { getPlayerStatsBundle } from '../../../../lib/belugaStats'
 import { getActiveSeason } from '../../../../lib/leagueStore'
+import { pickPrimaryRoster, primaryDivision } from '../../../../lib/primaryDivision'
 
 export const dynamic = 'force-dynamic'
 
@@ -86,8 +87,11 @@ export async function GET(_request, { params }) {
     JOIN teams t ON t.id = rm.team_id
     LEFT JOIN seasons s ON s.id = rm.season_id
     WHERE rm.discord_id = $1
-    ORDER BY s.season_number DESC NULLS LAST, t.division, rm.updated_at DESC
+    ORDER BY s.season_number DESC NULLS LAST, rm.updated_at DESC
   `, [discordId])
+  // NOTE: no `t.division` in the ORDER BY. It used to be there, and because
+  // 'AA' < 'AAA' < 'Majors' alphabetically it silently decided which team a GM
+  // (who is rostered on all three) belonged to. pickPrimaryRoster decides now.
 
   // Step 4: Per-season stats — new Ballchasing-based stats system (keyed by
   // discord id). Falls back to legacy player_records if the player has no new
@@ -134,9 +138,19 @@ export async function GET(_request, { params }) {
   // old team while actually a free agent" bug (a dropped player kept their team).
   const activeSeason = await getActiveSeason()
   const activeSeasonId = activeSeason?.id || null
-  const currentRoster = (rosterRes.rows || []).find(
+  // A GM holds an active slot on ALL THREE of their franchise's teams, so this
+  // is a list, not a single row — pickPrimaryRoster chooses which one they
+  // actually belong to (sheet League first). Picking the first row here is
+  // exactly the bug that made every GM's profile read AA.
+  const activeRosterRows = (rosterRes.rows || []).filter(
     (r) => r.roster_active && r.season_id === activeSeasonId && r.team_active !== false
-  ) || null
+  )
+  const statsDivision = (belugaStats.seasons || [])
+    .find((s) => !s.isPlayoff && s.seasonId === activeSeasonId)?.division || null
+  const currentRoster = pickPrimaryRoster(activeRosterRows, {
+    sheetLeague: sheet?.league || null,
+    statsDivision,
+  })
   // Most-recent stint of any season — used ONLY for last-known division display.
   const lastStint = (rosterRes.rows || [])[0] || null
 
@@ -150,6 +164,11 @@ export async function GET(_request, { params }) {
     `User ${String(discordId).slice(-4)}`
 
   return NextResponse.json({
+    // The active season, so the profile can label which stat set it is showing
+    // and scope "this season" to the same season the player DIRECTORY uses.
+    activeSeason: activeSeason
+      ? { id: activeSeason.id, seasonNumber: activeSeason.season_number ?? activeSeason.seasonNumber ?? null }
+      : null,
     player: {
       discordId,
       displayName: resolvedName,
@@ -158,7 +177,14 @@ export async function GET(_request, { params }) {
       inGuild: member?.isInGuild ?? null,
       lastSeen: identity?.last_seen || null,
       salary: sheet?.salary ?? null,
-      division: currentRoster?.division || lastStint?.division || sheet?.league || null,
+      // Sheet League wins over any roster row: it's the only thing that gets a
+      // GM (rostered in all three divisions) right, and it still resolves for a
+      // free agent with no current roster slot at all.
+      division: primaryDivision({
+        sheetLeague: sheet?.league || null,
+        statsDivision,
+        rosterRows: activeRosterRows.length ? activeRosterRows : (lastStint ? [lastStint] : []),
+      }),
       eligible: sheet?.eligible ?? null,
       currentTeam: currentRoster?.team_name || null,
       currentTeamId: currentRoster?.team_id || null,
@@ -187,6 +213,7 @@ export async function GET(_request, { params }) {
       ? belugaStats.seasons
           .filter((s) => !s.isPlayoff)
           .map((s) => ({
+            seasonId: s.seasonId,
             seasonNumber: s.seasonNumber,
             division: s.division,
             teamName: s.teamName,

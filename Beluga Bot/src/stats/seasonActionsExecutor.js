@@ -6,7 +6,9 @@
  *  reset:  archive the active season → create + activate the new one → copy teams
  *          (division, name, roster_limit, slogan, logo, franchise_id, all four
  *          discord_*_role_id) with EMPTY rosters → copy season_config → NO schedule.
- *          Standings / power rankings / stats start fresh (no rows for the new id).
+ *          Standings / power rankings / stats start fresh (no rows for the new id),
+ *          and so do e-sub counts: team_esubs is keyed by (season_id, team_id) and
+ *          nothing is carried over, so every team starts the season at 0/limit.
  *          Open week threads from the old season are marked closed so late captain
  *          reports can't write into the archived season.
  *  delete: delete per-season stat aggregates (keep lifetime) → DELETE the season
@@ -74,13 +76,29 @@ async function executeReset(row) {
     }
 
     if (p.copyConfig !== false && oldId) {
+      // esub_limit rides along with the rest of the config; the USAGE below does
+      // not. The column is website-owned, so probe for it first — a failed query
+      // would abort the whole transaction, so a try/catch fallback is no good here.
+      const hasEsubLimit = await dbClient.query(
+        `SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'season_config' AND column_name = 'esub_limit'`
+      );
+      const cols = hasEsubLimit.rowCount
+        ? 'teams_per_division, weeks, onfield_caps, esub_limit'
+        : 'teams_per_division, weeks, onfield_caps';
       await dbClient.query(
-        `INSERT INTO season_config (season_id, teams_per_division, weeks, onfield_caps)
-         SELECT $1, teams_per_division, weeks, onfield_caps FROM season_config WHERE season_id = $2
+        `INSERT INTO season_config (season_id, ${cols})
+         SELECT $1, ${cols} FROM season_config WHERE season_id = $2
          ON CONFLICT (season_id) DO NOTHING`,
         [newId, oldId]
       );
     }
+
+    // E-sub usage NEVER carries into a new season. The (season_id, team_id) key
+    // already guarantees this — the new season's teams are new rows — but the
+    // delete makes the rule explicit and covers a re-run against a season id
+    // that somehow already has rows.
+    await dbClient.query('DELETE FROM team_esubs WHERE season_id = $1', [newId]);
 
     await dbClient.query('COMMIT');
   } catch (err) {

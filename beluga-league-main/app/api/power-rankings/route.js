@@ -12,6 +12,10 @@ export const dynamic = 'force-dynamic'
  *
  * Season selection: ?season=<number> (site-wide archive picker) is preferred;
  * legacy ?seasonId=<id> is still honored. Absent/'active' → the active season.
+ *
+ * Week selection: ?week=<number>. Rankings are per-week snapshots; omitting the
+ * param returns the most recent stored week. `weeks` lists what else exists so
+ * the page can offer the history.
  */
 export async function GET(request) {
   await ensureLeagueSchema()
@@ -27,11 +31,19 @@ export async function GET(request) {
   }
   const seasonId = season?.id || null
 
-  const rankings = seasonId ? await getRankingsForSeason(seasonId) : { team: { Majors: [], AAA: [], AA: [] }, player: { Majors: [], AAA: [], AA: [] } }
+  const weekParam = searchParams.get('week')
+  const weekNum = Number(weekParam)
+  const week = Number.isInteger(weekNum) && weekNum >= 1 ? weekNum : null
+
+  const rankings = seasonId
+    ? await getRankingsForSeason(seasonId, week)
+    : { team: { Majors: [], AAA: [], AA: [] }, player: { Majors: [], AAA: [], AA: [] }, week: null, weeks: [] }
 
   return NextResponse.json({
     season,
     seasonId,
-    rankings, // { team: {Majors:[],AAA:[],AA:[]}, player: {...} }
+    week: rankings.week,   // the week actually served
+    weeks: rankings.weeks, // every stored week, newest first
+    rankings,              // { team: {Majors:[],AAA:[],AA:[]}, player: {...} }
   })
 }
