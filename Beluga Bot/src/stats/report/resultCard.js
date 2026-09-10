@@ -77,6 +77,8 @@ function drawWaves(ctx, W, H) {
  * @param {number} o.winnerScore @param {number} o.loserScore
  * @param {string} o.division @param {number|null} o.week
  * @param {boolean} [o.isForfeit]
+ * @param {boolean} [o.isDoubleForfeit] both teams forfeited — no winner side, both
+ *        names neutral, and each team took a 0-1 loss.
  * @param {Array<{wName:string,lName:string,wGoals:number,lGoals:number}>} [o.games]
  *        Per game, already oriented: that game's winner first.
  * @returns {Promise<Buffer|null>}
@@ -114,9 +116,11 @@ async function buildResultCard(o) {
         ctx.fillStyle = '#7dd3fc';
         ctx.font = `bold 20px ${FONT}`;
         ctx.fillText('🐳 BELUGA LEAGUE', W / 2, 38);
+        const isDouble = Boolean(o.isDoubleForfeit);
         ctx.fillStyle = '#8aa8cc';
         ctx.font = `22px ${FONT}`;
-        ctx.fillText(`${o.division} · ${o.week != null ? `Week ${o.week}` : 'Series'}${o.isForfeit ? '  ·  FORFEIT' : ''}`, W / 2, 66);
+        const ffLabel = isDouble ? '  ·  DOUBLE FORFEIT' : o.isForfeit ? '  ·  FORFEIT' : '';
+        ctx.fillText(`${o.division} · ${o.week != null ? `Week ${o.week}` : 'Series'}${ffLabel}`, W / 2, 66);
 
         // Main: winner left, loser right.
         const logoSize = 170;
@@ -127,12 +131,16 @@ async function buildResultCard(o) {
         drawLogo(ctx, wLogo, o.winnerName, leftX, logoY, logoSize);
         drawLogo(ctx, lLogo, o.loserName, rightX, logoY, logoSize);
 
-        ctx.fillStyle = '#34d399';
-        ctx.font = `bold 22px ${FONT}`;
-        ctx.fillText('WINNER', leftX, 95);
+        // A double forfeit has no winner: no WINNER flag, both names neutral, and
+        // the strip under the score spells out what each team was charged.
+        if (!isDouble) {
+            ctx.fillStyle = '#34d399';
+            ctx.font = `bold 22px ${FONT}`;
+            ctx.fillText('WINNER', leftX, 95);
+        }
 
         ctx.font = `bold 30px ${FONT}`;
-        ctx.fillStyle = '#FFD700';
+        ctx.fillStyle = isDouble ? '#b9c8dd' : '#FFD700';
         ctx.fillText(truncate(o.winnerName, 16), leftX, logoY + logoSize / 2 + 42);
         ctx.fillStyle = '#b9c8dd';
         ctx.fillText(truncate(o.loserName, 16), rightX, logoY + logoSize / 2 + 42);
@@ -140,9 +148,9 @@ async function buildResultCard(o) {
         ctx.fillStyle = '#FFFFFF';
         ctx.font = `bold 96px ${FONT}`;
         ctx.fillText(`${o.winnerScore} – ${o.loserScore}`, W / 2, logoY + 28);
-        ctx.fillStyle = '#7dd3fc';
-        ctx.font = `18px ${FONT}`;
-        ctx.fillText('SERIES', W / 2, logoY + 58);
+        ctx.fillStyle = isDouble ? '#f0a868' : '#7dd3fc';
+        ctx.font = isDouble ? `bold 18px ${FONT}` : `18px ${FONT}`;
+        ctx.fillText(isDouble ? 'BOTH TEAMS CHARGED A 0–1 LOSS' : 'SERIES', W / 2, logoY + 58);
 
         // Per-game strip: winner-of-that-game logo left, loser right, logos only.
         if (games.length) {

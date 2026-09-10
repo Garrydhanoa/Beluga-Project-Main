@@ -9,6 +9,12 @@ const flow = require('../stats/report/flow');
  * Staff pick the division/teams/week manually; the rest is the normal report
  * flow (group link → matching → salary crew can finalize instantly). Playoff
  * series are reported here with playoffs=true.
+ *
+ * The Ballchasing group is OPTIONAL on this path (it is not on /report): leaving it
+ * blank and filling in the game-scores box records a scores-only series, for a
+ * series whose replay group was never made. Player stats can be added afterwards on
+ * the website (Admin → Match Results), which is also where per-game replay links,
+ * forfeits and full manual stat entry live.
  */
 module.exports = {
     data: new SlashCommandBuilder()

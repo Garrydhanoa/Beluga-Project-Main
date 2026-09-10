@@ -31,10 +31,14 @@ export default function LatestResults() {
             <span className="text-[10px] font-bold uppercase tracking-wider text-blue-300/70 w-14">{r.division}</span>
             <span className="text-white/40 text-xs w-10">{r.isPlayoff ? 'PO' : `W${r.week ?? '—'}`}</span>
             <span className="flex-1 text-sm truncate">
-              <Link href={`/teams/${encodeURIComponent(r.winner || '')}`} className="font-bold text-white hover:text-blue-200">{r.winner}</Link>
+              <Link href={`/teams/${encodeURIComponent(r.winner || '')}`} className={r.isDoubleForfeit ? 'text-white/70 hover:text-blue-200' : 'font-bold text-white hover:text-blue-200'}>{r.winner}</Link>
               <span className="font-mono font-bold text-blue-300 mx-2">{r.winnerScore}–{r.loserScore}</span>
               <Link href={`/teams/${encodeURIComponent(r.loser || '')}`} className="text-white/70 hover:text-blue-200">{r.loser}</Link>
-              {r.isForfeit && <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-orange-500/15 text-orange-300 border border-orange-400/30">FF</span>}
+              {r.isForfeit && (
+                <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-orange-500/15 text-orange-300 border border-orange-400/30">
+                  {r.isDoubleForfeit ? 'Double FF' : 'FF'}
+                </span>
+              )}
             </span>
             {r.replayGroupUrl && (
               <a href={r.replayGroupUrl} target="_blank" rel="noreferrer"

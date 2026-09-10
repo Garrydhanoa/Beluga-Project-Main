@@ -80,6 +80,8 @@ const PHRASES = {
   'transactions.delete': 'deleted a transaction',
   'salary.unlock': 'unlocked a salary',
   'salary.adjust': 'adjusted a salary',
+  'stats-series.create': 'reported a series by hand',
+  'stats-series.import': 'pulled a series’ stats in from Ballchasing',
   'stats-series.patch': 'edited a reported series',
   'stats-series.delete': 'DELETED a reported series',
   'stats-tools.post': 'used the player identity tools',

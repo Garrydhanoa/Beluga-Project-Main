@@ -27,6 +27,8 @@ const panel = require('./panel');
 const { logEdge } = require('./logChannel');
 const { buildSalaryResolver, checkSeriesCaps } = require('./salaryCap');
 const { DIVISION_RESULT_CHANNELS, VAL_SKIP, VAL_SEARCH } = require('./constants');
+const { siteUrl } = require('../../utils/siteFooter');
+const higgenLog = require('../../utils/higgenLog');
 const { parseSeries } = require('../seriesParser');
 const bcClient = require('../ballchasingClient');
 const statsStore = require('../statsStore');
@@ -86,48 +88,9 @@ function initSlots(parsedTeam) {
     }));
 }
 
-/** Fill in best-guess matches: remembered account link (if on roster) else name match. */
-async function autoSuggest(slots, roster) {
-    const byName = new Map(roster.map((m) => [String(m.displayName || '').toLowerCase(), m.discordId]));
-    const rosterIds = new Set(roster.map((m) => m.discordId));
-    for (const slot of slots) {
-        const remembered = await statsStore.resolveDiscordByAccount(slot.platform, slot.platformId);
-        if (remembered && rosterIds.has(remembered)) { slot.discordId = remembered; continue; }
-        const nm = String(slot.name || '').toLowerCase();
-        if (byName.has(nm)) { slot.discordId = byName.get(nm); continue; }
-        const partial = roster.find((m) => nm && String(m.displayName || '').toLowerCase().includes(nm));
-        if (partial) slot.discordId = partial.discordId;
-    }
-    return slots;
-}
-
-/** Decide which parsed cluster (0/1) is the home team. */
-async function assignSides(parsed, homeRoster, awayRoster) {
-    const homeSet = new Set(homeRoster.map((m) => m.discordId));
-    const awaySet = new Set(awayRoster.map((m) => m.discordId));
-    const homeNames = new Set(homeRoster.map((m) => String(m.displayName || '').toLowerCase()));
-    const awayNames = new Set(awayRoster.map((m) => String(m.displayName || '').toLowerCase()));
-    const affinity = [];
-    for (const team of parsed.teams) {
-        let h = 0; let a = 0;
-        for (const p of team.players) {
-            const did = await statsStore.resolveDiscordByAccount(p.platform, p.platformId);
-            if (did && homeSet.has(did)) h += 2;
-            if (did && awaySet.has(did)) a += 2;
-            const nm = String((p.names && p.names[0]) || '').toLowerCase();
-            if (nm && homeNames.has(nm)) h += 1;
-            if (nm && awayNames.has(nm)) a += 1;
-        }
-        affinity.push({ h, a });
-    }
-    // team0 home-leaning and team1 away-leaning (or vice-versa) and they disagree → confident.
-    const t0Home = affinity[0].h - affinity[0].a;
-    const t1Home = affinity[1].h - affinity[1].a;
-    if (t0Home > 0 && t1Home < 0) return { homeIdx: 0, confident: true };
-    if (t1Home > 0 && t0Home < 0) return { homeIdx: 1, confident: true };
-    if (t0Home !== t1Home) return { homeIdx: t0Home > t1Home ? 0 : 1, confident: false };
-    return { homeIdx: 0, confident: false };
-}
+// autoSuggest() and assignSides() now live in ./sideMatch so the website's manual
+// report importer uses the SAME matching logic (see stats/seriesIngest.js).
+const { autoSuggest, assignSides } = require('./sideMatch');
 
 // ---- rendering --------------------------------------------------------------
 
@@ -189,6 +152,60 @@ function buildGroupModal(...extraParts) {
                     .setMaxLength(300)
             )
         );
+}
+
+/**
+ * Staff-only variant of the report modal: the group link is OPTIONAL and a game
+ * scores box is offered instead. A series whose replay group was never made still
+ * has to be recordable, and salary crew are the ones who record it.
+ *
+ * Captains keep the strict modal above — they must always supply a group.
+ */
+function buildStaffGroupModal(...extraParts) {
+    return new ModalBuilder()
+        .setCustomId(ids.build('group', ...extraParts))
+        .setTitle('Staff Report Series')
+        .addComponents(
+            new ActionRowBuilder().addComponents(
+                new TextInputBuilder()
+                    .setCustomId('group_url')
+                    .setLabel('Ballchasing GROUP link (optional)')
+                    .setPlaceholder('https://ballchasing.com/group/...')
+                    .setStyle(TextInputStyle.Short)
+                    .setRequired(false)
+                    .setMaxLength(300)
+            ),
+            new ActionRowBuilder().addComponents(
+                new TextInputBuilder()
+                    .setCustomId('scores')
+                    .setLabel('No group? Game scores, one per line')
+                    .setPlaceholder('3-1\n2-3\n4-2')
+                    .setStyle(TextInputStyle.Paragraph)
+                    .setRequired(false)
+                    .setMaxLength(200)
+            )
+        );
+}
+
+/**
+ * Parse the staff "game scores" box: one game per line, "3-1" / "3 - 1" / "3:1".
+ * @returns {{games:Array<{homeGoals:number,awayGoals:number}>}|{error:string}}
+ */
+function parseManualScores(raw) {
+    const lines = String(raw || '').split(/[\r\n,]+/).map((l) => l.trim()).filter(Boolean);
+    if (!lines.length) return { error: 'No game scores were given.' };
+    if (lines.length > 7) return { error: `That's ${lines.length} games — a series can have at most 7.` };
+
+    const games = [];
+    for (const line of lines) {
+        const m = line.match(/^(\d{1,2})\s*[-–:]\s*(\d{1,2})$/);
+        if (!m) return { error: `"${line}" isn't a game score. Use one line per game, like \`3-1\`.` };
+        const homeGoals = Number(m[1]);
+        const awayGoals = Number(m[2]);
+        if (homeGoals === awayGoals) return { error: `Game ${games.length + 1} (${line}) is a tie — a Rocket League game always has a winner.` };
+        games.push({ homeGoals, awayGoals });
+    }
+    return { games };
 }
 
 /**
@@ -263,7 +280,7 @@ async function startStaffReport(interaction, { seasonId, homeTeamId, awayTeamId,
     if (await sessions.getActiveSessionByThread(interaction.channelId)) {
         return safeReply(interaction, 'ℹ️ A report is already in progress in this channel. Finish or cancel it first.');
     }
-    await interaction.showModal(buildGroupModal('staff', seasonId, homeTeamId, awayTeamId, week || 0, isPlayoff ? 1 : 0));
+    await interaction.showModal(buildStaffGroupModal('staff', seasonId, homeTeamId, awayTeamId, week || 0, isPlayoff ? 1 : 0));
     return null;
 }
 
@@ -338,12 +355,58 @@ async function handleGroupModal(interaction, parts = []) {
     }
 
     const groupUrl = String(interaction.fields.getTextInputValue('group_url') || '').trim();
+
+    // Staff-only escape hatch: no group link, just the game scores. This records a
+    // scores-only series — right series/game/goal differential, no player stats —
+    // for a series whose replay group was never made. Player stats can be added
+    // afterwards from the website admin panel.
+    if (isStaffPath && !groupUrl) {
+        const rawScores = String(interaction.fields.getTextInputValue('scores') || '').trim();
+        if (!rawScores) {
+            return safeReply(interaction,
+                '❌ Give either a **Ballchasing group link** or the **game scores** (one per line, e.g. `3-1`).\n'
+                + 'For full control — per-game replay links, player stat lines, forfeits — report it on the website: **Admin → Match Results → Report a series**.');
+        }
+        const manual = parseManualScores(rawScores);
+        if (manual.error) return safeReply(interaction, `❌ ${manual.error}`);
+
+        try {
+            const result = await statsStore.commitSeries({
+                seasonId: ctx.seasonId, division: ctx.division, week: ctx.week, isPlayoff: ctx.isPlayoff,
+                format: ctx.format, homeTeamId: ctx.homeTeam.id, awayTeamId: ctx.awayTeam.id,
+                scheduleMatchId: ctx.scheduleMatchId, threadId: isStaffPath ? null : threadId,
+                group: {}, reportedByDiscordId: interaction.user.id, reportedVia: 'salary_crew_manual',
+                games: manual.games.map((g, i) => ({ gameNumber: i + 1, ...g, players: [] })),
+            });
+            await postManualResult(interaction.client, ctx, result, manual.games);
+            return safeReply(interaction,
+                `✅ Recorded **${ctx.homeTeam.name} ${result.homeScore}–${result.awayScore} ${ctx.awayTeam.name}** `
+                + `(${ctx.division}${ctx.week ? `, Week ${ctx.week}` : ''}) from the scores you gave. Series #${result.seriesId}.\n`
+                + '-# No player stats — add them on the website (Admin → Match Results), or attach a replay group there and import.');
+        } catch (err) {
+            // Handled here, so the router never sees it — tell the audit log directly
+            // or this failure would be recorded as a successful report.
+            higgenLog.markSubRouterOutcome(interaction, {
+                outcome: 'failed',
+                note: 'A staff scores-only report could not be saved.',
+                error: err,
+            });
+            Logger.error('manual staff report failed', err);
+            await logEdge(interaction.client, { summary: `Manual staff report failed in ${ctx.division}.`, error: err, thread: channel, division: ctx.division });
+            return safeReply(interaction, `❌ Could not record that series: ${err.message}`);
+        }
+    }
+
     if (!bcClient.isGroupUrl(groupUrl)) {
         await logEdge(interaction.client, {
             summary: `Invalid report input (not a Ballchasing group link) by ${interaction.user.tag} in ${ctx.division}.`,
             detail: `Provided: ${groupUrl}`, thread: channel, division: ctx.division, groupUrl,
         });
-        return safeReply(interaction, '❌ That isn\'t a Ballchasing **group** link. Only a replay group URL is accepted. Salary crew has been notified.');
+        return safeReply(interaction,
+            '❌ That isn\'t a Ballchasing **group** link. Only a replay group URL is accepted here.'
+            + (isStaffPath
+                ? '\nIf this series has no group, leave the link blank and fill in the **game scores** box instead.'
+                : ' Salary crew has been notified.'));
     }
 
     let parsed;
@@ -885,6 +948,53 @@ async function maybeRecordChampion(session, result) {
 }
 
 /** Confirmation post: winning team first, two-logo result card, player mentions, links. */
+/**
+ * Announce a scores-only staff report (no session, no player stats, no replays).
+ * Same card and division channel as a normal confirmation, but it says plainly
+ * that the stats aren't in yet so nobody thinks the report is finished.
+ */
+async function postManualResult(client, ctx, result, games) {
+    try {
+        const homeWon = result.homeScore > result.awayScore;
+        const winName = homeWon ? ctx.homeTeam.name : ctx.awayTeam.name;
+        const loseName = homeWon ? ctx.awayTeam.name : ctx.homeTeam.name;
+        const winScore = homeWon ? result.homeScore : result.awayScore;
+        const loseScore = homeWon ? result.awayScore : result.homeScore;
+
+        const gameTiles = (games || []).map((g) => {
+            const homeWonGame = Number(g.homeGoals) > Number(g.awayGoals);
+            return {
+                wName: homeWonGame ? ctx.homeTeam.name : ctx.awayTeam.name,
+                lName: homeWonGame ? ctx.awayTeam.name : ctx.homeTeam.name,
+                wGoals: homeWonGame ? g.homeGoals : g.awayGoals,
+                lGoals: homeWonGame ? g.awayGoals : g.homeGoals,
+            };
+        });
+
+        const card = await buildResultCard({
+            winnerName: winName, loserName: loseName, winnerScore: winScore, loserScore: loseScore,
+            division: ctx.division, week: ctx.week, isForfeit: false, games: gameTiles,
+        });
+        const embed = new EmbedBuilder()
+            .setColor(0x27AE60)
+            .setTitle(`🏆 ${winName} ${winScore}–${loseScore} ${loseName}`)
+            .setDescription(`${ctx.division} · Week ${ctx.week ?? '—'} · reported by staff`)
+            .addFields({ name: 'Player stats', value: 'Not recorded — this series had no replay group.' })
+            .setTimestamp();
+        if (card) embed.setImage('attachment://result.png');
+        const files = card ? [new AttachmentBuilder(card, { name: 'result.png' })] : [];
+
+        const chId = DIVISION_RESULT_CHANNELS[ctx.division];
+        if (chId) {
+            const ch = await client.channels.fetch(chId).catch(() => null);
+            if (ch?.isTextBased()) await ch.send({ embeds: [embed], files });
+        }
+    } catch (err) {
+        // The series is already saved; a failed announcement must not undo that.
+        Logger.error('postManualResult failed', err);
+    }
+}
+
 async function postConfirmation(client, session, result) {
     const b = bag(session);
     const homeWon = result.homeScore > result.awayScore;
@@ -892,7 +1002,9 @@ async function postConfirmation(client, session, result) {
     const loseName = homeWon ? b.awayName : b.homeName;
     const winScore = homeWon ? result.homeScore : result.awayScore;
     const loseScore = homeWon ? result.awayScore : result.homeScore;
-    const site = process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : null;
+    // NOT RAILWAY_PUBLIC_DOMAIN — on Railway that is the BOT service's own domain,
+    // so this link used to point at the bot instead of the league site.
+    const site = siteUrl();
 
     // Distinct players who actually played (for mentions, rendered outside the embed).
     const collect = (m) => (m?.slots || []).filter((s) => !s.skipped && s.discordId).map((s) => s.discordId);
@@ -950,6 +1062,7 @@ async function postConfirmation(client, session, result) {
 
 module.exports = {
     buildCommitPayload, // exported for the orientation test harness (tools/)
+    parseManualScores,  // pure — exported so the score box can be tested directly
     startReport,
     startStaffReport,
     handleGroupModal,

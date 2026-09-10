@@ -108,7 +108,7 @@ async function computeTeamRankings(seasonId, division, week = null) {
     // week-less staff reports at 0 so they stay eligible for every week, still
     // sorted last by NULLS LAST.
     const series = await pool.query(
-        `SELECT s.id, s.week, s.home_team_id, s.away_team_id, s.winner_team_id, s.is_forfeit,
+        `SELECT s.id, s.week, s.home_team_id, s.away_team_id, s.winner_team_id, s.is_forfeit, s.forfeit_kind,
             s.home_score, s.away_score,
             COALESCE(SUM(g.home_goals),0)::int AS hg, COALESCE(SUM(g.away_goals),0)::int AS ag
          FROM stats_series s LEFT JOIN stats_games g ON g.series_id = s.id
@@ -204,7 +204,11 @@ async function computeTeamRankings(seasonId, division, week = null) {
 
         // Kept compact — this line also renders on the card, which clips it.
         const notes = [`${wins}-${mine.length - wins} in last ${mine.length}`];
-        notes.push(mine[0].winner_team_id === teamId ? 'won latest' : 'lost latest');
+        // A double forfeit has no winner, so "lost latest" would be technically
+        // right but read as if they were beaten — name it for what it was.
+        notes.push(mine[0].winner_team_id === teamId ? 'won latest'
+            : (mine[0].is_forfeit && mine[0].forfeit_kind === 'double') ? 'double FF latest'
+            : 'lost latest');
         if (gameDiff !== 0) notes.push(`${gameDiff > 0 ? '+' : ''}${gameDiff} GD`);
         if (meta.rating) notes.push(`rating ${meta.rating.toFixed(1)}`);
 

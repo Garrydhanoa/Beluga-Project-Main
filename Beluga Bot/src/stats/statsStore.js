@@ -23,6 +23,13 @@ const Logger = require('../utils/logger');
 const BELUGA_WEIGHTS = { score: 25, goals: 30, assists: 15, saves: 20, shots: 5, demos: 5 };
 const BELUGA_WEIGHT_TOTAL = Object.values(BELUGA_WEIGHTS).reduce((a, b) => a + b, 0); // 100
 
+// stats_series.forfeit_kind values.
+//   'full'   — one team forfeited: a 1-0 series win, carried by one synthetic game row.
+//   'double' — BOTH teams forfeited: no winner, no game rows, and each team is charged
+//              the same 0-1 loss the loser of a full FF takes (see recomputeTeamSeason).
+const FULL_FORFEIT = 'full';
+const DOUBLE_FORFEIT = 'double';
+
 function db() {
     return typeof isDatabaseAvailable === 'function' ? isDatabaseAvailable() : isDatabaseAvailable;
 }
@@ -242,6 +249,156 @@ async function commitSeries(payload) {
     }
 }
 
+/**
+ * Replace game rows (and their player stat lines) on an EXISTING series with
+ * freshly parsed data. This is the manual-report importer's write path: staff
+ * created the series by hand, then supplied a Ballchasing group or per-game
+ * replay links, and the real stats replace whatever placeholder was there.
+ *
+ * commitSeries() creates a series; this one refits an existing one, sharing the
+ * same player-row and identity-upsert handling.
+ *
+ * @param {number} seriesId
+ * @param {object} o
+ * @param {Array} o.games   same per-game shape commitSeries takes, plus an optional
+ *                          `existingGameId` to refit that row instead of adding one.
+ * @param {boolean} [o.wipeOtherGames=false]  drop every game row not listed (a group
+ *                          link describes the WHOLE series, so it replaces everything;
+ *                          per-game links only replace the games they belong to).
+ * @param {boolean} [o.rescore=true]  re-derive series score + winner from the games
+ *                          afterwards. Skipped for forfeits and staff-locked rows.
+ * @param {string|null} [o.actorDiscordId]
+ * @returns {Promise<{gamesWritten:number, playerRows:number, homeScore:number, awayScore:number}>}
+ */
+async function replaceSeriesGames(seriesId, {
+    games = [], wipeOtherGames = false, rescore = true, actorDiscordId = null,
+} = {}) {
+    if (!db()) throw new Error('Database not available.');
+
+    const sres = await pool.query(`SELECT * FROM stats_series WHERE id = $1`, [seriesId]);
+    if (!sres.rows.length) throw new Error(`Series #${seriesId} does not exist.`);
+    const series = sres.rows[0];
+    const { season_id: seasonId, division, is_playoff: isPlayoff } = series;
+    const homeTeamId = series.home_team_id;
+    const awayTeamId = series.away_team_id;
+
+    const client = await pool.connect();
+    let playerRows = 0;
+    try {
+        await client.query('BEGIN');
+
+        const keepIds = games.map((g) => g.existingGameId).filter((id) => id != null);
+        if (wipeOtherGames) {
+            if (keepIds.length) {
+                await client.query(`DELETE FROM stats_games WHERE series_id = $1 AND id <> ALL($2::int[])`, [seriesId, keepIds]);
+            } else {
+                await client.query(`DELETE FROM stats_games WHERE series_id = $1`, [seriesId]);
+            }
+        }
+
+        for (let gi = 0; gi < games.length; gi += 1) {
+            const g = games[gi];
+            const homeGoals = Number(g.homeGoals) || 0;
+            const awayGoals = Number(g.awayGoals) || 0;
+            const gWinner = homeGoals > awayGoals ? homeTeamId : awayGoals > homeGoals ? awayTeamId : null;
+            const gameNumber = g.gameNumber ?? gi + 1;
+            const vals = [
+                g.replayId || null, g.replayUrl || null, g.map || null,
+                g.durationSeconds || null, Boolean(g.overtime),
+                homeGoals, awayGoals, gWinner, Boolean(g.isForfeit),
+                g.playedAt ? new Date(g.playedAt) : null,
+            ];
+
+            let gameId = g.existingGameId ?? null;
+            if (gameId != null) {
+                // Refit the row staff already created for this game, keeping its id
+                // (so anything referencing it stays valid) and dropping its old lines.
+                await client.query(
+                    `UPDATE stats_games SET
+                        ballchasing_replay_id=$1, ballchasing_replay_url=$2, map=$3,
+                        duration_seconds=$4, overtime=$5, home_goals=$6, away_goals=$7,
+                        winner_team_id=$8, is_forfeit=$9, played_at=$10, game_number=$11
+                     WHERE id=$12 AND series_id=$13`,
+                    [...vals, gameNumber, gameId, seriesId]
+                );
+                await client.query(`DELETE FROM stats_game_players WHERE game_id = $1`, [gameId]);
+            } else {
+                const ins = await client.query(
+                    `INSERT INTO stats_games (
+                        series_id, game_number, ballchasing_replay_id, ballchasing_replay_url,
+                        map, duration_seconds, overtime, home_goals, away_goals, winner_team_id, is_forfeit, played_at
+                     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+                    [seriesId, gameNumber, ...vals]
+                );
+                gameId = ins.rows[0].id;
+            }
+
+            for (const p of (g.players || [])) {
+                await client.query(
+                    `INSERT INTO stats_game_players (
+                        game_id, series_id, season_id, division, is_playoff, team_id,
+                        discord_id, platform, platform_id, ingame_name, is_sub,
+                        score, goals, assists, saves, shots, shooting_pct,
+                        demos_inflicted, demos_taken, mvp, played_seconds
+                     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
+                    [
+                        gameId, seriesId, seasonId, division, isPlayoff, p.teamId || null,
+                        p.discordId || null, p.platform || null, p.platformId || null, p.ingameName || null, Boolean(p.isSub),
+                        Number(p.score) || 0, Number(p.goals) || 0, Number(p.assists) || 0, Number(p.saves) || 0, Number(p.shots) || 0,
+                        p.shootingPct != null ? Number(p.shootingPct) : null,
+                        Number(p.demosInflicted) || 0, Number(p.demosTaken) || 0, Boolean(p.mvp),
+                        p.playedSeconds != null ? Math.round(Number(p.playedSeconds)) : null,
+                    ]
+                );
+                playerRows += 1;
+                if (p.discordId && p.platform && p.platformId) {
+                    await upsertAccount(client, {
+                        discordId: p.discordId, platform: p.platform, platformId: p.platformId,
+                        name: p.ingameName, linkedBy: actorDiscordId,
+                    });
+                }
+            }
+        }
+
+        // Re-derive the series score from ALL its games (imported + any left alone).
+        // Forfeits keep their fixed score, and a staff-locked row is never touched.
+        let homeScore = series.home_score;
+        let awayScore = series.away_score;
+        if (rescore && !series.is_forfeit && !series.manual_override) {
+            const tally = await client.query(
+                `SELECT COUNT(*) FILTER (WHERE winner_team_id = $2)::int AS hw,
+                        COUNT(*) FILTER (WHERE winner_team_id = $3)::int AS aw
+                 FROM stats_games WHERE series_id = $1`,
+                [seriesId, homeTeamId, awayTeamId]
+            );
+            homeScore = tally.rows[0]?.hw || 0;
+            awayScore = tally.rows[0]?.aw || 0;
+            const winner = homeScore > awayScore ? homeTeamId : awayScore > homeScore ? awayTeamId : null;
+            await client.query(
+                `UPDATE stats_series SET home_score=$1, away_score=$2, winner_team_id=$3, updated_at=CURRENT_TIMESTAMP WHERE id=$4`,
+                [homeScore, awayScore, winner, seriesId]
+            );
+        }
+
+        await client.query('COMMIT');
+
+        // Same contract as commitSeries: the write is already durable, so a recompute
+        // hiccup must not fail the import (rebuild later with recomputeAllForSeason).
+        try {
+            await recomputeForSeries(seriesId);
+        } catch (recomputeErr) {
+            Logger.error(`recompute after import failed (series ${seriesId} is saved; rebuild later)`, recomputeErr);
+        }
+
+        return { gamesWritten: games.length, playerRows, homeScore, awayScore };
+    } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+    } finally {
+        client.release();
+    }
+}
+
 // ---- recompute --------------------------------------------------------------
 
 /** Recompute everything touched by a series (its two teams + all its players). */
@@ -354,7 +511,7 @@ async function recomputeTeamSeason(seasonId, division, teamId, isPlayoff) {
 
     // Series + game W/L + goals from confirmed series for this team.
     const sres = await pool.query(
-        `SELECT s.id, s.home_team_id, s.away_team_id, s.winner_team_id, s.is_forfeit
+        `SELECT s.id, s.home_team_id, s.away_team_id, s.winner_team_id, s.is_forfeit, s.forfeit_kind
          FROM stats_series s
          WHERE s.season_id=$1 AND s.division=$2 AND s.is_playoff=$3 AND s.status='confirmed'
            AND (s.home_team_id=$4 OR s.away_team_id=$4)`,
@@ -363,6 +520,14 @@ async function recomputeTeamSeason(seasonId, division, teamId, isPlayoff) {
     let seriesWins = 0; let seriesLosses = 0;
     let gameWins = 0; let gameLosses = 0; let goalsFor = 0; let goalsAgainst = 0;
     for (const s of sres.rows) {
+        // Double forfeit: nobody won, so BOTH teams are charged the same 0-1 loss a
+        // normal FF's loser takes. It has no game rows, so the +1 game loss and the
+        // +1 goal against are applied here — a NULL winner would otherwise fall
+        // through both branches below and count as nothing at all.
+        if (s.is_forfeit && s.forfeit_kind === DOUBLE_FORFEIT) {
+            seriesLosses += 1; gameLosses += 1; goalsAgainst += 1;
+            continue;
+        }
         if (s.winner_team_id === teamId) seriesWins += 1;
         else if (s.winner_team_id != null) seriesLosses += 1;
         // eslint-disable-next-line no-await-in-loop
@@ -519,10 +684,13 @@ async function getStandings(seasonId, division) {
 
 module.exports = {
     BELUGA_WEIGHTS,
+    FULL_FORFEIT,
+    DOUBLE_FORFEIT,
     belugaScore,
     belugaFromTotals,
     resolveDiscordByAccount,
     commitSeries,
+    replaceSeriesGames,
     recomputeForSeries,
     recomputePlayer,
     recomputeTeamSeason,

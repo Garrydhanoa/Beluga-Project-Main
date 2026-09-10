@@ -257,6 +257,16 @@ class BelugaLeagueBot {
             } catch (seasonError) {
                 Logger.error('Failed to start season actions poller/approvals', seasonError);
             }
+
+            // Ballchasing imports for hand-reported series: staff report a series on
+            // the admin panel and attach a group link or per-game replay links; the
+            // bot owns the Ballchasing key + parser, so it pulls the real stats in.
+            try {
+                const { startSeriesImportPoller } = require('./stats/seriesImportPoller');
+                startSeriesImportPoller(client);
+            } catch (importError) {
+                Logger.error('Failed to start series import poller', importError);
+            }
         });
 
         this.client.on(Events.InteractionCreate, async (interaction) => {

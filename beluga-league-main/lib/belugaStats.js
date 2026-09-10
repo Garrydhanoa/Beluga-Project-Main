@@ -93,7 +93,7 @@ export async function getStatsStandings(seasonId, division) {
 
 export async function getRecentResults(limit = 5) {
   const r = await query(
-    `SELECT s.id, s.division, s.week, s.is_playoff, s.is_forfeit,
+    `SELECT s.id, s.division, s.week, s.is_playoff, s.is_forfeit, s.forfeit_kind,
         s.home_score, s.away_score, s.ballchasing_group_url, s.confirmed_at,
         ht.name AS home_team, at.name AS away_team
      FROM stats_series s
@@ -106,6 +106,8 @@ export async function getRecentResults(limit = 5) {
   ).catch(() => ({ rows: [] }))
 
   return r.rows.map((row) => {
+    // A double forfeit has no winner — home/away order is kept as-is and the UI
+    // renders both sides neutrally rather than crowning whoever sorts first.
     const homeWon = Number(row.home_score) >= Number(row.away_score)
     return {
       id: row.id,
@@ -113,6 +115,7 @@ export async function getRecentResults(limit = 5) {
       week: row.week,
       isPlayoff: row.is_playoff,
       isForfeit: row.is_forfeit,
+      isDoubleForfeit: row.forfeit_kind === 'double',
       winner: homeWon ? row.home_team : row.away_team,
       loser: homeWon ? row.away_team : row.home_team,
       winnerScore: homeWon ? row.home_score : row.away_score,
@@ -377,7 +380,7 @@ export async function getTeamStatsBundle(seasonId, teamId) {
       [seasonId, teamId]
     ).catch(() => ({ rows: [] })),
     query(
-      `SELECT s.id, s.week, s.is_playoff, s.is_forfeit, s.home_score, s.away_score,
+      `SELECT s.id, s.week, s.is_playoff, s.is_forfeit, s.forfeit_kind, s.home_score, s.away_score,
           s.ballchasing_group_url, s.confirmed_at, s.home_team_id, s.away_team_id,
           ht.name AS home_team, at.name AS away_team
        FROM stats_series s
@@ -424,6 +427,7 @@ export async function getTeamStatsBundle(seasonId, teamId) {
         week: r.week,
         isPlayoff: r.is_playoff,
         isForfeit: r.is_forfeit,
+        isDoubleForfeit: r.forfeit_kind === 'double',
         opponent: isHome ? r.away_team : r.home_team,
         ourScore: Number(ourScore),
         theirScore: Number(theirScore),

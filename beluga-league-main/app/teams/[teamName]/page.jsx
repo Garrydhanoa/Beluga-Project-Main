@@ -481,7 +481,7 @@ function HistoryTab({ divData, division }) {
                   vs {r.opponent}
                 </Link>
                 <span className={`font-mono font-black ${r.won ? 'text-blue-200' : 'text-white/70'}`}>{r.ourScore}–{r.theirScore}</span>
-                {r.isForfeit && <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-orange-500/15 text-orange-300 border border-orange-400/30">FF</span>}
+                {r.isForfeit && <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-orange-500/15 text-orange-300 border border-orange-400/30">{r.isDoubleForfeit ? 'Double FF' : 'FF'}</span>}
                 {r.replayGroupUrl && (
                   <a href={r.replayGroupUrl} target="_blank" rel="noreferrer"
                     className="text-[10px] uppercase font-bold text-blue-200 hover:text-white px-2 py-1 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-400/30 rounded">

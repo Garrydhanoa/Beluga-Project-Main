@@ -994,6 +994,30 @@ async function runMigrations() {
     )
   `)
 
+  // ---------- Ballchasing import queue ----------
+  // Website-owned queue, drained by the bot (Beluga Bot/src/stats/seriesImportPoller.js).
+  // Staff report a series by hand on the admin panel and attach a group link or one
+  // replay link per game; the BOT holds the Ballchasing key, the rate limiter and the
+  // parser, so it does the fetching and writes the real stats back.
+  // Mirrored in Beluga Bot/src/stats/statsSchema.js — keep in sync.
+  await step('stats_import_jobs', `
+    CREATE TABLE IF NOT EXISTS stats_import_jobs (
+      id SERIAL PRIMARY KEY,
+      series_id INTEGER NOT NULL REFERENCES stats_series(id) ON DELETE CASCADE,
+      source TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      requested_by_discord_id TEXT,
+      requested_by_username TEXT,
+      result JSONB,
+      error TEXT,
+      requested_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      started_at TIMESTAMP,
+      finished_at TIMESTAMP
+    )
+  `)
+  await step('idx_stats_import_jobs', `CREATE INDEX IF NOT EXISTS idx_stats_import_jobs_status ON stats_import_jobs(status, requested_at)`)
+  await step('idx_stats_import_jobs_series', `CREATE INDEX IF NOT EXISTS idx_stats_import_jobs_series ON stats_import_jobs(series_id, id DESC)`)
+
   // ---------- DM Center ----------
   // The website composes + queues a blast here; the BOT drains it (it owns the
   // Discord token). See Beluga Bot/src/dm/dmSender.js.

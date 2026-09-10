@@ -104,6 +104,45 @@ function isGroupUrl(input) {
     }
 }
 
+/**
+ * Replay id from a link (the mirror of parseGroupId). Handles:
+ *   https://ballchasing.com/replay/<id>
+ *   https://ballchasing.com/replay/<id>/anything
+ *   <id>
+ * Returns null if it can't find a plausible id. Used by the manual/admin report
+ * path, where staff supply one replay link per game instead of a group.
+ */
+function parseReplayId(input) {
+    const raw = String(input || '').trim();
+    if (!raw) return null;
+
+    // Bare id (no slashes, no scheme).
+    if (!raw.includes('/') && !raw.includes(' ')) return raw;
+
+    let url;
+    try {
+        url = new URL(raw);
+    } catch {
+        return null;
+    }
+    if (!/(^|\.)ballchasing\.com$/i.test(url.hostname)) return null;
+
+    const parts = url.pathname.split('/').filter(Boolean); // e.g. ['replay', '<id>']
+    const rIdx = parts.indexOf('replay');
+    if (rIdx === -1 || !parts[rIdx + 1]) return null;
+    return parts[rIdx + 1];
+}
+
+function isReplayUrl(input) {
+    const raw = String(input || '').trim();
+    try {
+        const url = new URL(raw);
+        return /(^|\.)ballchasing\.com$/i.test(url.hostname) && /\/replay\//i.test(url.pathname);
+    } catch {
+        return false;
+    }
+}
+
 async function _request(path, { query } = {}) {
     const key = getApiKey();
     if (!key) {
@@ -224,6 +263,8 @@ module.exports = {
     hasApiKey,
     parseGroupId,
     isGroupUrl,
+    parseReplayId,
+    isReplayUrl,
     getGroup,
     listGroupReplays,
     getReplay,
