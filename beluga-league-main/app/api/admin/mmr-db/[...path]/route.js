@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { requireAdmin } from '../../../../../lib/adminAuth'
 import { withAudit } from '../../../../../lib/activityLog'
-import { getRunStatus, getRunPlayers, getTrnConfig, setTrnConfig } from '../../../../../lib/mmrDb'
+import { getRunStatus, getRunPlayers, getTrnConfig, setTrnConfig, getQueue, getEvents } from '../../../../../lib/mmrDb'
 
 export const dynamic = 'force-dynamic'
 
@@ -23,6 +23,11 @@ export async function GET(request, { params }) {
       return NextResponse.json(await getRunPlayers(limit))
     }
     if (base === 'config') return NextResponse.json(await getTrnConfig())
+    if (base === 'queue') return NextResponse.json(await getQueue())
+    if (base === 'events') {
+      const limit = Number(url.searchParams.get('limit')) || 40
+      return NextResponse.json(await getEvents(limit))
+    }
     return NextResponse.json({ error: 'unknown endpoint' }, { status: 404 })
   } catch (e) {
     return NextResponse.json({ error: String(e?.message || e) }, { status: 500 })

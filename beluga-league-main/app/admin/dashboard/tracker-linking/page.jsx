@@ -306,7 +306,7 @@ function EditorPanel({ discordId, nonce, onClose, toast, onSaved }) {
       const r = await api('tracker-linking/save', 'POST', { discordId, main, alt })
       if (!r.ok) { toast(r.data?.error || 'Save failed.', true); return }
       const n = (r.data?.repull || []).length
-      toast(`Saved to Registrations${n ? ` — re-pulled ${n} MMR row(s)` : ''}.`)
+      toast(`Saved to Registrations${n ? ` — queued ${n} MMR re-pull(s)` : ''}.`)
       await load()
       onSaved?.()
     } finally { setBusy(false) }
@@ -435,7 +435,7 @@ export default function TrackerLinkingPage() {
       const res = await api('tracker-linking/save', 'POST', { discordId: player.discordId, main, alt })
       if (!res.ok) { toast(res.data?.error || 'Save failed.', true); return }
       const n = (res.data?.repull || []).length
-      toast(`Applied to Registrations${n ? ` — re-pulled ${n} MMR row(s)` : ''}.`)
+      toast(`Applied to Registrations${n ? ` — queued ${n} MMR re-pull(s)` : ''}.`)
       await refresh(true)
       setEditorNonce((x) => x + 1)
     } finally { setBusyKey(null) }

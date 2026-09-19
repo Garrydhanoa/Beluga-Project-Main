@@ -110,6 +110,10 @@ const PHRASES = {
   'mmr.update-player': 'updated one player’s MMR',
   'mmr.update-players': 'updated several players’ MMR',
   'mmr.rotate-ip': 'rotated the scraper IP',
+  'mmr.resume': 'resumed the MMR update run from its checkpoint',
+  'mmr.retry-blocked': 'queued a re-pull of the Cloudflare-blocked players',
+  'mmr.queue': 'cancelled a queued MMR job',
+  'mmr.proxies': 'tested the MMR updater proxies',
   'tracker.save': 'linked or changed a tracker account',
   'tracker.bc-lookup': 'looked up a Ballchasing account',
   'rosters.update': 'changed a roster',
@@ -279,7 +283,8 @@ export function pairsFrom(input, prefix = '') {
   return [[prefix || 'Value', clip(String(input))]]
 }
 
-const SECRET_KEY = /password|secret|token|access_?token|api_?key|authorization/i
+// `prox` covers the MMR updater's proxy list (proxy URLs embed user:pass credentials).
+const SECRET_KEY = /password|secret|token|access_?token|api_?key|authorization|prox/i
 const BLOB_KEY = /^(logo_?data|data|image|bytes|base64|file)$/i
 
 function redactValue(key, value) {

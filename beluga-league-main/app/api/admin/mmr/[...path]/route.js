@@ -13,7 +13,8 @@ const SCRAPER_TOKEN = process.env.TRN_SCRAPER_TOKEN || ''
 // Only these scraper paths are reachable through the admin proxy.
 const ALLOWED = new Set([
   'health', 'status', 'players', 'run', 'resume', 'stop',
-  'update-player', 'update-players', 'search', 'sheet-index', 'rotate-ip', 'config', 'diag',
+  'update-player', 'update-players', 'retry-blocked', 'queue', 'events',
+  'search', 'sheet-index', 'rotate-ip', 'proxies', 'config', 'diag',
 ])
 
 async function proxy(request, params, method) {
