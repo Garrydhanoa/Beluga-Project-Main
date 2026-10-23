@@ -449,148 +449,16 @@ export async function replaceScheduleMatches(seasonId, schedule, { published = f
   }
 }
 
-export async function getPlayoffMatchups(seasonId) {
-  await ensureLeagueSchema()
-  const result = await query(
-    `
-      SELECT
-        pb.id AS bracket_id,
-        pb.division,
-        pb.name AS bracket_name,
-        pb.is_published,
-        pb.display_order AS bracket_order,
-        pr.id AS round_id,
-        pr.round_number,
-        pr.name AS round_name,
-        pm.id AS matchup_id,
-        pm.match_order,
-        ht.name AS home_team_name,
-        at.name AS away_team_name
-      FROM playoff_brackets pb
-      LEFT JOIN playoff_rounds pr ON pr.bracket_id = pb.id
-      LEFT JOIN playoff_matchups pm ON pm.round_id = pr.id
-      LEFT JOIN teams ht ON ht.id = pm.home_team_id
-      LEFT JOIN teams at ON at.id = pm.away_team_id
-      WHERE pb.season_id = $1
-      ORDER BY pb.display_order ASC, pb.id ASC, pr.round_number ASC, pm.match_order ASC, pm.id ASC
-    `,
-    [seasonId]
-  )
-
-  const byBracket = new Map()
-  for (const row of result.rows) {
-    if (!byBracket.has(row.bracket_id)) {
-      byBracket.set(row.bracket_id, {
-        id: row.bracket_id,
-        division: row.division,
-        name: row.bracket_name,
-        isPublished: row.is_published,
-        order: row.bracket_order,
-        rounds: [],
-      })
-    }
-    const bracket = byBracket.get(row.bracket_id)
-    if (!row.round_id) continue
-
-    let round = bracket.rounds.find((r) => r.id === row.round_id)
-    if (!round) {
-      round = {
-        id: row.round_id,
-        roundNumber: row.round_number,
-        name: row.round_name,
-        matchups: [],
-      }
-      bracket.rounds.push(round)
-    }
-
-    if (row.matchup_id) {
-      round.matchups.push({
-        id: row.matchup_id,
-        homeTeam: row.home_team_name,
-        awayTeam: row.away_team_name,
-        matchOrder: row.match_order,
-      })
-    }
-  }
-
-  return Array.from(byBracket.values())
-}
-
-export async function replacePlayoffBrackets(seasonId, brackets, { published = false } = {}) {
-  await ensureLeagueSchema()
-  const pool = getPool()
-  const client = await pool.connect()
-
-  try {
-    await client.query('BEGIN')
-
-    const existing = await client.query('SELECT id FROM playoff_brackets WHERE season_id = $1', [seasonId])
-    if (existing.rows.length) {
-      await client.query('DELETE FROM playoff_brackets WHERE season_id = $1', [seasonId])
-    }
-
-    for (let b = 0; b < brackets.length; b += 1) {
-      const bracket = brackets[b]
-      const division = toDivisionValue(bracket.division)
-      const bracketName = String(bracket.name || `Bracket ${b + 1}`).trim()
-      if (!division) continue
-
-      const bracketResult = await client.query(
-        `INSERT INTO playoff_brackets (season_id, division, name, is_published, display_order)
-         VALUES ($1, $2, $3, $4, $5)
-         RETURNING id`,
-        [seasonId, division, bracketName, published, b]
-      )
-      const bracketId = bracketResult.rows[0].id
-
-      const rounds = Array.isArray(bracket.rounds) ? bracket.rounds : []
-      for (let r = 0; r < rounds.length; r += 1) {
-        const round = rounds[r]
-        const roundName = String(round.name || `Round ${r + 1}`).trim()
-        const roundNumber = Number(round.roundNumber || r + 1)
-        const roundResult = await client.query(
-          `INSERT INTO playoff_rounds (bracket_id, round_number, name)
-           VALUES ($1, $2, $3)
-           RETURNING id`,
-          [bracketId, roundNumber, roundName]
-        )
-        const roundId = roundResult.rows[0].id
-
-        const matchups = Array.isArray(round.matchups) ? round.matchups : []
-        for (let m = 0; m < matchups.length; m += 1) {
-          const matchup = matchups[m]
-          const homeTeam = String(matchup.homeTeam || '').trim()
-          const awayTeam = String(matchup.awayTeam || '').trim()
-          if (!homeTeam || !awayTeam || homeTeam === awayTeam) continue
-
-          const homeResult = await client.query(
-            'SELECT id FROM teams WHERE season_id = $1 AND division = $2 AND name = $3 AND is_active = TRUE LIMIT 1',
-            [seasonId, division, homeTeam]
-          )
-          const awayResult = await client.query(
-            'SELECT id FROM teams WHERE season_id = $1 AND division = $2 AND name = $3 AND is_active = TRUE LIMIT 1',
-            [seasonId, division, awayTeam]
-          )
-
-          if (!homeResult.rows.length || !awayResult.rows.length) continue
-
-          await client.query(
-            `INSERT INTO playoff_matchups (round_id, home_team_id, away_team_id, match_order)
-             VALUES ($1, $2, $3, $4)`,
-            [roundId, homeResult.rows[0].id, awayResult.rows[0].id, m]
-          )
-        }
-      }
-    }
-
-    await client.query('COMMIT')
-  } catch (error) {
-    await client.query('ROLLBACK')
-    throw error
-  } finally {
-    client.release()
-  }
-}
+// Playoff reads and writes now live in lib/playoffStore.js.
+//
+// getPlayoffMatchups() returned only team NAMES (no ids, no seeds, no scores,
+// no is_finals) and ignored is_published entirely. replacePlayoffBrackets() was
+// worse: it DELETED every bracket in the season — all three divisions — and
+// rebuilt them from names, silently dropping any matchup whose name did not
+// resolve, and it omitted the NOT NULL round_order column, so it threw on every
+// single call and had never once succeeded. With a matchup now carrying seeds,
+// scores, a winner and graph wiring, a name-keyed bulk replace would destroy all
+// of it; playoffStore.js edits one matchup at a time instead.
 
 export async function getStandingsFromRecords(seasonId, division) {
   await ensureLeagueSchema()

@@ -1,13 +1,26 @@
 import { NextResponse } from 'next/server'
 import { withAudit } from '../../../../lib/activityLog'
 import { requireAdmin } from '../../../../lib/adminAuth'
-import {
-  getActiveSeason,
-  getPlayoffMatchups,
-  replacePlayoffBrackets,
-} from '../../../../lib/leagueStore'
+import { resolveSeason, getActiveSeason } from '../../../../lib/leagueStore'
 import { getStatsStandings } from '../../../../lib/belugaStats'
+import { getSiteConfig, setSiteConfig } from '../../../../lib/siteConfigStore'
 import { query } from '../../../../lib/db'
+import {
+  DIVISIONS,
+  normalizeDivision,
+  getAllBrackets,
+  getBracket,
+  setMatchupTeams,
+  setMatchupResult,
+  clearMatchupResult,
+  setRoundBestOf,
+  setBracketPublished,
+  createRoundThreads,
+  queueMatchupThreadDelete,
+  generateFromStandings,
+  refreshAllBrackets,
+  recomputeBracket,
+} from '../../../../lib/playoffStore'
 
 export const dynamic = 'force-dynamic'
 
@@ -15,19 +28,46 @@ function badRequest(message) {
   return NextResponse.json({ error: message }, { status: 400 })
 }
 
-export async function GET() {
+export async function GET(request) {
   const auth = await requireAdmin()
   if (!auth.ok) return auth.response
 
-  const season = await getActiveSeason()
+  const seasonParam = new URL(request.url).searchParams.get('season')
+  const season = seasonParam ? await resolveSeason(seasonParam) : await getActiveSeason()
   if (!season) {
-    return NextResponse.json({ seasonId: null, brackets: [] })
+    return NextResponse.json({ seasonId: null, brackets: [], settings: {}, teams: {} })
   }
 
-  const brackets = await getPlayoffMatchups(season.id)
-  return NextResponse.json({ seasonId: season.id, brackets })
+  // Self-heal on read: wire any legacy bracket (no seeds / no graph) and pull in
+  // results reported since the last visit. Both are idempotent and cheap.
+  await refreshAllBrackets(season.id).catch(() => {})
+
+  const [brackets, settings] = await Promise.all([
+    getAllBrackets(season.id),
+    getSiteConfig('playoffs'),
+  ])
+
+  // Team list per division, for the manual "set teams" pickers.
+  const teamRows = await query(
+    `SELECT id, name, division FROM teams
+      WHERE season_id = $1 AND is_active = TRUE ORDER BY division, name`,
+    [season.id]
+  )
+  const teams = {}
+  for (const division of DIVISIONS) {
+    teams[division] = teamRows.rows
+      .filter((t) => String(t.division).toLowerCase() === division.toLowerCase())
+      .map((t) => ({ id: t.id, name: t.name }))
+  }
+
+  return NextResponse.json({ seasonId: season.id, seasonNumber: season.seasonNumber, brackets, settings, teams })
 }
 
+/**
+ * One action per request. The old handler was a single POST that did three very
+ * different things and logged all of them as `did "playoffs post"`; each branch
+ * now names itself in the audit log.
+ */
 async function postHandler(request) {
   const auth = await requireAdmin()
   if (!auth.ok) return auth.response
@@ -40,101 +80,136 @@ async function postHandler(request) {
   }
 
   const season = await getActiveSeason()
-  if (!season) {
-    return badRequest('No active season found')
-  }
+  if (!season) return badRequest('No active season found')
 
-  // ---- Auto-bracket: seed ONE division's bracket from the live standings
-  // (top 8: 1v8, 4v5, 2v7, 3v6 + empty Semis/Finals rounds to fill as results
-  // come in). Other divisions' brackets are untouched.
-  if (body.action === 'auto-bracket') {
-    const division = String(body.division || '')
-    if (!['Majors', 'AAA', 'AA'].includes(division)) return badRequest('division required')
-    const standings = await getStatsStandings(season.id, division)
-    if (standings.length < 8) {
-      return badRequest(`Need at least 8 teams with results in ${division} (have ${standings.length}).`)
-    }
-    const seed = (n) => standings[n - 1]
-    const qf = [[1, 8], [4, 5], [2, 7], [3, 6]]
+  const action = String(body.action || '')
+  const division = normalizeDivision(body.division)
 
-    await query(`DELETE FROM playoff_brackets WHERE season_id = $1 AND division = $2`, [season.id, division])
-    const br = await query(
-      `INSERT INTO playoff_brackets (season_id, division, name, is_published, display_order)
-       VALUES ($1, $2, $3, TRUE, 0) RETURNING id`,
-      [season.id, division, `${division} Playoffs`]
-    )
-    const bracketId = br.rows[0].id
-    const rounds = [
-      { n: 1, name: 'Quarter-Finals', isFinals: false, matchups: qf.map(([a, b]) => [seed(a), seed(b)]) },
-      { n: 2, name: 'Semi-Finals', isFinals: false, matchups: [] },
-      { n: 3, name: 'Finals', isFinals: true, matchups: [] },
-    ]
-    for (const r of rounds) {
-      const rr = await query(
-        `INSERT INTO playoff_rounds (bracket_id, round_number, round_order, name, is_finals)
-         VALUES ($1, $2, $2, $3, $4) RETURNING id`,
-        [bracketId, r.n, r.name, r.isFinals]
-      )
-      for (let m = 0; m < r.matchups.length; m += 1) {
-        const [home, away] = r.matchups[m]
-        await query(
-          `INSERT INTO playoff_matchups (round_id, home_team_id, away_team_id, best_of, order_index, match_order)
-           VALUES ($1, $2, $3, 7, $4, $4)`,
-          [rr.rows[0].id, home.teamId, away.teamId, m + 1]
-        )
+  try {
+    switch (action) {
+      // --- seed a division from the standings ------------------------------
+      case 'generate': {
+        if (!division) return badRequest('division required')
+        const qualifierCount = Math.max(2, Number(body.qualifierCount) || 8)
+        const standings = await getStatsStandings(season.id, division)
+        if (standings.length < qualifierCount) {
+          return badRequest(`Need at least ${qualifierCount} teams with results in ${division} (have ${standings.length}).`)
+        }
+        const result = await generateFromStandings(season.id, division, standings, {
+          qualifierCount,
+          bestOfByRound: body.bestOfByRound || {},
+        })
+        const seeded = standings.slice(0, qualifierCount).map((s, i) => `${s.team || s.teamName} (${i + 1})`)
+        return NextResponse.json({ ok: true, seeded, ...result })
       }
+
+      // --- set a matchup's teams by hand -----------------------------------
+      case 'set-teams': {
+        if (!body.matchupId) return badRequest('matchupId required')
+        const result = await setMatchupTeams(Number(body.matchupId), {
+          homeTeamId: body.homeTeamId ? Number(body.homeTeamId) : null,
+          awayTeamId: body.awayTeamId ? Number(body.awayTeamId) : null,
+        })
+        return NextResponse.json({ ok: true, ...result })
+      }
+
+      // --- record / correct a result by hand -------------------------------
+      case 'set-result': {
+        if (!body.matchupId) return badRequest('matchupId required')
+        const result = await setMatchupResult(Number(body.matchupId), {
+          homeScore: body.homeScore == null || body.homeScore === '' ? null : Number(body.homeScore),
+          awayScore: body.awayScore == null || body.awayScore === '' ? null : Number(body.awayScore),
+          winnerTeamId: body.winnerTeamId ? Number(body.winnerTeamId) : null,
+          resultKind: body.resultKind || 'series',
+        })
+        return NextResponse.json({ ok: true, ...result })
+      }
+
+      // --- hand a matchup back to the engine -------------------------------
+      case 'clear-result': {
+        if (!body.matchupId) return badRequest('matchupId required')
+        const result = await clearMatchupResult(Number(body.matchupId))
+        return NextResponse.json({ ok: true, ...result })
+      }
+
+      // --- per-round best-of ------------------------------------------------
+      case 'set-best-of': {
+        if (!body.roundId) return badRequest('roundId required')
+        const bestOf = await setRoundBestOf(Number(body.roundId), body.bestOf)
+        if (division) await recomputeBracket(season.id, division)
+        return NextResponse.json({ ok: true, bestOf })
+      }
+
+      // --- publish one division's bracket ----------------------------------
+      case 'set-published': {
+        if (!body.bracketId) return badRequest('bracketId required')
+        await setBracketPublished(Number(body.bracketId), body.isPublished)
+        return NextResponse.json({ ok: true })
+      }
+
+      // --- create a round's Discord threads --------------------------------
+      case 'create-threads': {
+        if (!division) return badRequest('division required')
+        const roundNumber = Number(body.roundNumber)
+        if (!roundNumber) return badRequest('roundNumber required')
+        const result = await createRoundThreads(season.id, division, roundNumber)
+        return NextResponse.json({
+          ok: true,
+          ...result,
+          note: result.created
+            ? `Bot creates ${result.created} thread(s) within ~60s.`
+            : 'Nothing to create — every matchup in that round already has a thread or is decided.',
+        })
+      }
+
+      // --- delete ONE matchup's thread -------------------------------------
+      case 'delete-thread': {
+        if (!body.weekThreadId) return badRequest('weekThreadId required')
+        const result = await queueMatchupThreadDelete(Number(body.weekThreadId), {
+          requestedByDiscordId: auth.session?.discordUserId || null,
+          requestedByUsername: auth.session?.discordUsername || auth.session?.user?.name || 'Website Admin',
+        })
+        return NextResponse.json({
+          ok: true,
+          ...result,
+          note: 'Queued — the bot saves the transcript and deletes the thread within ~60s.',
+        })
+      }
+
+      // --- re-derive everything --------------------------------------------
+      case 'refresh': {
+        if (division) {
+          const result = await recomputeBracket(season.id, division)
+          return NextResponse.json({ ok: true, results: [{ division, ...result }] })
+        }
+        const results = await refreshAllBrackets(season.id)
+        return NextResponse.json({ ok: true, results })
+      }
+
+      // --- automation + visibility switches ---------------------------------
+      case 'settings': {
+        const current = await getSiteConfig('playoffs')
+        const next = { ...current }
+        for (const key of ['enabled', 'autoAdvance', 'autoThreads', 'autoChampion', 'autoAnnounce']) {
+          if (key in (body.settings || {})) next[key] = Boolean(body.settings[key])
+        }
+        const saved = await setSiteConfig('playoffs', next)
+        return NextResponse.json({ ok: true, settings: saved })
+      }
+
+      default:
+        return badRequest(`Unknown action "${action || '(none)'}"`)
     }
-    return NextResponse.json({
-      ok: true,
-      seeded: qf.map(([a, b]) => `${seed(a).team} (${a}) vs ${seed(b).team} (${b})`),
-    })
+  } catch (err) {
+    // Surface the REAL reason. This route used to let a throw become an opaque
+    // 500, so a NOT NULL violation reached the operator as "Failed to save
+    // playoffs" and the actual Postgres message was only visible in higgenlogs.
+    return NextResponse.json({ error: err.message || 'Playoff action failed' }, { status: 500 })
   }
-
-  // ---- Create playoff week threads for a bracket round: materializes
-  // week_threads rows with week_number = 90 + round; the bot creates the
-  // Discord threads (named "Playoffs …") on its next tick.
-  if (body.action === 'create-threads') {
-    const division = String(body.division || '')
-    const roundNumber = Number(body.roundNumber)
-    if (!['Majors', 'AAA', 'AA'].includes(division) || !roundNumber) return badRequest('division + roundNumber required')
-    const ms = await query(`
-      SELECT ht.name AS home, at.name AS away
-      FROM playoff_matchups pm
-      JOIN playoff_rounds pr ON pr.id = pm.round_id
-      JOIN playoff_brackets pb ON pb.id = pr.bracket_id
-      LEFT JOIN teams ht ON ht.id = pm.home_team_id
-      LEFT JOIN teams at ON at.id = pm.away_team_id
-      WHERE pb.season_id = $1 AND pb.division = $2 AND pr.round_number = $3
-      ORDER BY pm.order_index
-    `, [season.id, division, roundNumber])
-    const pairs = ms.rows.filter((m) => m.home && m.away)
-    if (!pairs.length) return badRequest('That round has no filled-in matchups yet.')
-    const weekNumber = 90 + roundNumber
-    let created = 0
-    for (const m of pairs) {
-      const dupe = await query(
-        `SELECT 1 FROM week_threads WHERE season_id = $1 AND week_number = $2 AND division = $3
-           AND ((team1 = $4 AND team2 = $5) OR (team1 = $5 AND team2 = $4))`,
-        [season.id, weekNumber, division, m.home, m.away]
-      )
-      if (dupe.rows.length) continue
-      await query(
-        `INSERT INTO week_threads (season_id, week_number, division, team1, team2) VALUES ($1, $2, $3, $4, $5)`,
-        [season.id, weekNumber, division, m.home, m.away]
-      )
-      created += 1
-    }
-    return NextResponse.json({ ok: true, created, note: `Bot creates ${created} playoff thread(s) within ~60s.` })
-  }
-
-  const { brackets } = body || {}
-  if (!Array.isArray(brackets)) {
-    return badRequest('brackets must be an array')
-  }
-
-  await replacePlayoffBrackets(season.id, brackets, { published: true })
-  return NextResponse.json({ ok: true })
 }
 
-// Audit every write (actor + body + status -> /higgenlogs).
-export const POST = withAudit(postHandler, { action: 'playoffs.post' })
+// Audit every write. The slug names the specific action, so higgenlogs reads as
+// "auto-seeded a playoff bracket" rather than a generic `playoffs post`.
+export const POST = withAudit(postHandler, {
+  action: (body) => `playoffs.${body?.action || 'unknown'}`,
+})

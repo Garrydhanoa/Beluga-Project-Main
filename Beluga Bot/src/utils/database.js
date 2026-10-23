@@ -236,6 +236,55 @@ async function initializeDatabase() {
             )
         `);
 
+        // --- Playoff bracket graph -------------------------------------------
+        // MUST stay in sync with beluga-league-main/lib/leagueSchema.js. Whichever
+        // app boots first creates the columns; the other is a no-op.
+        //
+        // A matchup used to be two team ids and nothing else: no seed, no score, no
+        // winner, and no pointer at the slot the winner belongs in — which is why
+        // nothing could advance a bracket and round 2 had to be typed by hand.
+        // next_matchup_id/next_slot make advancement generic over any bracket size.
+        //
+        // These were also missing from the BOT's copy of playoff_brackets entirely
+        // (the website added them via ALTER), so a bot-first fresh DB broke every
+        // website bracket insert.
+        const playoffAlters = [
+            `ALTER TABLE playoff_brackets ADD COLUMN IF NOT EXISTS is_published BOOLEAN NOT NULL DEFAULT TRUE`,
+            `ALTER TABLE playoff_brackets ADD COLUMN IF NOT EXISTS display_order INTEGER NOT NULL DEFAULT 0`,
+            `ALTER TABLE playoff_brackets ADD COLUMN IF NOT EXISTS qualifier_count INTEGER NOT NULL DEFAULT 8`,
+            `ALTER TABLE playoff_rounds ADD COLUMN IF NOT EXISTS round_number INTEGER`,
+            `UPDATE playoff_rounds SET round_number = round_order WHERE round_number IS NULL`,
+            `ALTER TABLE playoff_rounds ALTER COLUMN round_number SET DEFAULT 1`,
+            // round_order is NOT NULL with no default; an INSERT that forgot it used
+            // to 500 every manual bracket save. We always write it now — this is a belt.
+            `ALTER TABLE playoff_rounds ALTER COLUMN round_order SET DEFAULT 1`,
+            `ALTER TABLE playoff_rounds ADD COLUMN IF NOT EXISTS best_of INTEGER NOT NULL DEFAULT 7`,
+            `ALTER TABLE playoff_matchups ADD COLUMN IF NOT EXISTS match_order INTEGER NOT NULL DEFAULT 1`,
+            `ALTER TABLE playoff_matchups ADD COLUMN IF NOT EXISTS home_seed INTEGER`,
+            `ALTER TABLE playoff_matchups ADD COLUMN IF NOT EXISTS away_seed INTEGER`,
+            `ALTER TABLE playoff_matchups ADD COLUMN IF NOT EXISTS home_score INTEGER`,
+            `ALTER TABLE playoff_matchups ADD COLUMN IF NOT EXISTS away_score INTEGER`,
+            `ALTER TABLE playoff_matchups ADD COLUMN IF NOT EXISTS winner_team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL`,
+            // 'series' | 'ffw' | 'double_ff' | 'bye'
+            `ALTER TABLE playoff_matchups ADD COLUMN IF NOT EXISTS result_kind TEXT`,
+            `ALTER TABLE playoff_matchups ADD COLUMN IF NOT EXISTS series_id INTEGER`,
+            `ALTER TABLE playoff_matchups ADD COLUMN IF NOT EXISTS next_matchup_id INTEGER REFERENCES playoff_matchups(id) ON DELETE SET NULL`,
+            `ALTER TABLE playoff_matchups ADD COLUMN IF NOT EXISTS next_slot TEXT`,
+            // Staff edited this matchup by hand -> recompute must never overwrite it.
+            `ALTER TABLE playoff_matchups ADD COLUMN IF NOT EXISTS manual_override BOOLEAN NOT NULL DEFAULT FALSE`,
+            `ALTER TABLE playoff_matchups ADD COLUMN IF NOT EXISTS is_bye BOOLEAN NOT NULL DEFAULT FALSE`,
+            `CREATE INDEX IF NOT EXISTS idx_playoff_matchups_round ON playoff_matchups(round_id, order_index)`,
+            `CREATE INDEX IF NOT EXISTS idx_playoff_matchups_next ON playoff_matchups(next_matchup_id)`,
+        ];
+        for (const sql of playoffAlters) {
+            // Idempotent and independent: log a failure so it shows in Railway logs,
+            // but never let one ALTER stop the bot from booting.
+            // eslint-disable-next-line no-await-in-loop
+            await pool.query(sql).catch((err) => {
+                Logger.error(`playoff schema step failed: ${sql.slice(0, 70)}… — ${err.message}`);
+            });
+        }
+
         await pool.query(`
             CREATE TABLE IF NOT EXISTS team_records (
                 id SERIAL PRIMARY KEY,

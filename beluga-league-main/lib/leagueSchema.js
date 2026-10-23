@@ -166,6 +166,11 @@ async function runMigrations() {
   await step('playoff_rounds.round_number', `ALTER TABLE playoff_rounds ADD COLUMN IF NOT EXISTS round_number INTEGER`)
   await step('playoff_rounds.round_number backfill', `UPDATE playoff_rounds SET round_number = round_order WHERE round_number IS NULL`)
   await step('playoff_rounds.round_number default', `ALTER TABLE playoff_rounds ALTER COLUMN round_number SET DEFAULT 1`)
+  // round_order is NOT NULL with no default, and an INSERT that forgot it used to
+  // 500 every manual bracket save. We always write it now; the default is a belt
+  // so a future omission degrades instead of blowing up the whole save.
+  await step('playoff_rounds.round_order default', `ALTER TABLE playoff_rounds ALTER COLUMN round_order SET DEFAULT 1`)
+  await step('playoff_rounds.best_of', `ALTER TABLE playoff_rounds ADD COLUMN IF NOT EXISTS best_of INTEGER NOT NULL DEFAULT 7`)
 
   await step('playoff_matchups', `
     CREATE TABLE IF NOT EXISTS playoff_matchups (
@@ -182,6 +187,30 @@ async function runMigrations() {
   await step('playoff_matchups.match_order', `ALTER TABLE playoff_matchups ADD COLUMN IF NOT EXISTS match_order INTEGER NOT NULL DEFAULT 1`)
   await step('playoff_matchups.match_order backfill', `UPDATE playoff_matchups SET match_order = order_index WHERE match_order IS NULL`)
   await step('idx_playoff_matchups_round', `CREATE INDEX IF NOT EXISTS idx_playoff_matchups_round ON playoff_matchups(round_id, order_index)`)
+
+  // --- Bracket graph (2026-09) -------------------------------------------------
+  // A matchup used to be two team ids and nothing else: no seed, no score, no
+  // winner, and no pointer at the slot the winner belongs in. That is why nothing
+  // could ever advance a bracket and round 2 had to be typed in by hand. These
+  // columns turn playoff_matchups into a real graph, so advancement is generic
+  // over any bracket size.
+  await step('playoff_matchups.home_seed', `ALTER TABLE playoff_matchups ADD COLUMN IF NOT EXISTS home_seed INTEGER`)
+  await step('playoff_matchups.away_seed', `ALTER TABLE playoff_matchups ADD COLUMN IF NOT EXISTS away_seed INTEGER`)
+  await step('playoff_matchups.home_score', `ALTER TABLE playoff_matchups ADD COLUMN IF NOT EXISTS home_score INTEGER`)
+  await step('playoff_matchups.away_score', `ALTER TABLE playoff_matchups ADD COLUMN IF NOT EXISTS away_score INTEGER`)
+  await step('playoff_matchups.winner_team_id', `ALTER TABLE playoff_matchups ADD COLUMN IF NOT EXISTS winner_team_id INTEGER REFERENCES teams(id) ON DELETE SET NULL`)
+  // 'series' | 'ffw' | 'double_ff' | 'bye'
+  await step('playoff_matchups.result_kind', `ALTER TABLE playoff_matchups ADD COLUMN IF NOT EXISTS result_kind TEXT`)
+  await step('playoff_matchups.series_id', `ALTER TABLE playoff_matchups ADD COLUMN IF NOT EXISTS series_id INTEGER`)
+  // Where this matchup's winner goes next. Self-referential, so a bracket of any
+  // shape (8, 10 with byes, 16) is just a different wiring of the same table.
+  await step('playoff_matchups.next_matchup_id', `ALTER TABLE playoff_matchups ADD COLUMN IF NOT EXISTS next_matchup_id INTEGER REFERENCES playoff_matchups(id) ON DELETE SET NULL`)
+  await step('playoff_matchups.next_slot', `ALTER TABLE playoff_matchups ADD COLUMN IF NOT EXISTS next_slot TEXT`)
+  // Staff edited this matchup by hand -> recompute must never overwrite it.
+  await step('playoff_matchups.manual_override', `ALTER TABLE playoff_matchups ADD COLUMN IF NOT EXISTS manual_override BOOLEAN NOT NULL DEFAULT FALSE`)
+  await step('playoff_matchups.is_bye', `ALTER TABLE playoff_matchups ADD COLUMN IF NOT EXISTS is_bye BOOLEAN NOT NULL DEFAULT FALSE`)
+  await step('playoff_brackets.qualifier_count', `ALTER TABLE playoff_brackets ADD COLUMN IF NOT EXISTS qualifier_count INTEGER NOT NULL DEFAULT 8`)
+  await step('idx_playoff_matchups_next', `CREATE INDEX IF NOT EXISTS idx_playoff_matchups_next ON playoff_matchups(next_matchup_id)`)
 
   await step('team_records', `
     CREATE TABLE IF NOT EXISTS team_records (
@@ -549,6 +578,11 @@ async function runMigrations() {
     )
   `)
   await step('idx_week_thread_actions_status', `CREATE INDEX IF NOT EXISTS idx_week_thread_actions_status ON week_thread_actions(status, requested_at)`)
+  // Target ONE thread instead of a whole week. Needed for the playoff tab's
+  // "delete this matchup's thread" — deleting an entire playoff round to clear a
+  // single mis-created thread was the only option before. `action` has no CHECK
+  // constraint, so new verbs ('delete_matchup') need no migration of their own.
+  await step('week_thread_actions.week_thread_id', `ALTER TABLE week_thread_actions ADD COLUMN IF NOT EXISTS week_thread_id INTEGER`)
 
   // Per-division on-field salary caps live on season_config as JSONB, e.g.
   // {"Majors": 200, "AAA": 165, "AA": 130}. Used by the roster page's 3-player

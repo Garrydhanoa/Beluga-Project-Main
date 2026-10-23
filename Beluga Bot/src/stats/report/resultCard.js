@@ -8,10 +8,18 @@
  * embed — the card is never load-bearing).
  */
 
+// fontManager MUST be required before canvas: it registers the bundled Anton /
+// Barlow faces, and node-canvas only picks up fonts registered before the module
+// is loaded. Railway builds with nixpacks on an image that ships no fonts, so
+// without this the card silently renders in a generic fallback face. Every other
+// card module does this; this one was missing it (config pulls fontManager in,
+// but only AFTER canvas had already loaded).
+require('../../utils/fontManager');
 const { createCanvas, loadImage } = require('canvas');
 const { getTeamLogoBufferByName } = require('../../utils/teamRoles');
 const { config } = require('../../config/config');
 const Logger = require('../../utils/logger');
+const { weekLabel } = require('../playoffBracket');
 
 const FONT = (config && config.images && config.images.fontFamily) ? config.images.fontFamily : 'sans-serif';
 
@@ -120,7 +128,7 @@ async function buildResultCard(o) {
         ctx.fillStyle = '#8aa8cc';
         ctx.font = `22px ${FONT}`;
         const ffLabel = isDouble ? '  ·  DOUBLE FORFEIT' : o.isForfeit ? '  ·  FORFEIT' : '';
-        ctx.fillText(`${o.division} · ${o.week != null ? `Week ${o.week}` : 'Series'}${ffLabel}`, W / 2, 66);
+        ctx.fillText(`${o.division} · ${o.week != null ? weekLabel(o.week) : 'Series'}${ffLabel}`, W / 2, 66);
 
         // Main: winner left, loser right.
         const logoSize = 170;

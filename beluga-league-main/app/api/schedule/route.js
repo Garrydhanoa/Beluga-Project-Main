@@ -2,8 +2,12 @@ import { NextResponse } from 'next/server'
 import {
   resolveSeason,
   getScheduleMatches,
-  getPlayoffMatchups,
 } from '../../../lib/leagueStore'
+
+// Playoffs used to be bolted onto this route and rendered as a bare list at the
+// bottom of /schedules — with no publish gate (is_published was fetched and then
+// discarded) and with team IDs thrown away, so its logos fell back to ambiguous
+// name lookups. The dedicated /playoffs page and /api/public/playoffs replace it.
 
 export const dynamic = 'force-dynamic'
 
@@ -34,48 +38,17 @@ function groupedRegular(matches) {
   return out
 }
 
-function groupedPlayoffs(brackets) {
-  const out = {
-    aa: [],
-    aaa: [],
-    majors: [],
-  }
-
-  for (const bracket of brackets) {
-    const divisionKey = String(bracket.division || '').toLowerCase() === 'majors'
-      ? 'majors'
-      : String(bracket.division || '').toLowerCase()
-
-    if (!out[divisionKey]) continue
-
-    out[divisionKey].push({
-      id: bracket.id,
-      name: bracket.name,
-      rounds: (bracket.rounds || []).map((round) => ({
-        id: round.id,
-        name: round.name,
-        roundNumber: round.roundNumber,
-        matchups: (round.matchups || []).map((m) => [m.homeTeam, m.awayTeam]),
-      })),
-    })
-  }
-
-  return out
-}
-
 export async function GET(request) {
   const seasonParam = new URL(request.url).searchParams.get('season')
   const season = await resolveSeason(seasonParam)
   if (!season) {
-    return NextResponse.json({ season: null, regular: { aa: {}, aaa: {}, majors: {} }, playoffs: { aa: [], aaa: [], majors: [] } })
+    return NextResponse.json({ season: null, regular: { aa: {}, aaa: {}, majors: {} } })
   }
 
   const regular = await getScheduleMatches(season.id, { publishedOnly: true })
-  const playoffs = await getPlayoffMatchups(season.id)
 
   return NextResponse.json({
     season,
     regular: groupedRegular(regular),
-    playoffs: groupedPlayoffs(playoffs),
   })
 }

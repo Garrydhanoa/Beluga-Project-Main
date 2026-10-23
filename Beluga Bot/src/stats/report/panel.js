@@ -11,6 +11,7 @@ const sessions = require('./sessionStore');
 const { PANEL_REPOST_MS, ABANDON_PING_MS, SALARY_CREW_ROLE_ID } = require('./constants');
 const { pool, isDatabaseAvailable } = require('../../utils/database');
 const Logger = require('../../utils/logger');
+const { isPlayoffWeek, roundFromWeek, roundNameFor } = require('../playoffBracket');
 
 function db() { return typeof isDatabaseAvailable === 'function' ? isDatabaseAvailable() : isDatabaseAvailable; }
 
@@ -27,7 +28,7 @@ function buildPanelMessage(ctx) {
         )
         .addFields(
             { name: 'Division', value: String(ctx.division), inline: true },
-            { name: 'Week', value: String(ctx.week ?? '—'), inline: true },
+            { name: isPlayoffWeek(ctx.week) ? 'Round' : 'Week', value: ctx.week == null ? '—' : (isPlayoffWeek(ctx.week) ? roundNameFor(roundFromWeek(ctx.week), 3) : String(ctx.week)), inline: true },
         )
         .setFooter({ text: 'Only a captain/GM of these franchises (or salary crew) can use this.' });
 
@@ -36,7 +37,16 @@ function buildPanelMessage(ctx) {
             .setCustomId(ids.build('start'))
             .setLabel('Report Series')
             .setEmoji('📊')
-            .setStyle(ButtonStyle.Primary)
+            .setStyle(ButtonStyle.Primary),
+        // Salary crew only, enforced in the handler (Discord can't gate a button
+        // by role). Before this, a forfeit could only be recorded with a slash
+        // command whose week option was capped at 30 — so a playoff FF had no
+        // route at all and two S10 quarter-finals were never recorded.
+        new ButtonBuilder()
+            .setCustomId(ids.build('ff'))
+            .setLabel('Report Forfeit')
+            .setEmoji('🏳️')
+            .setStyle(ButtonStyle.Secondary)
     );
     return { embeds: [embed], components: [row] };
 }

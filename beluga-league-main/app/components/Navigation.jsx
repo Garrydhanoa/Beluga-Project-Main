@@ -20,10 +20,32 @@ const NAV_LINKS = [
   { label: 'Rulebook', href: '/rulebook' },
 ];
 
+// Playoffs only appears when staff switch it on (admin → Playoffs → Public
+// website). Inserted next to Schedules rather than appended, so the postseason
+// sits with the rest of the fixtures.
+const PLAYOFFS_LINK = { label: 'Playoffs', href: '/playoffs' };
+const PLAYOFFS_AFTER = '/schedules';
+
 export default function Navigation() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  const [showPlayoffs, setShowPlayoffs] = useState(false);
   const pathname = usePathname();
+
+  // This is a client component, so the flag can't be read from the DB directly.
+  // Same pattern as NotificationBar: fetch, and stay hidden on any failure.
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/public/site-flags', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((d) => { if (!cancelled) setShowPlayoffs(Boolean(d?.playoffs)); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  const navLinks = showPlayoffs
+    ? NAV_LINKS.flatMap((l) => (l.href === PLAYOFFS_AFTER ? [l, PLAYOFFS_LINK] : [l]))
+    : NAV_LINKS;
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 20);
@@ -101,7 +123,7 @@ export default function Navigation() {
         {/* Desktop Links — only at xl+ where all 8 links fit comfortably;
             below that the hamburger menu takes over so they never cluster. */}
         <div className="hidden xl:flex items-center gap-0.5">
-          {NAV_LINKS.map((link) => {
+          {navLinks.map((link) => {
             const active = isActive(link.href);
             return (
               <Link
@@ -186,7 +208,7 @@ export default function Navigation() {
         >
           <div className="container mx-auto px-4 py-5">
             <div className="flex flex-col gap-1">
-              {NAV_LINKS.map((link, i) => {
+              {navLinks.map((link, i) => {
                 const active = isActive(link.href);
                 return (
                   <Link

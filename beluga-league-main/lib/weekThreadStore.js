@@ -232,6 +232,13 @@ export async function deleteWeekThread(id) {
  * Mirrors `Beluga Bot/src/stats/weekReportCheck.js` exactly; the bot re-runs the
  * same check before it actually deletes, so this is a preview for the warning
  * dialog and never the sole gate.
+ *
+ * `is_playoff` is matched to the WEEK, not hardcoded to FALSE. This used to read
+ * `AND s.is_playoff = FALSE`, which meant a playoff report (always is_playoff =
+ * TRUE, because week >= 90) could never satisfy the sub-select: every playoff
+ * thread read as unreported forever and the week could only be force-deleted.
+ * A regular-season week still only counts regular-season series, so nothing about
+ * weeks 1-30 changes.
  */
 export async function getUnreportedForWeek(seasonId, weekNumber) {
   await ensureLeagueSchema()
@@ -246,7 +253,7 @@ export async function getUnreportedForWeek(seasonId, weekNumber) {
             JOIN teams ht ON ht.id = s.home_team_id
             JOIN teams at ON at.id = s.away_team_id
            WHERE s.status = 'confirmed'
-             AND s.is_playoff = FALSE
+             AND s.is_playoff = (wt.week_number >= 90)
              AND s.week = wt.week_number
              AND (wt.season_id IS NULL OR s.season_id = wt.season_id)
              AND LOWER(s.division) = LOWER(wt.division)

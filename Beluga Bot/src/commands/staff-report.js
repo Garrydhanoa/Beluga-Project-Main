@@ -3,6 +3,7 @@ const { pool, LeagueDB } = require('../utils/database');
 const { teamAutocomplete } = require('../utils/teamRoles');
 const { isSalaryCrew } = require('../stats/report/threadContext');
 const flow = require('../stats/report/flow');
+const { weekForRound } = require('../stats/playoffBracket');
 
 /**
  * /staff-report — salary-crew-only "missed week" report, usable in ANY channel.
@@ -27,8 +28,16 @@ module.exports = {
             .setAutocomplete(true))
         .addStringOption((o) => o.setName('away_team').setDescription('Away team').setRequired(true)
             .setAutocomplete(true))
-        .addIntegerOption((o) => o.setName('week').setDescription('Week number').setRequired(false).setMinValue(1).setMaxValue(30))
-        .addBooleanOption((o) => o.setName('playoffs').setDescription('Is this a playoff series?').setRequired(false)),
+        // Max was 30, which put playoff weeks (90 + round) out of reach entirely.
+        // Either give a regular-season week, or pick a playoff round and the week
+        // is derived from it.
+        .addIntegerOption((o) => o.setName('week').setDescription('Week number (regular season)').setRequired(false).setMinValue(1).setMaxValue(89))
+        .addStringOption((o) => o.setName('round').setDescription('Playoff round — use this INSTEAD of week').setRequired(false)
+            .addChoices(
+                { name: 'Playoffs - Quarter-Finals', value: '1' },
+                { name: 'Playoffs - Semi-Finals', value: '2' },
+                { name: 'Playoffs - Finals', value: '3' },
+            )),
 
     // Live team list from the current season (DB), filtered by the chosen division.
     async autocomplete(interaction) {
@@ -45,8 +54,13 @@ module.exports = {
         const division = interaction.options.getString('division');
         const homeName = interaction.options.getString('home_team');
         const awayName = interaction.options.getString('away_team');
-        const week = interaction.options.getInteger('week') ?? 0;
-        const isPlayoff = Boolean(interaction.options.getBoolean('playoffs'));
+        // A playoff round resolves to week 90 + round; `is_playoff` follows from
+        // that, so the two can never disagree (the old boolean could be set with a
+        // regular-season week, producing a playoff series at week 9 — there is one
+        // such row in the live data).
+        const roundOpt = interaction.options.getString('round');
+        const isPlayoff = Boolean(roundOpt);
+        const week = isPlayoff ? weekForRound(Number(roundOpt)) : (interaction.options.getInteger('week') ?? 0);
 
         if (homeName === awayName) {
             await interaction.reply({ content: '❌ Home and away must be different teams.', flags: 64 });

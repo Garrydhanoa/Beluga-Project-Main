@@ -70,6 +70,9 @@ export default function SeasonsPage() {
                     <SeasonLink label="Standings" href="/standings" seasonNumber={s.seasonNumber} isActive={s.isActive} setSeason={setSeason} />
                     <SeasonLink label="Leaderboards" href="/leaderboards" seasonNumber={s.seasonNumber} isActive={s.isActive} setSeason={setSeason} />
                     <SeasonLink label="Power Rankings" href="/power-rankings" seasonNumber={s.seasonNumber} isActive={s.isActive} setSeason={setSeason} />
+                    {/* A past season's bracket stays readable whether or not the
+                        live Playoffs tab is switched on — it is league history. */}
+                    <SeasonLink label="Bracket" href="/playoffs" seasonNumber={s.seasonNumber} isActive={s.isActive} setSeason={setSeason} />
                   </div>
                 </div>
 

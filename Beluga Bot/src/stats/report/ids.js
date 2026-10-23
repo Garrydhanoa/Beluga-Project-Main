@@ -12,6 +12,8 @@
  *   rs:reject:<sessionId>:<side>      reject at final confirm
  *   rs:cancel:<sessionId>             cancel the whole report
  *   rs:scconfirm:<sessionId>          salary-crew instant finalize
+ *   rs:ff                             panel "Report Forfeit" button (salary crew)
+ *   rs:ffpick:<winnerCode>            forfeit outcome: h | a | double
  */
 
 const PREFIX = 'rs';

@@ -7,6 +7,18 @@ const DEFAULTS = {
     message: '',
     href: '/players',
   },
+  // Playoffs: `enabled` is the public visibility switch (nav link + /playoffs for
+  // the CURRENT season — archived seasons stay reachable regardless). The rest are
+  // the automation switches, mirrored in the bot's playoffBracket.js DEFAULT_SETTINGS.
+  // They default ON so a fresh install runs itself; `enabled` defaults OFF so a
+  // half-seeded bracket is never public by accident.
+  playoffs: {
+    enabled: false,
+    autoAdvance: true,
+    autoThreads: true,
+    autoChampion: true,
+    autoAnnounce: true,
+  },
 }
 
 export async function getSiteConfig(key) {

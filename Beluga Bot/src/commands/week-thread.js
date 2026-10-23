@@ -12,6 +12,12 @@ const { ROLES } = require('../constants/roles');
 const { pool, isDatabaseAvailable, LeagueDB } = require('../utils/database');
 // Week rollover is 9:00 AM Monday US Eastern, not UTC midnight.
 const { currentLeagueWeek, weekOpensAt, formatEastern } = require('../utils/leagueWeek');
+// Playoff rounds live at week 90 + round. Those integers stay (threadContext and
+// the ranking/game-of-week filters key off `week >= 90`), but every string a
+// human reads goes through weekLabel so nobody is shown "Week 91" again.
+const {
+    weekLabel, isPlayoffWeek, roundFromWeek, roundNameFor, shortRoundName,
+} = require('../stats/playoffBracket');
 
 // Channel ID for match threads
 const MATCHES_CHANNEL_ID = '1444621891275985037';
@@ -244,6 +250,10 @@ async function initializeWeekThreadsTable() {
             )
         `).catch(() => {});
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_week_thread_actions_status ON week_thread_actions(status, requested_at)`).catch(() => {});
+        // Target ONE thread instead of a whole week — the playoff tab's "delete
+        // this matchup's thread". `action` has no CHECK constraint, so new verbs
+        // ('delete_matchup') need no migration of their own.
+        await pool.query(`ALTER TABLE week_thread_actions ADD COLUMN IF NOT EXISTS week_thread_id INTEGER`).catch(() => {});
 
         Logger.success('Week threads table initialized');
         return true;
@@ -375,9 +385,10 @@ async function createMatchThread(channel, weekNumber, matchNumber, team1, team2,
 
         // Create the thread name with division at the front. week_number >= 90
         // is the playoffs convention (90 + bracket round) → distinct naming.
-        const PLAYOFF_LABELS = { 91: 'Playoffs QF', 92: 'Playoffs Semis', 93: 'Playoffs Finals' };
-        const threadName = weekNumber >= 90
-            ? `${PLAYOFF_LABELS[weekNumber] || `Playoffs R${weekNumber - 90}`}: ${division}: ${team1} vs ${team2}`
+        // The round names come from the shared bracket helper so a thread, an
+        // embed and a slash reply can never disagree about what week 92 is.
+        const threadName = isPlayoffWeek(weekNumber)
+            ? `Playoffs ${shortRoundName(roundNameFor(roundFromWeek(weekNumber), 3))}: ${division}: ${team1} vs ${team2}`
             : `Week ${weekNumber}: ${division}: ${team1} vs ${team2}`;
         
         // Create private thread with invites disabled
@@ -487,8 +498,12 @@ async function createMatchThread(channel, weekNumber, matchNumber, team1, team2,
         // This will automatically add all players with those roles
         // ========================================
         const openingEmbed = new EmbedBuilder()
-            .setTitle(`Week ${weekNumber} Match Thread`)
-            .setDescription(`**${team1}** vs **${team2}**\n\n**Division:** ${division}\n**Week:** ${weekNumber}\n**Match:** ${matchNumber}`)
+            .setTitle(isPlayoffWeek(weekNumber) ? `${weekLabel(weekNumber)} Match Thread` : `Week ${weekNumber} Match Thread`)
+            .setDescription(
+                `**${team1}** vs **${team2}**\n\n**Division:** ${division}\n` +
+                `**${isPlayoffWeek(weekNumber) ? 'Round' : 'Week'}:** ${isPlayoffWeek(weekNumber) ? roundNameFor(roundFromWeek(weekNumber), 3) : weekNumber}\n` +
+                `**Match:** ${matchNumber}`
+            )
             .addFields(
                 { 
                     name: 'Thread Rules', 
@@ -631,7 +646,7 @@ async function deleteWeekThreads(guild, weekNumber, client, closedByUsername = '
     const threadRecords = await getWeekThreadIds(weekNumber);
     
     if (threadRecords.length === 0) {
-        return { success: false, error: `No threads found for Week ${weekNumber}.` };
+        return { success: false, error: `No threads found for ${weekLabel(weekNumber)}.` };
     }
 
     // Get transcript channel
@@ -657,7 +672,7 @@ async function deleteWeekThreads(guild, weekNumber, client, closedByUsername = '
                 // Post a pointer to the website transcript (no more dpaste link).
                 if (transcriptChannel) {
                     const transcriptEmbed = new EmbedBuilder()
-                        .setTitle(`🧵 Week ${weekNumber} Thread Closed: ${record.division}`)
+                        .setTitle(`🧵 ${weekLabel(weekNumber)} Thread Closed: ${record.division}`)
                         .setDescription(`**${record.team1}** vs **${record.team2}**\n\n${weekThreadTranscriptPointer()}`)
                         .addFields(
                             { name: 'Division', value: record.division, inline: true },
@@ -880,16 +895,81 @@ async function reconcileWeekThreadClosures(client) {
 }
 
 /**
- * Process website-queued week-thread actions (week_thread_actions). Currently
- * supports action='delete', which runs the SAME flow as /week-thread delete:
- * saves each thread's transcript on the website + deletes the Discord thread(s).
+ * Delete ONE week_threads row's Discord thread, saving its transcript first.
+ *
+ * Same contract as deleteWeekThreads (archive → delete → drop the row), just
+ * scoped to a single matchup. Used by the playoff tab, where deleting a whole
+ * round to clear one bad thread is far too blunt.
+ *
+ * Deliberately NOT gated on the series being reported: this is the targeted
+ * "that thread is wrong, remove it" tool, and the person clicking it is staff
+ * acting on one specific matchup. The week-level delete keeps its gate.
+ */
+async function deleteSingleWeekThread(guild, weekThreadId, client, closedByUsername = 'Website Admin') {
+    if (!isDatabaseAvailable()) {
+        return { success: false, message: 'database unavailable' };
+    }
+    if (!weekThreadId) {
+        return { success: false, message: 'no thread id given' };
+    }
+
+    try {
+        const r = await pool.query(
+            `SELECT id, thread_id, season_id, week_number, division, team1, team2, match_number
+               FROM week_threads WHERE id = $1`,
+            [weekThreadId]
+        );
+        if (!r.rows.length) {
+            return { success: false, message: 'that thread record no longer exists' };
+        }
+        const record = r.rows[0];
+        const label = `${record.division} ${record.team1} vs ${record.team2}`;
+
+        if (record.thread_id) {
+            const thread = await client.channels.fetch(String(record.thread_id)).catch(() => null);
+            // Archive whether or not the Discord thread still exists — the
+            // transcript rows are the thing worth keeping.
+            await archiveWeekThread(record, record.week_number, closedByUsername, thread);
+
+            if (thread) {
+                const transcriptChannel = await client.channels
+                    .fetch(WEEK_THREAD_TRANSCRIPT_CHANNEL_ID).catch(() => null);
+                if (transcriptChannel?.isTextBased?.()) {
+                    const embed = new EmbedBuilder()
+                        .setColor(0x3498DB)
+                        .setTitle(`🧵 ${weekLabel(record.week_number)} Thread Closed: ${record.division}`)
+                        .setDescription(`**${record.team1}** vs **${record.team2}**\n\n${weekThreadTranscriptPointer()}`)
+                        .setFooter({ text: `Closed by ${closedByUsername}` })
+                        .setTimestamp();
+                    await transcriptChannel.send({ embeds: [embed] }).catch(() => {});
+                }
+                await thread.delete(`${weekLabel(record.week_number)} thread removed by ${closedByUsername}`).catch(() => {});
+            }
+        }
+
+        await pool.query('DELETE FROM week_threads WHERE id = $1', [record.id]);
+        await refreshKnownThreadIds();
+
+        Logger.success(`Deleted single week thread #${record.id} (${label}) for ${closedByUsername}`);
+        return { success: true, message: `deleted ${label} and saved its transcript` };
+    } catch (err) {
+        Logger.error('deleteSingleWeekThread failed', err);
+        return { success: false, message: err.message || 'delete failed' };
+    }
+}
+
+/**
+ * Process website-queued week-thread actions (week_thread_actions). Supports
+ * 'delete' / 'force_delete' (whole week), 'ping_unreported', and
+ * 'delete_matchup' (one thread). All run the SAME flow as /week-thread delete:
+ * save the transcript on the website, then delete the Discord thread(s).
  */
 async function processWeekThreadActions(client) {
     if (!isDatabaseAvailable()) return;
     let rows;
     try {
         const r = await pool.query(`
-            SELECT id, action, week_number, requested_by_username
+            SELECT id, action, week_number, week_thread_id, requested_by_username
             FROM week_thread_actions
             WHERE status = 'pending'
             ORDER BY requested_at
@@ -915,6 +995,22 @@ async function processWeekThreadActions(client) {
                 await pool.query(
                     `UPDATE week_thread_actions SET status = 'fulfilled', result = $2, fulfilled_at = CURRENT_TIMESTAMP WHERE id = $1`,
                     [row.id, `pinged ${pinged} of ${unreported.length} unreported thread(s)${failed ? `, ${failed} failed` : ''}`]
+                );
+                continue;
+            }
+
+            // Delete ONE matchup's thread (the playoff tab's per-matchup control).
+            // Before this the smallest unit was a whole week, so clearing a single
+            // mis-created playoff thread meant deleting the entire round.
+            // Transcript-then-delete, exactly like a week delete.
+            if (row.action === 'delete_matchup') {
+                const result = await deleteSingleWeekThread(
+                    guild, row.week_thread_id, client,
+                    row.requested_by_username || 'Website Admin'
+                );
+                await pool.query(
+                    `UPDATE week_thread_actions SET status = $2, result = $3, fulfilled_at = CURRENT_TIMESTAMP WHERE id = $1`,
+                    [row.id, result.success ? 'fulfilled' : 'failed', result.message]
                 );
                 continue;
             }
@@ -1044,10 +1140,13 @@ module.exports = {
         .addIntegerOption(option =>
             option
                 .setName('week')
-                .setDescription('Week number')
+                // Playoff rounds are weeks 91-93 (90 + round). The old max of 30 put
+                // them out of reach, so a playoff week could not be made OR deleted
+                // from Discord at all.
+                .setDescription('Week number (playoffs: 91 = QF, 92 = Semis, 93 = Finals)')
                 .setRequired(true)
                 .setMinValue(1)
-                .setMaxValue(30)
+                .setMaxValue(99)
         ),
 
     async execute(interaction) {
@@ -1084,7 +1183,7 @@ module.exports = {
                 }
 
                 await interaction.editReply({
-                    content: `⏳ Materializing Week ${weekNumber} from the DB schedule…`,
+                    content: `⏳ Materializing ${weekLabel(weekNumber)} from the DB schedule…`,
                 });
 
                 const inserted = await materializeWeekFromDb(season.id, weekNumber);
@@ -1096,7 +1195,7 @@ module.exports = {
                     ).catch(() => ({ rows: [{ n: 0 }] }));
                     if (existing.rows[0].n === 0) {
                         return await interaction.followUp({
-                            content: `❌ No published schedule found for Week ${weekNumber} in the DB. Generate/publish the schedule on the website first.`,
+                            content: `❌ No published schedule found for ${weekLabel(weekNumber)} in the DB. Generate/publish the schedule on the website first.`,
                             ephemeral: true,
                         });
                     }
@@ -1105,7 +1204,7 @@ module.exports = {
                 // Create the Discord threads for any pending rows now.
                 const result = await processPendingWeekThreads(interaction.client);
                 await interaction.followUp({
-                    content: `✅ Week ${weekNumber}: materialized **${inserted}** new matchup(s); created **${result.processed}** Discord thread(s)${result.errors?.length ? ` (${result.errors.length} error(s))` : ''}.`,
+                    content: `✅ ${weekLabel(weekNumber)}: materialized **${inserted}** new matchup(s); created **${result.processed}** Discord thread(s)${result.errors?.length ? ` (${result.errors.length} error(s))` : ''}.`,
                     ephemeral: true,
                 });
 
@@ -1120,7 +1219,7 @@ module.exports = {
                 if (unreported.length) {
                     const total = await countWeekThreads(weekNumber, season?.id ?? null);
                     await interaction.editReply({
-                        content: `⏳ Week ${weekNumber} has unreported series — notifying salary crew…`,
+                        content: `⏳ ${weekLabel(weekNumber)} has unreported series — notifying salary crew…`,
                     });
 
                     const { pinged } = await pingUnreportedThreads(
@@ -1129,7 +1228,7 @@ module.exports = {
 
                     const embed = new EmbedBuilder()
                         .setColor(0xE74C3C)
-                        .setTitle(`⚠️ Week ${weekNumber} not deleted — ${unreported.length} series unreported`)
+                        .setTitle(`⚠️ ${weekLabel(weekNumber)} not deleted — ${unreported.length} series unreported`)
                         .setDescription(
                             `**${total - unreported.length} of ${total}** series are reported.\n\n` +
                             `${formatUnreportedList(unreported)}\n\n` +
@@ -1140,7 +1239,7 @@ module.exports = {
                     const row = new ActionRowBuilder().addComponents(
                         new ButtonBuilder()
                             .setCustomId(`wt:forcedel:${weekNumber}`)
-                            .setLabel(`Delete Week ${weekNumber} anyway`)
+                            .setLabel(`Delete ${weekLabel(weekNumber)} anyway`)
                             .setStyle(ButtonStyle.Danger),
                         new ButtonBuilder()
                             .setCustomId('wt:cancel')
@@ -1152,14 +1251,14 @@ module.exports = {
                 }
 
                 await interaction.editReply({
-                    content: `⏳ Deleting Week ${weekNumber} match threads...`,
+                    content: `⏳ Deleting ${weekLabel(weekNumber)} match threads...`,
                 });
 
                 const result = await deleteWeekThreads(interaction.guild, weekNumber, interaction.client, interaction.user.username);
 
                 if (result.success) {
                     await interaction.followUp({
-                        content: `✅ Deleted **${result.deletedCount}** match thread(s) for Week ${weekNumber} and saved their transcripts on the website.${result.failedCount > 0 ? ` (${result.failedCount} failed to delete)` : ''}`,
+                        content: `✅ Deleted **${result.deletedCount}** match thread(s) for ${weekLabel(weekNumber)} and saved their transcripts on the website.${result.failedCount > 0 ? ` (${result.failedCount} failed to delete)` : ''}`,
                         ephemeral: true
                     });
                 } else {
@@ -1210,7 +1309,7 @@ module.exports = {
         if (parts[1] === 'forcedel') {
             const weekNumber = Number(parts[2]);
             await interaction.update({
-                content: `⏳ Force-deleting Week ${weekNumber} match threads…`,
+                content: `⏳ Force-deleting ${weekLabel(weekNumber)} match threads…`,
                 embeds: [], components: [],
             }).catch(() => {});
 
@@ -1223,7 +1322,7 @@ module.exports = {
             );
             await interaction.followUp({
                 content: result.success
-                    ? `⚠️ Force-deleted **${result.deletedCount}** thread(s) for Week ${weekNumber} with series still unreported. Transcripts were saved.`
+                    ? `⚠️ Force-deleted **${result.deletedCount}** thread(s) for ${weekLabel(weekNumber)} with series still unreported. Transcripts were saved.`
                     : `❌ Failed to delete threads: ${result.error}`,
                 ephemeral: true,
             }).catch(() => {});

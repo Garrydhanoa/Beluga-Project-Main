@@ -103,7 +103,6 @@ export default function SchedulesPage() {
   const { season } = useSeason()
   const [activeTab, setActiveTab] = useState('aa')
   const [regular, setRegular] = useState({ aa: {}, aaa: {}, majors: {} })
-  const [playoffs, setPlayoffs] = useState({ aa: [], aaa: [], majors: [] })
   const [seasonLabel, setSeasonLabel] = useState('Season')
 
   useEffect(() => {
@@ -111,14 +110,12 @@ export default function SchedulesPage() {
       .then((r) => r.json())
       .then((data) => {
         setRegular(data?.regular || { aa: {}, aaa: {}, majors: {} })
-        setPlayoffs(data?.playoffs || { aa: [], aaa: [], majors: [] })
         setSeasonLabel(data?.season?.seasonNumber ? `Season ${data.season.seasonNumber}` : 'Season')
       })
       .catch(() => {})
   }, [season])
 
   const currentSchedule = regular[activeTab] || {}
-  const currentPlayoffs = playoffs[activeTab] || []
   const currentDivision = DIVISIONS.find((d) => d.key === activeTab)
 
   return (
@@ -276,50 +273,6 @@ export default function SchedulesPage() {
         {Object.keys(currentSchedule).length === 0 && (
           <div className="text-center py-24 text-sm text-white/40 rounded-2xl bg-white/[0.02] border border-dashed border-white/10">
             No schedule published for this division yet.
-          </div>
-        )}
-      </section>
-
-      {/* Playoff schedule section */}
-      <section className="container mx-auto px-4 pb-20 max-w-7xl">
-        <FadeIn>
-          <div className="mb-6 flex items-center gap-3">
-            <div className="text-[10px] font-bold tracking-[0.25em] uppercase text-blue-300/60">Playoffs</div>
-            <div className="flex-1 h-px bg-gradient-to-r from-blue-400/40 via-blue-400/20 to-transparent" />
-          </div>
-        </FadeIn>
-
-        {currentPlayoffs.length === 0 ? (
-          <div className="text-center py-10 text-sm text-white/40 rounded-2xl bg-white/[0.02] border border-dashed border-white/10">
-            No playoff bracket published for this division yet.
-          </div>
-        ) : (
-          <div className="space-y-6">
-            {currentPlayoffs.map((bracket, bracketIndex) => (
-              <FadeIn key={`${activeTab}-playoff-${bracket.id || bracketIndex}`} delay={bracketIndex * 0.06} y={20}>
-                <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
-                  <h3 className="text-xl font-black text-white mb-4">{bracket.name}</h3>
-                  <div className="space-y-4">
-                    {(bracket.rounds || []).map((round) => (
-                      <div key={round.id || round.roundNumber} className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-                        <div className="text-xs font-bold tracking-[0.2em] uppercase text-blue-300/70 mb-3">
-                          {round.name}
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                          {(round.matchups || []).map((matchup, matchupIndex) => (
-                            <div key={`${round.id || round.roundNumber}-${matchupIndex}`} className="rounded-lg border border-white/10 p-3 bg-black/20">
-                              <div className="text-sm text-white font-bold mb-1">{matchup[0]}</div>
-                              <div className="text-[10px] font-bold tracking-[0.2em] uppercase text-blue-300/60">vs</div>
-                              <div className="text-sm text-white font-bold mt-1">{matchup[1]}</div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </FadeIn>
-            ))}
           </div>
         )}
       </section>

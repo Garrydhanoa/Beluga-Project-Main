@@ -7,6 +7,8 @@ const { logEdge } = require('../stats/report/logChannel');
 const { buildResultCard } = require('../stats/report/resultCard');
 const statsStore = require('../stats/statsStore');
 const Logger = require('../utils/logger');
+const { weekForRound, weekLabel } = require('../stats/playoffBracket');
+const { onPlayoffSeriesConfirmed } = require('../stats/playoffAutomation');
 
 /**
  * /report-ff — salary-crew-only forfeit entry (operator rules D3):
@@ -18,9 +20,11 @@ const Logger = require('../utils/logger');
  * Partial forfeits: report the played games with /staff-report first, then
  * salary crew edits that series to 1-0 + forfeit on the website (stats stay).
  *
- * `week` is REQUIRED: the unreported-week gate matches on s.week = wt.week_number,
- * so a week-less forfeit would leave the matchup permanently "unreported" and
- * block that week from ever being closed without a force-delete.
+ * A week (regular season) or a ROUND (playoffs) is required: the unreported-week
+ * gate matches on s.week = wt.week_number, so a week-less forfeit would leave the
+ * matchup permanently "unreported" and block that week from ever being closed
+ * without a force-delete. A playoff round resolves to week 90 + round, which also
+ * lets the bracket engine find the result and advance the winner.
  */
 module.exports = {
     data: new SlashCommandBuilder()
@@ -33,13 +37,22 @@ module.exports = {
             .setAutocomplete(true))
         .addStringOption((o) => o.setName('loser').setDescription('Team that forfeited (double forfeit: the other team)').setRequired(true)
             .setAutocomplete(true))
-        .addIntegerOption((o) => o.setName('week').setDescription('Week number').setRequired(true).setMinValue(1).setMaxValue(30))
+        // Regular season: give the week. Playoffs: pick the round instead and the
+        // week is derived (round N = week 90 + N). `week` used to be REQUIRED and
+        // capped at 30, which made a playoff forfeit impossible to record at all —
+        // the reason two S10 AA quarter-finals still have no result.
+        .addIntegerOption((o) => o.setName('week').setDescription('Week number (regular season)').setRequired(false).setMinValue(1).setMaxValue(89))
+        .addStringOption((o) => o.setName('round').setDescription('Playoff round — use this INSTEAD of week').setRequired(false)
+            .addChoices(
+                { name: 'Playoffs - Quarter-Finals', value: '1' },
+                { name: 'Playoffs - Semi-Finals', value: '2' },
+                { name: 'Playoffs - Finals', value: '3' },
+            ))
         .addStringOption((o) => o.setName('type').setDescription('Forfeit type (default: full)').setRequired(false)
             .addChoices(
                 { name: 'Full forfeit — 1-0 to the winner', value: 'full' },
                 { name: 'Double forfeit — both teams take a 0-1 loss', value: 'double' },
-            ))
-        .addBooleanOption((o) => o.setName('playoffs').setDescription('Is this a playoff series?').setRequired(false)),
+            )),
 
     // Live team list from the current season (DB), filtered by the chosen division.
     async autocomplete(interaction) {
@@ -57,10 +70,25 @@ module.exports = {
         const division = interaction.options.getString('division');
         const winnerName = interaction.options.getString('winner');
         const loserName = interaction.options.getString('loser');
-        const week = interaction.options.getInteger('week');
         const forfeitKind = interaction.options.getString('type') || statsStore.FULL_FORFEIT;
         const isDouble = forfeitKind === statsStore.DOUBLE_FORFEIT;
-        const isPlayoff = Boolean(interaction.options.getBoolean('playoffs'));
+
+        // Exactly one of week / round. A playoff round resolves to week 90 + round,
+        // which is what makes the forfeit findable by the bracket engine and by the
+        // unreported-week gate (both match on s.week = wt.week_number).
+        const roundOpt = interaction.options.getString('round');
+        const weekOpt = interaction.options.getInteger('week');
+        const isPlayoff = Boolean(roundOpt);
+        const week = isPlayoff ? weekForRound(Number(roundOpt)) : weekOpt;
+
+        if (roundOpt && weekOpt != null) {
+            await interaction.editReply('❌ Give either **week** (regular season) or **round** (playoffs) — not both.');
+            return;
+        }
+        if (!roundOpt && weekOpt == null) {
+            await interaction.editReply('❌ Give a **week** for a regular-season series, or a **round** for a playoff series.');
+            return;
+        }
 
         if (winnerName === loserName) {
             await interaction.editReply(isDouble
@@ -186,11 +214,20 @@ module.exports = {
                     ? `🏳️ ${winner.name} 0–0 ${loser.name} (Double FF)`
                     : `🏳️ ${winner.name} 1–0 ${loser.name} (FF)`)
                 .setDescription(isDouble
-                    ? `${division} · Week ${week} · **Double forfeit** — both teams take a 0–1 loss.`
-                    : `${division} · Week ${week} · **Forfeit**`)
+                    ? `${division} · ${weekLabel(week)} · **Double forfeit** — both teams take a 0–1 loss.`
+                    : `${division} · ${weekLabel(week)} · **Forfeit**`)
                 .setTimestamp();
             if (card) embed.setImage('attachment://result.png');
             const files = card ? [new AttachmentBuilder(card, { name: 'result.png' })] : [];
+
+            // A playoff forfeit is a real result: advance the bracket exactly as a
+            // played series would. Non-fatal — the forfeit is already recorded.
+            if (isPlayoff) {
+                await onPlayoffSeriesConfirmed(interaction.client, {
+                    seasonId: season.id, division, week,
+                    homeTeamId: winner.id, awayTeamId: loser.id, seriesId: result.seriesId,
+                }).catch((err) => Logger.error('playoff automation after FF failed', err));
+            }
 
             const chId = DIVISION_RESULT_CHANNELS[division];
             if (chId) {
@@ -206,8 +243,8 @@ module.exports = {
                 .join('\n');
             await interaction.editReply(
                 (isDouble
-                    ? `✅ Double forfeit recorded: **${winner.name}** and **${loser.name}** each take a **0–1 loss** (${division}, Week ${week}). Series #${result.seriesId}.`
-                    : `✅ Forfeit recorded: **${winner.name} 1–0 ${loser.name}** (${division}, Week ${week}). Series #${result.seriesId}.`) +
+                    ? `✅ Double forfeit recorded: **${winner.name}** and **${loser.name}** each take a **0–1 loss** (${division}, ${weekLabel(week)}). Series #${result.seriesId}.`
+                    : `✅ Forfeit recorded: **${winner.name} 1–0 ${loser.name}** (${division}, ${weekLabel(week)}). Series #${result.seriesId}.`) +
                 `\n\n# ⚠️ ${tally}${streakWarning}`
             );
         } catch (error) {

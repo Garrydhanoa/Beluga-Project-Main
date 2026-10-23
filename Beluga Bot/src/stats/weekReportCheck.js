@@ -12,6 +12,7 @@
 
 const { pool, isDatabaseAvailable } = require('../utils/database');
 const { ROLES } = require('../constants/roles');
+const { weekLabel } = require('./playoffBracket');
 const Logger = require('../utils/logger');
 
 function db() {
@@ -23,6 +24,13 @@ function db() {
  *
  * Team names are matched case-insensitively in EITHER order, because the thread
  * stores team1/team2 while the series stores home/away and those need not agree.
+ *
+ * `is_playoff` is matched to the WEEK, not hardcoded to FALSE. This used to read
+ * `AND s.is_playoff = FALSE`, which meant a playoff report (always is_playoff =
+ * TRUE, because week >= 90) could never satisfy the sub-select: every playoff
+ * thread read as unreported forever and the week could only be force-deleted.
+ * A regular-season week still only counts regular-season series, so nothing about
+ * weeks 1-30 changes.
  *
  * @returns {Promise<Array<{id,division,team1,team2,match_number,thread_id}>>}
  */
@@ -39,7 +47,7 @@ async function getUnreportedMatches(weekNumber, seasonId = null) {
                 JOIN teams ht ON ht.id = s.home_team_id
                 JOIN teams at ON at.id = s.away_team_id
                WHERE s.status = 'confirmed'
-                 AND s.is_playoff = FALSE
+                 AND s.is_playoff = (wt.week_number >= 90)
                  AND s.week = wt.week_number
                  AND (wt.season_id IS NULL OR s.season_id = wt.season_id)
                  AND LOWER(s.division) = LOWER(wt.division)
@@ -101,7 +109,7 @@ async function pingUnreportedThreads(client, rows, weekNumber, requestedBy = nul
             // eslint-disable-next-line no-await-in-loop
             await thread.send({
                 content:
-                    `<@&${ROLES.SALARY_CREW}> **Week ${weekNumber} series not reported.**\n` +
+                    `<@&${ROLES.SALARY_CREW}> **${weekLabel(weekNumber)} series not reported.**\n` +
                     `${row.division} — **${row.team1}** vs **${row.team2}**\n` +
                     `This thread was going to be deleted${requestedBy ? ` (requested by ${requestedBy})` : ''}, ` +
                     'but the series has no confirmed report yet. Report it here before the week is closed.',

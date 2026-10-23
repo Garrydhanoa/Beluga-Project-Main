@@ -90,7 +90,20 @@ const PHRASES = {
   // recalc or a full backfill, so the phrase stays short.
   'power-rankings.post': 'recalculated the power rankings',
   'power-rankings.put': 'reordered the power rankings by hand',
+  // One slug per real playoff operation. These used to all arrive as
+  // `playoffs.post` and log as `did "playoffs post"`, which told the operator
+  // nothing about whether someone re-seeded a bracket or deleted a thread.
   'playoffs.update': 'changed the playoff bracket',
+  'playoffs.generate': 'RE-SEEDED a playoff bracket from the standings',
+  'playoffs.set-teams': 'changed the teams in a playoff matchup by hand',
+  'playoffs.set-result': 'set a playoff matchup result by hand',
+  'playoffs.clear-result': 'cleared a playoff matchup result',
+  'playoffs.set-best-of': 'changed a playoff round’s series length',
+  'playoffs.set-published': 'changed whether a playoff bracket is public',
+  'playoffs.create-threads': 'created the Discord threads for a playoff round',
+  'playoffs.delete-thread': 'DELETED a playoff matchup’s Discord thread',
+  'playoffs.refresh': 'recalculated the playoff brackets',
+  'playoffs.settings': 'changed the playoff automation or visibility settings',
   'week-threads.update': 'changed a week thread',
   'week-threads.action': 'queued a week-thread action for the bot',
   'dm.send': 'sent a mass DM',
@@ -326,6 +339,15 @@ function isNoisyRead(path) {
  *
  *   export const POST = withAudit(async (request, ctx) => { … }, { action: 'team.update' })
  *
+ * `action` may instead be a FUNCTION of the parsed request body, for routes where
+ * one endpoint performs several genuinely different operations:
+ *
+ *   withAudit(handler, { action: (body) => `playoffs.${body?.action}` })
+ *
+ * That keeps one row per real operation instead of collapsing "seeded a bracket",
+ * "created threads" and "deleted a thread" into one meaningless slug. Resolve
+ * every slug it can return in PHRASES, or the log falls back to prose.
+ *
  * Reads are recorded too (minus the pollers above), so the log shows what someone
  * looked at, not just what they changed. The request is cloned before its body is
  * read so the handler can still consume it.
@@ -350,11 +372,21 @@ export function withAudit(handler, { action = null } = {}) {
 
     // Best-effort readable body snapshot (cloned so the handler can still read it).
     let bodyPairs = []
+    let parsedBody = null
     if (isWrite) {
       try {
         const text = await request.clone().text()
-        if (text) bodyPairs = pairsFrom(text)
+        if (text) {
+          bodyPairs = pairsFrom(text)
+          try { parsedBody = JSON.parse(text) } catch { /* not JSON — pairs are enough */ }
+        }
       } catch { /* body may be empty or already consumed */ }
+    }
+
+    // A per-request slug (see the doc comment) must never break the response.
+    let resolvedAction = action
+    if (typeof action === 'function') {
+      try { resolvedAction = action(parsedBody) } catch { resolvedAction = null }
     }
 
     const startedAt = Date.now()
@@ -364,7 +396,7 @@ export function withAudit(handler, { action = null } = {}) {
     } catch (err) {
       await logWebsiteError({
         auth: actor,
-        action: action || `${method} ${path}`,
+        action: resolvedAction || `${method} ${path}`,
         error: err,
         target: path,
         eventType: 'route_error',
@@ -380,7 +412,7 @@ export function withAudit(handler, { action = null } = {}) {
       const status = response?.status ?? 0
       const ok = status > 0 && status < 400
       const durationMs = Date.now() - startedAt
-      const phrase = isWrite ? phraseFor(action, method) : `opened ${describePath(path)}`
+      const phrase = isWrite ? phraseFor(resolvedAction, method) : `opened ${describePath(path)}`
       // Result / timing / IP have their own columns and are printed in the page's
       // header block — listing them here again would just be noise.
       const details = [
@@ -392,7 +424,7 @@ export function withAudit(handler, { action = null } = {}) {
         stream: ok ? 'interaction' : 'error',
         eventType: isWrite ? 'api_write' : 'api_read',
         actor,
-        action: action || `${method} ${path}`,
+        action: resolvedAction || `${method} ${path}`,
         target: path,
         location: describePath(path),
         outcome: ok ? 'success' : 'failed',

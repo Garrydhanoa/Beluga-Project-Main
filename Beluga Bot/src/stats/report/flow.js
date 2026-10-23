@@ -16,10 +16,13 @@
 
 const {
     ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, EmbedBuilder, AttachmentBuilder,
+    ButtonBuilder, ButtonStyle,
 } = require('discord.js');
 
 const ids = require('./ids');
 const { buildResultCard } = require('./resultCard');
+const { weekLabel } = require('../playoffBracket');
+const { onPlayoffSeriesConfirmed } = require('../playoffAutomation');
 const sessions = require('./sessionStore');
 const tc = require('./threadContext');
 const matching = require('./matching');
@@ -891,13 +894,22 @@ async function commitFromSession(interaction, session, { via }) {
     await sessions.updateSession(session.id, { state: 'confirmed', seriesId: result.seriesId });
     await sessions.setPanelStatus(session.thread_id, 'reported');
 
-    // Playoff finals → automatically record the champions (uses the bracket's
-    // is_finals round; no-op for regular-season series).
+    // Playoff series → advance the bracket, open the next round's threads, record
+    // the champion, post the bracket image. Every step is individually switchable
+    // from the website's Playoffs tab, and the whole chain is non-fatal: the
+    // series is already committed and must never be lost to a bracket error.
     if (session.is_playoff) {
         try {
-            await maybeRecordChampion(session, result);
+            await onPlayoffSeriesConfirmed(interaction.client, {
+                seasonId: session.season_id,
+                division: session.division,
+                week: session.week,
+                homeTeamId: session.home_team_id,
+                awayTeamId: session.away_team_id,
+                seriesId: result.seriesId,
+            });
         } catch (err) {
-            Logger.error('champion auto-record failed (non-fatal)', err);
+            Logger.error('playoff automation failed (non-fatal)', err);
         }
     }
 
@@ -908,43 +920,6 @@ async function commitFromSession(interaction, session, { via }) {
     }
 
     await postConfirmation(interaction.client, session, result);
-}
-
-/**
- * If a confirmed playoff series matches the bracket's FINALS matchup for its
- * division, record the winner as that division's season champion.
- */
-async function maybeRecordChampion(session, result) {
-    if (!result.winnerTeamId) return;
-    const finals = await pool.query(
-        `SELECT pm.home_team_id, pm.away_team_id
-         FROM playoff_matchups pm
-         JOIN playoff_rounds pr ON pr.id = pm.round_id
-         JOIN playoff_brackets pb ON pb.id = pr.bracket_id
-         WHERE pb.season_id = $1 AND pb.division = $2 AND pr.is_finals = TRUE`,
-        [session.season_id, session.division]
-    ).catch(() => ({ rows: [] }));
-
-    const isFinals = finals.rows.some((m) =>
-        (m.home_team_id === session.home_team_id && m.away_team_id === session.away_team_id) ||
-        (m.home_team_id === session.away_team_id && m.away_team_id === session.home_team_id));
-    if (!isFinals) return;
-
-    const exists = await pool.query(
-        `SELECT id FROM season_champions WHERE season_id = $1 AND division = $2`,
-        [session.season_id, session.division]
-    );
-    if (exists.rows.length) return; // already set (e.g. manually) — don't overwrite
-
-    await pool.query(
-        `INSERT INTO season_champions (season_id, division, team_id, notes)
-         VALUES ($1, $2, $3, 'Auto-recorded from the reported playoff finals series')`,
-        [session.season_id, session.division, result.winnerTeamId]
-    );
-    await statsStore.logAudit({
-        seriesId: result.seriesId, action: 'champion_recorded',
-        detail: { seasonId: session.season_id, division: session.division, teamId: result.winnerTeamId },
-    });
 }
 
 /** Confirmation post: winning team first, two-logo result card, player mentions, links. */
@@ -978,7 +953,7 @@ async function postManualResult(client, ctx, result, games) {
         const embed = new EmbedBuilder()
             .setColor(0x27AE60)
             .setTitle(`🏆 ${winName} ${winScore}–${loseScore} ${loseName}`)
-            .setDescription(`${ctx.division} · Week ${ctx.week ?? '—'} · reported by staff`)
+            .setDescription(`${ctx.division} · ${ctx.week == null ? 'Series' : weekLabel(ctx.week)} · reported by staff`)
             .addFields({ name: 'Player stats', value: 'Not recorded — this series had no replay group.' })
             .setTimestamp();
         if (card) embed.setImage('attachment://result.png');
@@ -1034,7 +1009,7 @@ async function postConfirmation(client, session, result) {
     const embed = new EmbedBuilder()
         .setColor(0x27AE60)
         .setTitle(`🏆 ${winName} ${winScore}–${loseScore} ${loseName}`)
-        .setDescription(`${session.division} · Week ${session.week ?? '—'}`)
+        .setDescription(`${session.division} · ${session.week == null ? 'Series' : weekLabel(session.week)}`)
         .addFields({ name: 'Replay group', value: session.group_url || '—' })
         .setTimestamp();
     if (card) embed.setImage('attachment://result.png');
@@ -1060,10 +1035,116 @@ async function postConfirmation(client, session, result) {
     } catch (err) { Logger.error('postConfirmation division channel failed', err); }
 }
 
+// ---- in-thread forfeit (salary crew) ---------------------------------------
+
+/**
+ * "Report Forfeit" on the thread panel → ask who forfeited.
+ *
+ * Salary crew only. Exists because a forfeit previously had exactly one route,
+ * /report-ff, whose `week` option was capped at 30 — so a PLAYOFF forfeit could
+ * not be recorded at all, and two S10 AA quarter-finals still have no result.
+ */
+async function handleForfeitStart(interaction) {
+    const ctx = await tc.resolveThreadContext(interaction.channelId);
+    if (!ctx) {
+        return safeReply(interaction, '❌ This isn\'t a recognized week-thread matchup.');
+    }
+    if (!tc.isSalaryCrew(interaction.member)) {
+        return safeReply(interaction, '❌ Only **salary crew** can record a forfeit.');
+    }
+
+    const active = await sessions.getActiveSessionByThread(interaction.channelId);
+    if (active) {
+        return safeReply(interaction, 'ℹ️ A report is already in progress for this matchup. Finish or cancel it first.');
+    }
+    const existing = await findExistingSeries(ctx);
+    if (existing) {
+        return safeReply(interaction, `🔒 This matchup is **already reported**: ${existing.label} (series #${existing.id}).`);
+    }
+
+    const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(ids.build('ffpick', 'h'))
+            .setLabel(`${ctx.homeTeam.name} wins`).setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(ids.build('ffpick', 'a'))
+            .setLabel(`${ctx.awayTeam.name} wins`).setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(ids.build('ffpick', 'double'))
+            .setLabel('Double forfeit').setStyle(ButtonStyle.Danger),
+    );
+
+    return interaction.reply({
+        content:
+            `**Record a forfeit for ${ctx.homeTeam.name} vs ${ctx.awayTeam.name}** `
+            + `(${ctx.division} · ${weekLabel(ctx.week)}).\n`
+            + 'Pick the team that receives the win, or a double forfeit if neither showed. '
+            + 'A full forfeit records as 1–0; a double forfeit charges both teams a 0–1 loss.',
+        components: [row],
+        flags: EPHEMERAL,
+    });
+}
+
+/** Commit the chosen forfeit, then advance the bracket if this is a playoff series. */
+async function handleForfeitPick(interaction, parts) {
+    const pick = parts[0];
+    const ctx = await tc.resolveThreadContext(interaction.channelId);
+    if (!ctx) return safeReply(interaction, '❌ This thread is no longer a recognized matchup.');
+    if (!tc.isSalaryCrew(interaction.member)) {
+        return safeReply(interaction, '❌ Only **salary crew** can record a forfeit.');
+    }
+
+    await interaction.deferUpdate().catch(() => {});
+
+    const isDouble = pick === 'double';
+    const winner = pick === 'a' ? ctx.awayTeam : ctx.homeTeam;
+    const loser = pick === 'a' ? ctx.homeTeam : ctx.awayTeam;
+
+    let result;
+    try {
+        result = await statsStore.commitSeries({
+            seasonId: ctx.seasonId, division: ctx.division, week: ctx.week,
+            isPlayoff: ctx.isPlayoff, format: ctx.format,
+            homeTeamId: winner.id, awayTeamId: loser.id,
+            homeScore: isDouble ? 0 : 1, awayScore: 0,
+            isForfeit: true,
+            forfeitKind: isDouble ? statsStore.DOUBLE_FORFEIT : statsStore.FULL_FORFEIT,
+            group: {}, threadId: interaction.channelId,
+            reportedByDiscordId: interaction.user.id,
+            reportedVia: isDouble ? 'salary_crew_ff_double' : 'salary_crew_ff',
+            games: isDouble ? [] : [{ gameNumber: 1, homeGoals: 1, awayGoals: 0, isForfeit: true, players: [] }],
+        });
+    } catch (err) {
+        await logEdge(interaction.client, {
+            summary: `In-thread forfeit failed in ${ctx.division}.`, error: err,
+            thread: interaction.channel, division: ctx.division,
+        });
+        return safeReply(interaction, '❌ Failed to record the forfeit. Salary crew notified.');
+    }
+
+    await sessions.setPanelStatus(interaction.channelId, 'reported').catch(() => {});
+
+    if (ctx.isPlayoff) {
+        await onPlayoffSeriesConfirmed(interaction.client, {
+            seasonId: ctx.seasonId, division: ctx.division, week: ctx.week,
+            homeTeamId: winner.id, awayTeamId: loser.id, seriesId: result.seriesId,
+        }).catch((err) => Logger.error('playoff automation after in-thread FF failed', err));
+    }
+
+    const line = isDouble
+        ? `🏳️ **Double forfeit recorded** — ${winner.name} and ${loser.name} each take a 0–1 loss.`
+        : `🏳️ **Forfeit recorded** — ${winner.name} win 1–0 over ${loser.name}.`;
+
+    await interaction.channel?.send({
+        content: `${line}\n${ctx.division} · ${weekLabel(ctx.week)} · recorded by ${interaction.user}. Series #${result.seriesId}.`,
+    }).catch(() => {});
+
+    return interaction.editReply({ content: `${line} Series #${result.seriesId}.`, components: [] }).catch(() => {});
+}
+
 module.exports = {
     buildCommitPayload, // exported for the orientation test harness (tools/)
     parseManualScores,  // pure — exported so the score box can be tested directly
     startReport,
+    handleForfeitStart,
+    handleForfeitPick,
     startStaffReport,
     handleGroupModal,
     handleAssign,
