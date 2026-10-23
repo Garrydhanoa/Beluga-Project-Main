@@ -199,15 +199,32 @@ async function processOpenRequests(client) {
     }
 }
 
-async function backfillOpenTickets(client) {
+/**
+ * Re-read open tickets so nothing missed by live capture (e.g. while the bot was
+ * down) is lost. `full` re-reads every ticket's whole history (startup); otherwise
+ * only messages newer than the newest one already captured (every 10 minutes).
+ */
+async function backfillOpenTickets(client, { full = true } = {}) {
     if (!isDatabaseAvailable() || !tablesReady) return;
     try {
         const r = await pool.query('SELECT channel_id FROM tickets');
+        let added = 0;
         for (const row of r.rows) {
             const channel = await client.channels.fetch(row.channel_id).catch(() => null);
-            if (channel) await openticket.backfillTicketChannel(channel);
+            if (!channel) continue;
+            let stopAtId = null;
+            if (!full) {
+                const last = await pool.query(
+                    `SELECT message_id FROM ticket_messages WHERE channel_id = $1 ORDER BY message_created_at DESC, id DESC LIMIT 1`,
+                    [row.channel_id]
+                ).catch(() => null);
+                if (!last) continue; // DB blip — next round
+                stopAtId = last.rows[0]?.message_id || null;
+            }
+            const res = await openticket.backfillTicketChannel(channel, { stopAtId });
+            added += res?.fetched || 0;
         }
-        Logger.info(`Ticket transcripts backfilled for ${r.rows.length} open ticket(s)`);
+        if (full || added) Logger.info(`Ticket transcripts ${full ? 'backfilled' : 'caught up'} for ${r.rows.length} open ticket(s) (${added} message(s))`);
     } catch (err) {
         Logger.error('backfillOpenTickets failed', err);
     }
@@ -223,8 +240,10 @@ function startTicketSync(client, intervalMs = 20 * 1000) {
                 Logger.warning('Ticket sync: tables not ready; capture + polling disabled this run');
                 return;
             }
-            // Backfill once shortly after startup.
-            setTimeout(() => { backfillOpenTickets(client).catch(() => {}) }, 8000);
+            // Backfill once shortly after startup (whole history), then catch up
+            // every 10 minutes so bot downtime can't leave holes in a transcript.
+            setTimeout(() => { backfillOpenTickets(client, { full: true }).catch(() => {}) }, 8000);
+            setInterval(() => { backfillOpenTickets(client, { full: false }).catch(() => {}) }, 10 * 60 * 1000);
             // Poll open + close requests so website actions feel responsive.
             interval = setInterval(() => {
                 processCloseRequests(client).catch(() => {})

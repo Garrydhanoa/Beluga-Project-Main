@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Avatar from '../../../components/Avatar'
+import WinsRulePanel from './WinsRulePanel'
 
 const API = '/api/admin/mmr'        // proxy → scraper (ACTIONS + sheet-backed reads)
 const DB_API = '/api/admin/mmr-db'  // DB-direct (status/players/config/queue/events — works offline)
@@ -204,6 +205,21 @@ function PlayerCard({ p, member }) {
 
       {(ch.main_games_2s != null) && (
         <div className="text-[11px] text-white/50">main games — 2s: {ch.main_games_2s}, 3s: {ch.main_games_3s} (need 25 each)</div>
+      )}
+      {ch.wins && (
+        ch.wins.fallback ? (
+          <div className="text-[11px] text-amber-200/80">lifetime wins not checked — {ch.wins.fallback} (decided on games)</div>
+        ) : (
+          <div className={`text-[11px] ${ch.wins.ok ? 'text-white/50' : 'text-red-300/90'}`}>
+            main lifetime wins {Number(ch.wins.wins).toLocaleString()} — {ch.wins.division}{ch.wins.source === 'N' ? ' (projected from column N)' : ''} minimum {Number(ch.wins.min).toLocaleString()}
+            {ch.wins.ok ? ' ✓' : ` · needs ${Number(ch.wins.need).toLocaleString()} more`}
+          </div>
+        )
+      )}
+      {ch.wins_notice && (
+        <div className="mt-1.5 text-[11px] text-amber-200/90 bg-amber-500/10 border border-amber-400/20 rounded p-2">
+          WINS PING{(ap.queued || []).includes('wins_ping') ? ' (posted ✓)' : ' (only sent the first time)'}: {withMention(ch.wins_notice, name)}
+        </div>
       )}
       {ch.staff_report && (
         <div className="mt-1.5 text-[11px] text-red-200/90 bg-red-500/10 border border-red-400/20 rounded p-2 whitespace-pre-wrap">
@@ -930,6 +946,12 @@ export default function MmrUpdaterPage() {
                     testing={proxyTesting} testResults={proxyResults} offline={offline} />
 
       <ActivityFeed events={events} />
+
+      <WinsRulePanel
+        config={config}
+        offline={offline}
+        onChanged={async () => { const r = await dbCall('config'); if (r.ok && r.data && typeof r.data === 'object') setConfig(r.data) }}
+      />
 
       {/* Config: channels + gated write */}
       <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 mb-6" data-log-section="mmr-config">

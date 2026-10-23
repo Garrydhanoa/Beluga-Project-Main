@@ -13,8 +13,9 @@ import { useEffect, useState, useCallback, useRef } from 'react'
  *   onClose          — close the modal
  *   headerActions    — optional React node rendered in the header (e.g. a Close button)
  *   live             — poll for updates (default true)
+ *   downloadUrl      — optional: a "Download HTML" button (self-contained transcript file)
  */
-export function DiscordTranscriptModal({ title, subtitle, messagesUrl, onClose, headerActions = null, live = true }) {
+export function DiscordTranscriptModal({ title, subtitle, messagesUrl, onClose, headerActions = null, live = true, downloadUrl = null }) {
   const [messages, setMessages] = useState([])
   const [isOpen, setIsOpen] = useState(true)
   const [loading, setLoading] = useState(true)
@@ -64,6 +65,15 @@ export function DiscordTranscriptModal({ title, subtitle, messagesUrl, onClose, 
             </div>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
+            {downloadUrl && (
+              <a
+                href={downloadUrl}
+                className="px-3 py-1.5 text-xs font-bold text-blue-100 bg-blue-500/15 hover:bg-blue-500/25 border border-blue-400/40 rounded"
+                aria-label="Download this transcript as an HTML file"
+              >
+                Download HTML
+              </a>
+            )}
             {headerActions}
             <button onClick={onClose} className="text-white/50 hover:text-white text-2xl leading-none px-1">×</button>
           </div>
@@ -112,15 +122,19 @@ export function DiscordMessage({ m }) {
             {e.description && <div className="text-xs text-white/70 whitespace-pre-wrap">{e.description}</div>}
           </div>
         ))}
-        {(m.attachments || []).map((a, i) => (
-          <a key={i} href={a.url} target="_blank" rel="noreferrer" className="block mt-1">
-            {a.contentType && a.contentType.startsWith('image/') ? (
-              <img src={a.url} alt={a.name} className="max-h-48 rounded border border-white/10" />
-            ) : (
-              <span className="text-xs text-blue-300 underline">📎 {a.name}</span>
-            )}
-          </a>
-        ))}
+        {(m.attachments || []).map((a, i) => {
+          // Saved copy first: Discord's own attachment links expire within a day.
+          const src = a.fileId ? `/api/admin/transcripts/file/${a.fileId}` : a.url
+          return (
+            <a key={i} href={src} target="_blank" rel="noreferrer" className="block mt-1">
+              {a.contentType && a.contentType.startsWith('image/') ? (
+                <img src={src} alt={a.name} className="max-h-48 rounded border border-white/10" />
+              ) : (
+                <span className="text-xs text-blue-300 underline">📎 {a.name}</span>
+              )}
+            </a>
+          )
+        })}
       </div>
     </div>
   )

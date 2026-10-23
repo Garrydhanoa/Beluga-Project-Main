@@ -23,8 +23,30 @@ function buildSslConfig() {
 if (DATABASE_URL) {
     pool = new Pool({
         connectionString: DATABASE_URL,
-        ssl: buildSslConfig()
+        ssl: buildSslConfig(),
+        // Detect a dead server instead of waiting forever on a half-open socket, and
+        // give up on a connect attempt rather than stalling every caller.
+        keepAlive: true,
+        connectionTimeoutMillis: 15000,
+        idleTimeoutMillis: 30000,
     });
+
+    // CRASH GUARD. When Railway's Postgres restarts or drops a connection, pg emits
+    // an 'error' event — on the POOL for idle clients, and on the CLIENT itself for
+    // one that is checked out. An 'error' event with no listener is thrown as an
+    // uncaught exception, and that is exactly what took the bot down on 2026-08-23
+    // ("Connection terminated unexpectedly" → shutdown → exit 0 → Railway didn't
+    // restart it). Listening on both turns a DB blip into a warning; the pool
+    // discards the broken client and opens a fresh one on the next query.
+    pool.on('error', (err) => {
+        Logger.warning(`Database connection dropped (${err.message}); the pool will reconnect on the next query.`);
+    });
+    pool.on('connect', (client) => {
+        client.on('error', (err) => {
+            Logger.warning(`Database client error (${err.message}); it will be replaced.`);
+        });
+    });
+
     isDatabaseAvailable = true;
     Logger.info('Database connection configured with DATABASE_URL');
 } else {

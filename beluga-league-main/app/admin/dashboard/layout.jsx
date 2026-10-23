@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useRouter, usePathname } from 'next/navigation'
 import { useSession, signOut } from 'next-auth/react'
 import ActivityTracker from './ActivityTracker'
+import { sendHeartbeat } from '../../../lib/clientSecurity'
 
 const NAV = [
   { label: 'Overview', href: '/admin/dashboard', icon: 'grid', exact: true },
@@ -76,7 +77,7 @@ export default function DashboardLayout({ children }) {
   // Unread DM badge — visible from any admin page so a new message can't be
   // missed while you're working elsewhere.
   useEffect(() => {
-    if (!session?.isDirector) return undefined
+    if (!session?.adminAccess) return undefined
     const load = () => fetch('/api/admin/dm/unread', { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => { if (j) setDmUnread(j.unread || 0) })
@@ -84,12 +85,23 @@ export default function DashboardLayout({ children }) {
     load()
     const t = setInterval(load, 5000)
     return () => clearInterval(t)
-  }, [session?.isDirector])
+  }, [session?.adminAccess])
+
+  // Live-sessions heartbeat (higgenlogs → Security): where this person is, every 30s.
+  useEffect(() => {
+    if (!session?.adminAccess) return undefined
+    sendHeartbeat(pathname)
+    const t = setInterval(() => sendHeartbeat(window.location.pathname), 30000)
+    return () => clearInterval(t)
+  }, [session?.adminAccess, pathname])
 
   useEffect(() => {
     if (status === 'unauthenticated') {
       router.push('/admin')
-    } else if (status === 'authenticated' && !session?.isDirector) {
+    } else if (status === 'authenticated' && session?.revoked) {
+      // Logged out from the higgenlogs Security panel (or expired) — end it here too.
+      signOut({ callbackUrl: '/admin' })
+    } else if (status === 'authenticated' && !session?.adminAccess) {
       router.push('/admin/denied')
     }
   }, [status, session, router])
@@ -105,7 +117,7 @@ export default function DashboardLayout({ children }) {
     )
   }
 
-  if (!session?.isDirector) return null
+  if (!session?.adminAccess) return null
 
   return (
     <div className="min-h-screen flex">

@@ -28,7 +28,39 @@ export const CONFIG_KEYS = [
   // reads expose only proxies_masked/proxies_count. Hourly blocked re-pull switch.
   'proxies',
   'auto_retry_blocked_enabled',
+  // Lifetime-wins eligibility rule (trn-scraper/app/winsrule.py): on/off + the
+  // minimum lifetime wins (main account) for each division.
+  'wins_rule_enabled',
+  'wins_min_aa',
+  'wins_min_aaa',
+  'wins_min_majors',
 ]
+
+const WINS_MIN_KEYS = ['wins_min_aa', 'wins_min_aaa', 'wins_min_majors']
+
+/** Refuse a lifetime-wins setting that could make the check do the wrong thing. */
+function validateWinsSettings(body, current) {
+  for (const k of WINS_MIN_KEYS) {
+    if (!(k in body)) continue
+    const v = String(body[k] ?? '').trim().replace(/,/g, '')
+    if (v !== '' && !/^\d{1,6}$/.test(v)) {
+      const err = new Error('Minimum wins must be a whole number (0 – 999,999).')
+      err.status = 400
+      throw err
+    }
+    body[k] = v
+  }
+  if ('wins_rule_enabled' in body) body.wins_rule_enabled = String(body.wins_rule_enabled) === '1' ? '1' : '0'
+  const enabled = (body.wins_rule_enabled ?? current.wins_rule_enabled) === '1'
+  if (enabled) {
+    const missing = WINS_MIN_KEYS.filter((k) => !(Number(body[k] ?? current[k]) > 0))
+    if (missing.length) {
+      const err = new Error('Set and save a minimum for AA, AAA and Majors before turning the lifetime-wins check on.')
+      err.status = 400
+      throw err
+    }
+  }
+}
 
 // Mirror of the scraper's parse_proxy_list + mask_proxy: host:port only, no creds.
 function parseProxyList(raw) {
@@ -290,6 +322,9 @@ export async function getTrnConfig() {
  * with the scraper offline. write_armed keeps the 2-step gate (needs confirm:true).
  */
 export async function setTrnConfig(body = {}) {
+  if (WINS_MIN_KEYS.some((k) => k in body) || 'wins_rule_enabled' in body) {
+    validateWinsSettings(body, await getTrnConfig())
+  }
   for (const k of CONFIG_KEYS) {
     if (!(k in body)) continue
     if (k === 'write_armed') {

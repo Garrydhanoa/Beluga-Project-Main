@@ -6,12 +6,31 @@
 
 import { useEffect, useState } from 'react'
 import { signIn } from 'next-auth/react'
+import { checkSecurityStatus, sendHeartbeat } from '../../lib/clientSecurity'
+import { authErrorMessage } from '../../lib/authRouting'
 
 export default function ApplicationsPage() {
   const [data, setData] = useState(null)
   const [openForm, setOpenForm] = useState(null)
+  const [authError, setAuthError] = useState(null)
+  const [ban, setBan] = useState(null)
   // Signed-in state comes from the API (the public layout has no SessionProvider).
   const status = data ? (data.signedIn ? 'authenticated' : 'unauthenticated') : 'loading'
+
+  // A failed Discord login comes back HERE (never to the admin login) with ?error=.
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.search).get('error')
+    if (code) setAuthError(authErrorMessage(code))
+    checkSecurityStatus().then((s) => { if (s.banned) setBan(s.message) })
+  }, [])
+
+  // Live-sessions heartbeat while signed in.
+  useEffect(() => {
+    if (status !== 'authenticated') return undefined
+    sendHeartbeat('/applications')
+    const t = setInterval(() => sendHeartbeat('/applications'), 30000)
+    return () => clearInterval(t)
+  }, [status])
 
   useEffect(() => {
     fetch('/api/applications', { cache: 'no-store' })
@@ -19,6 +38,7 @@ export default function ApplicationsPage() {
       .then((d) => {
         // Error responses have no forms array — still render the sign-in gate
         // instead of sitting on "Loading…" forever.
+        if (d?.banned) setBan(d.message)
         if (!d || !Array.isArray(d.forms)) setData({ forms: [], signedIn: false, username: null, loadError: true })
         else setData(d)
       })
@@ -33,7 +53,20 @@ export default function ApplicationsPage() {
         <p className="text-blue-100/60 text-sm">Apply for league positions, submit reports, and more. Sign in with Discord to start.</p>
       </div>
 
-      {status === 'unauthenticated' && (
+      {ban && (
+        <div className="mb-8 p-6 rounded-2xl bg-red-500/10 border border-red-400/30 text-center">
+          <p className="text-white font-bold mb-1">Access blocked</p>
+          <p className="text-red-100/80 text-sm">{ban}</p>
+        </div>
+      )}
+
+      {!ban && authError && status === 'unauthenticated' && (
+        <div className="mb-4 p-4 rounded-xl bg-amber-500/10 border border-amber-400/30 text-center text-sm text-amber-100">
+          {authError}
+        </div>
+      )}
+
+      {!ban && status === 'unauthenticated' && (
         <div className="mb-8 p-6 rounded-2xl bg-blue-500/10 border border-blue-400/30 text-center">
           <p className="text-blue-100 mb-4 text-sm">You need to sign in with Discord before starting an application.</p>
           <button onClick={() => signIn('discord', { callbackUrl: '/applications' })}
@@ -46,7 +79,7 @@ export default function ApplicationsPage() {
         <p className="mb-6 text-center text-xs text-blue-200/60">Signed in as <span className="font-bold text-blue-200">{data.username}</span></p>
       )}
 
-      {!data ? (
+      {ban ? null : !data ? (
         <div className="text-center text-blue-200/60">Loading…</div>
       ) : data.forms.length === 0 ? (
         <div className="text-center py-16 text-white/40 rounded-2xl bg-white/[0.02] border border-dashed border-white/10">

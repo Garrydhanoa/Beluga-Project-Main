@@ -27,6 +27,19 @@ export function getPool() {
   pool = new Pool({
     connectionString,
     ssl: buildSslConfig(),
+    keepAlive: true,
+    connectionTimeoutMillis: 15000,
+    idleTimeoutMillis: 30000,
+  })
+
+  // A Postgres restart drops connections; pg reports that as an 'error' event on
+  // the pool (idle clients) or on the checked-out client. Unlistened, it's an
+  // uncaught exception that kills the server. Log it; the pool reconnects itself.
+  pool.on('error', (err) => {
+    console.warn(`[db] connection dropped (${err.message}); reconnecting on next query`)
+  })
+  pool.on('connect', (client) => {
+    client.on('error', (err) => console.warn(`[db] client error (${err.message})`))
   })
 
   return pool

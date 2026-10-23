@@ -24,6 +24,21 @@ const ticketSystem = require('./tickets/ticketSystem');
 const appBridge = require('./applications/appBridge');
 const higgenLog = require('./utils/higgenLog');
 
+// Errors that mean "a connection blipped", not "the process is broken". Database
+// restarts on Railway, Discord REST hiccups and dropped sockets all look like this.
+const TRANSIENT_CODES = new Set([
+    'ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EPIPE', 'EHOSTUNREACH', 'ENETUNREACH',
+    'ENOTFOUND', 'EAI_AGAIN', 'ECONNABORTED', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT',
+    '57P01', '57P02', '57P03', '08000', '08003', '08006', '08001', '08004',
+]);
+const TRANSIENT_MESSAGE = /Connection terminated|terminating connection|Client has encountered a connection error|socket hang up|read ECONNRESET|connect ETIMEDOUT|timeout exceeded when trying to connect|Connection ended unexpectedly|other side closed/i;
+
+function isTransientError(error) {
+    if (!error) return false;
+    if (TRANSIENT_CODES.has(error.code)) return true;
+    return TRANSIENT_MESSAGE.test(String(error.message || ''));
+}
+
 class BelugaLeagueBot {
     constructor() {
         this.client = new Client({ 
@@ -776,10 +791,18 @@ class BelugaLeagueBot {
         });
 
         process.on('uncaughtException', (error) => {
-            Logger.error('Uncaught exception:', error);
             this.errorCount++;
             this.lastError = error;
-            this.shutdown();
+            // A dropped database/network connection is NOT a reason to stop the bot:
+            // the pool reconnects on its own and Discord.js resumes its gateway. The
+            // old handler shut down on these, exited with code 0, and Railway (restart
+            // policy ON_FAILURE) never brought it back — the "random shutdowns".
+            if (isTransientError(error)) {
+                Logger.error('Recovered from a transient connection error — the bot keeps running:', error);
+                return;
+            }
+            Logger.error('Uncaught exception — restarting the bot:', error);
+            this.shutdown({ exitCode: 1, reason: 'uncaught exception' });
         });
     }
 
@@ -920,8 +943,18 @@ class BelugaLeagueBot {
         return expiredCount;
     }
 
-    async shutdown() {
-        Logger.info('Shutting down bot...');
+    async shutdown({ exitCode = 0, reason = 'signal' } = {}) {
+        if (this.shuttingDown) return;
+        this.shuttingDown = true;
+        Logger.info(`Shutting down bot (${reason})...`);
+
+        // Never hang: during a database outage every cleanup step below can stall
+        // on a dead socket (the 2026-08-23 shutdown took 2+ minutes). Force the exit.
+        // A crash exits 1 so Railway restarts the bot.
+        setTimeout(() => {
+            Logger.warning('Shutdown took too long — forcing exit.');
+            process.exit(exitCode);
+        }, 15000).unref();
         
         // Expire all pending transactions before shutdown
         try {
@@ -966,7 +999,7 @@ class BelugaLeagueBot {
         }
         
         Logger.success('Bot shut down successfully');
-        process.exit(0);
+        process.exit(exitCode);
     }
 
     getClient() {

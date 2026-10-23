@@ -218,6 +218,11 @@ async function computeTeamRankings(seasonId, division, week = null) {
             score: round1(score),
             reason: notes.join(' · '),
             played: mine.length,
+            // For the card only (never persisted): the raw team rating, for the
+            // league-wide Beluga index, and the window's results oldest → newest.
+            rating: round1(meta.rating),
+            last5: mine.map((s) => (s.winner_team_id === teamId ? 'W'
+                : (s.is_forfeit && s.forfeit_kind === 'double') ? 'D' : 'L')).reverse(),
         });
     }
 
@@ -436,4 +441,45 @@ async function refreshPowerRankings(seasonId, division, week = null) {
     return { teams, players, week: wk };
 }
 
-module.exports = { computeTeamRankings, computePlayerRankings, refreshPowerRankings, savePowerRankings, playerNote };
+/**
+ * League-wide average TEAM Beluga rating through `week` (every division, regular
+ * season, teams that have played). The cards show each team's rating as an index
+ * against it: 100 = league average (operator, Oct 2026). Same per-game helper as the
+ * team rating above, so the two are directly comparable.
+ */
+async function leagueTeamRatingAverage(seasonId, week = null) {
+    if (!db()) return null;
+    const cap = week == null ? Number.MAX_SAFE_INTEGER : Number(week);
+    const totals = await pool.query(
+        `SELECT gp.team_id,
+            COUNT(DISTINCT gp.game_id)::int AS games,
+            COALESCE(SUM(gp.score),0)::int AS score,
+            COALESCE(SUM(gp.goals),0)::int AS goals,
+            COALESCE(SUM(gp.assists),0)::int AS assists,
+            COALESCE(SUM(gp.saves),0)::int AS saves,
+            COALESCE(SUM(gp.shots),0)::int AS shots,
+            COALESCE(SUM(gp.demos_inflicted),0)::int AS demos_inflicted
+         FROM stats_game_players gp JOIN stats_series s ON s.id = gp.series_id
+         WHERE gp.season_id=$1 AND gp.is_playoff=FALSE
+           AND s.status='confirmed' AND COALESCE(s.week, 0) <= $2
+         GROUP BY gp.team_id`,
+        [seasonId, cap]
+    );
+    const ratings = totals.rows
+        .filter((r) => r.games > 0)
+        .map((r) => Number(belugaFromTotals(r, r.games) || 0))
+        .filter((v) => v > 0);
+    if (!ratings.length) return null;
+    return ratings.reduce((a, b) => a + b, 0) / ratings.length;
+}
+
+/** A rating as the league-wide index (100 = league average); null when unknown. */
+function belugaIndex(rating, leagueAverage) {
+    if (!rating || !leagueAverage) return null;
+    return Math.round((rating / leagueAverage) * 100);
+}
+
+module.exports = {
+    computeTeamRankings, computePlayerRankings, refreshPowerRankings, savePowerRankings, playerNote,
+    leagueTeamRatingAverage, belugaIndex,
+};

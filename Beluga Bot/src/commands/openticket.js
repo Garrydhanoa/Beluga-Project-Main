@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, PermissionFlagsBits, ChannelType, EmbedBuilder } = require('discord.js');
 const Logger = require('../utils/logger');
 const { TicketDB, pool, isDatabaseAvailable } = require('../utils/database');
+const transcriptStore = require('../utils/transcriptStore');
 const { ROLES } = require('../constants/roles');
 const https = require('https');
 
@@ -798,10 +799,18 @@ module.exports = {
                         });
                     }
 
-                    // Backfill any missed messages, then archive (snapshot + delete
-                    // live rows) for the website's closed-ticket transcript.
-                    await backfillTicketChannel(interaction.channel).catch(() => {});
-                    await archiveTicket(ticketData, interaction.user.username);
+                    // Read the WHOLE channel history, then archive (merged + verified)
+                    // for the website's closed-ticket transcript. If it can't be saved,
+                    // KEEP the channel — deleting it would lose the only copy.
+                    const back = await backfillTicketChannel(interaction.channel);
+                    const archived = back.error
+                        ? { ok: false, reason: `could not read the channel (${back.error})` }
+                        : await archiveTicket(ticketData, interaction.user.username, back.fetched);
+                    if (!archived.ok) {
+                        Logger.error(`Ticket ${ticketData.channelName} NOT closed — transcript could not be saved: ${archived.reason}`);
+                        await interaction.channel.send('The transcript for this ticket could not be saved, so the channel was kept. Staff: please run /close again in a few minutes.').catch(() => {});
+                        return;
+                    }
 
                     // Remove from active tickets database
                     await deleteTicket(interaction.channel.id);
@@ -945,11 +954,12 @@ async function createTicketFromRequest(client, { targetKind, targetId, reason, r
  * Insert one Discord message into ticket_messages (the website transcript
  * mirror). No-op if the channel isn't a tracked ticket.
  */
-async function captureTicketMessage(message) {
+async function captureTicketMessage(message, { force = false } = {}) {
     if (!isDatabaseAvailable || !isDatabaseAvailable()) return;
     try {
         const channelId = message.channel?.id;
         if (!channelId) return;
+        if (force) return await insertTicketMessage(channelId, message);
         // Only capture for tracked ticket channels. Check the in-memory map
         // first (cheap), then fall back to a direct DB lookup. The fallback is
         // REQUIRED for the new configurable ticket system (ticketSystem.js):
@@ -961,14 +971,23 @@ async function captureTicketMessage(message) {
             const dbTicket = await TicketDB.get(channelId).catch(() => null);
             if (!dbTicket) return;
         }
+        await insertTicketMessage(channelId, message);
+    } catch (err) {
+        // The ticket_messages table is created by ticketSync.ensureTicketTables()
+        // at startup; ignore the transient "relation does not exist" race quietly.
+        if (err && err.code === '42P01') return;
+        Logger.error('captureTicketMessage failed', err.message || err);
+    }
+}
 
+/** Write one message into ticket_messages (image attachments are copied). */
+async function insertTicketMessage(channelId, message) {
+    try {
         const author = message.author;
         const member = message.member;
         const avatar = author?.displayAvatarURL ? author.displayAvatarURL({ extension: 'png', size: 64 }) : null;
         const color = member?.displayHexColor && member.displayHexColor !== '#000000' ? member.displayHexColor : null;
-        const attachments = Array.from(message.attachments?.values?.() || []).map((a) => ({
-            url: a.url, name: a.name, contentType: a.contentType || null,
-        }));
+        const attachments = await transcriptStore.captureAttachments('ticket', channelId, message);
         const embeds = (message.embeds || []).map((e) => ({
             title: e.title || null, description: e.description || null,
         }));
@@ -977,7 +996,7 @@ async function captureTicketMessage(message) {
             INSERT INTO ticket_messages
               (channel_id, message_id, author_id, author_username, author_display, author_avatar, author_color, is_bot, content, attachments, embeds, message_created_at)
             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12)
-            ON CONFLICT (channel_id, message_id) DO UPDATE SET content = EXCLUDED.content
+            ON CONFLICT (channel_id, message_id) DO UPDATE SET content = EXCLUDED.content, attachments = EXCLUDED.attachments
         `, [
             channelId,
             message.id,
@@ -1001,21 +1020,17 @@ async function captureTicketMessage(message) {
 }
 
 /**
- * Backfill the last N messages of a ticket channel into ticket_messages.
- * Used on startup and when a ticket is first opened so the website transcript
- * isn't empty for already-active tickets.
+ * Backfill a ticket channel's history into ticket_messages — the WHOLE history,
+ * or only what's newer than `stopAtId`. Used at startup, on open, periodically and
+ * before archiving. Returns { fetched } or { error }.
  */
-async function backfillTicketChannel(channel) {
-    if (!isDatabaseAvailable || !isDatabaseAvailable()) return;
-    try {
-        const fetched = await channel.messages.fetch({ limit: 100 });
-        const ordered = Array.from(fetched.values()).reverse();
-        for (const msg of ordered) {
-            await captureTicketMessage(msg);
-        }
-    } catch (err) {
-        Logger.error(`backfillTicketChannel failed for ${channel?.id}`, err);
-    }
+async function backfillTicketChannel(channel, { stopAtId = null } = {}) {
+    if (!isDatabaseAvailable || !isDatabaseAvailable()) return { fetched: 0, error: 'database unavailable' };
+    const res = await transcriptStore.backfillChannel(
+        channel, (msg) => captureTicketMessage(msg, { force: true }), { stopAtId }
+    );
+    if (res.error) Logger.error(`backfillTicketChannel failed for ${channel?.id}: ${res.error}`);
+    return res;
 }
 
 /**
@@ -1054,10 +1069,16 @@ async function closeTicketByChannelId(client, channelId, closedByUsername = 'Web
             await transcriptChannel.send({ embeds: [embed] }).catch(() => {});
         }
 
-        // Backfill any missed messages so the final snapshot is complete, then
-        // archive (snapshot + delete live rows) before deleting the channel.
-        await backfillTicketChannel(channel).catch(() => {});
-        await archiveTicket(ticketData, closedByUsername);
+        // Read the whole history so the final snapshot is complete, then archive
+        // (merged + verified) before deleting the channel — or keep the channel.
+        const back = await backfillTicketChannel(channel);
+        const archived = back.error
+            ? { ok: false, reason: `could not read the channel (${back.error})` }
+            : await archiveTicket(ticketData, closedByUsername, back.fetched);
+        if (!archived.ok) {
+            Logger.error(`Ticket ${ticketData.channelName} NOT closed from the website — transcript could not be saved: ${archived.reason}`);
+            return { ok: false, error: `transcript could not be saved (${archived.reason}); channel kept` };
+        }
         await deleteTicket(channelId);
         await channel.delete().catch(() => {});
         Logger.success(`Ticket ${ticketData.channelName} closed via website by ${closedByUsername}`);
@@ -1074,53 +1095,38 @@ async function closeTicketByChannelId(client, channelId, closedByUsername = 'Web
  * tickets don't accumulate per-message rows in the DB. The website reads the
  * snapshot for closed tickets and the live rows only while a ticket is open.
  */
-async function archiveTicket(ticketData, closedByUsername) {
-    if (!isDatabaseAvailable || !isDatabaseAvailable()) return;
+async function archiveTicket(ticketData, closedByUsername, discordCount = null) {
+    if (!isDatabaseAvailable || !isDatabaseAvailable()) return { ok: false, reason: 'database unavailable' };
     try {
-        // Build the consolidated transcript from the live rows.
-        const msgRes = await pool.query(
-            `SELECT message_id, author_id, author_username, author_display, author_avatar,
-                    author_color, is_bot, content, attachments, embeds, message_created_at
-             FROM ticket_messages WHERE channel_id = $1
-             ORDER BY message_created_at ASC, id ASC`,
-            [ticketData.channelId]
-        ).catch(() => ({ rows: [] }));
-        const snapshot = msgRes.rows.map((m) => ({
-            messageId: m.message_id,
-            authorId: m.author_id,
-            authorUsername: m.author_username,
-            authorDisplay: m.author_display || m.author_username,
-            authorAvatar: m.author_avatar,
-            authorColor: m.author_color,
-            isBot: !!m.is_bot,
-            content: m.content || '',
-            attachments: m.attachments || [],
-            embeds: m.embeds || [],
-            createdAt: m.message_created_at,
-        }));
-
-        await pool.query(`
-            INSERT INTO ticket_archives (channel_id, channel_name, reason, opened_by_username, opened_at, closed_by_username, message_count, transcript)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
-            ON CONFLICT (channel_id) DO UPDATE SET
-                closed_by_username = EXCLUDED.closed_by_username,
-                closed_at = CURRENT_TIMESTAMP,
-                message_count = EXCLUDED.message_count,
-                transcript = EXCLUDED.transcript
-        `, [
-            ticketData.channelId,
-            ticketData.channelName || null,
-            ticketData.reason || null,
-            ticketData.createdByUsername || null,
-            ticketData.createdAt ? new Date(ticketData.createdAt) : null,
-            closedByUsername || null,
-            snapshot.length,
-            JSON.stringify(snapshot),
-        ]);
-
-        // Delete the live per-message rows — the snapshot is the kept transcript.
-        await pool.query('DELETE FROM ticket_messages WHERE channel_id = $1', [ticketData.channelId]).catch(() => {});
+        // Merge with anything already archived (never shrinks), verify the stored
+        // row, THEN drop the live rows. Returns { ok, count, reason }; callers keep
+        // the channel when ok is false.
+        const result = await transcriptStore.writeArchive({
+            archiveTable: 'ticket_archives', keyCol: 'channel_id', key: ticketData.channelId,
+            liveTable: 'ticket_messages', liveCol: 'channel_id', discordCount,
+            insertSql: `
+                INSERT INTO ticket_archives (channel_id, channel_name, reason, opened_by_username, opened_at, closed_by_username, message_count, transcript)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+                ON CONFLICT (channel_id) DO UPDATE SET
+                    closed_by_username = EXCLUDED.closed_by_username,
+                    closed_at = CURRENT_TIMESTAMP,
+                    message_count = EXCLUDED.message_count,
+                    transcript = EXCLUDED.transcript`,
+            insertParams: (merged) => [
+                ticketData.channelId,
+                ticketData.channelName || null,
+                ticketData.reason || null,
+                ticketData.createdByUsername || null,
+                ticketData.createdAt ? new Date(ticketData.createdAt) : null,
+                closedByUsername || null,
+                merged.length,
+                JSON.stringify(merged),
+            ],
+        });
+        if (!result.ok) Logger.error(`Ticket transcript NOT saved for ${ticketData.channelName}: ${result.reason}`);
+        return result;
     } catch (err) {
-        Logger.error('archiveTicket failed', err.message || err);
+        Logger.error('archiveTicket failed', err);
+        return { ok: false, reason: err.message || String(err) };
     }
 }

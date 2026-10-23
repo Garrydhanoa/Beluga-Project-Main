@@ -10,6 +10,7 @@ const {
 // Team/GM/NP roles are pulled from the database (teams + franchises).
 const { ROLES } = require('../constants/roles');
 const { pool, isDatabaseAvailable, LeagueDB } = require('../utils/database');
+const transcriptStore = require('../utils/transcriptStore');
 // Week rollover is 9:00 AM Monday US Eastern, not UTC midnight.
 const { currentLeagueWeek, weekOpensAt, formatEastern } = require('../utils/leagueWeek');
 // Playoff rounds live at week 90 + round. Those integers stay (threadContext and
@@ -38,28 +39,55 @@ async function refreshKnownThreadIds() {
     } catch { /* table may not exist yet */ }
 }
 
+// Threads that are NOT week threads, remembered briefly so ordinary thread chatter
+// elsewhere in the server doesn't cost a DB lookup per message.
+const notWeekThread = new Map(); // threadId -> checkedAt
+
+/**
+ * Is this channel a tracked week thread? The in-memory set is the fast path; on a
+ * miss, threads fall back to the database (the set used to be the ONLY check, and a
+ * stale set meant whole threads were never captured).
+ */
+async function isTrackedWeekThread(channel) {
+    const id = String(channel?.id || '');
+    if (!id) return false;
+    if (knownThreadIds.has(id)) return true;
+    if (typeof channel.isThread !== 'function' || !channel.isThread()) return false;
+    const missAt = notWeekThread.get(id);
+    if (missAt && Date.now() - missAt < 10 * 60 * 1000) return false;
+    try {
+        const r = await pool.query(`SELECT 1 FROM week_threads WHERE thread_id = $1 LIMIT 1`, [id]);
+        if (r.rows.length) { knownThreadIds.add(id); notWeekThread.delete(id); return true; }
+        notWeekThread.set(id, Date.now());
+        if (notWeekThread.size > 5000) notWeekThread.delete(notWeekThread.keys().next().value);
+    } catch { /* DB blip — try again next message */ }
+    return false;
+}
+
 /**
  * Capture a message into thread_messages (the website's live thread transcript)
  * if it belongs to a tracked week thread. Mirrors the ticket transcript capture.
+ * `force` skips the membership check (used by the archive backfill, which already
+ * knows the thread is a week thread). Image attachments are copied so they survive
+ * the thread being deleted.
  */
-async function captureThreadMessage(message) {
+async function captureThreadMessage(message, { force = false } = {}) {
     if (!isDatabaseAvailable()) return;
     const channelId = message.channel?.id;
-    if (!channelId || !knownThreadIds.has(String(channelId))) return;
+    if (!channelId) return;
+    if (!force && !(await isTrackedWeekThread(message.channel))) return;
     try {
         const author = message.author;
         const member = message.member;
         const avatar = author?.displayAvatarURL ? author.displayAvatarURL({ extension: 'png', size: 64 }) : null;
         const color = member?.displayHexColor && member.displayHexColor !== '#000000' ? member.displayHexColor : null;
-        const attachments = Array.from(message.attachments?.values?.() || []).map((a) => ({
-            url: a.url, name: a.name, contentType: a.contentType || null,
-        }));
+        const attachments = await transcriptStore.captureAttachments('thread', channelId, message);
         const embeds = (message.embeds || []).map((e) => ({ title: e.title || null, description: e.description || null }));
         await pool.query(`
             INSERT INTO thread_messages
               (thread_id, message_id, author_id, author_username, author_display, author_avatar, author_color, is_bot, content, attachments, embeds, message_created_at)
             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12)
-            ON CONFLICT (thread_id, message_id) DO UPDATE SET content = EXCLUDED.content
+            ON CONFLICT (thread_id, message_id) DO UPDATE SET content = EXCLUDED.content, attachments = EXCLUDED.attachments
         `, [
             String(channelId), message.id, author?.id || null, author?.username || null,
             member?.displayName || author?.globalName || author?.username || null,
@@ -90,80 +118,46 @@ function weekThreadTranscriptPointer() {
 }
 
 /**
- * Backfill the thread's recent messages into thread_messages (so nothing is lost
- * if a message slipped past live capture), then write a thread_archives header
- * row. Keeps the transcript + context on the website after the Discord thread is
- * deleted — mirrors how tickets are archived.
+ * Save a week thread's transcript to thread_archives BEFORE its Discord thread is
+ * deleted: page through the thread's WHOLE history (not just the last 100), merge
+ * with anything already archived (a re-archive can never shrink it), verify the
+ * stored row, then drop the live rows.
+ *
+ * Returns { ok, count, reason }. Callers MUST keep the Discord thread when ok is
+ * false — deleting it would lose the only copy (what happened to Season 10).
  */
 async function archiveWeekThread(record, weekNumber, closedByUsername, thread) {
-    if (!isDatabaseAvailable()) return;
+    if (!isDatabaseAvailable()) return { ok: false, reason: 'database unavailable' };
     try {
-        // 1) Backfill any messages that slipped past live capture.
+        let discordCount = null;
         if (thread && typeof thread.messages?.fetch === 'function') {
-            const fetched = await thread.messages.fetch({ limit: 100 }).catch(() => null);
-            if (fetched) {
-                const ordered = Array.from(fetched.values()).reverse();
-                for (const msg of ordered) await captureThreadMessage(msg);
-            }
+            const r = await transcriptStore.backfillChannel(thread, (msg) => captureThreadMessage(msg, { force: true }));
+            if (r.error) return { ok: false, reason: `could not read the Discord thread (${r.error})` };
+            discordCount = r.fetched;
         }
 
-        // 2) Build the consolidated FINAL transcript snapshot from the live rows.
-        const snapshot = await buildTranscriptSnapshot('thread_messages', 'thread_id', record.thread_id);
-
-        // 3) Write the archive header + the frozen transcript snapshot.
-        await pool.query(`
-            INSERT INTO thread_archives (thread_id, season_id, week_number, division, team1, team2, match_number, closed_by_username, message_count, transcript)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)
-            ON CONFLICT (thread_id) DO UPDATE SET
-                closed_by_username = EXCLUDED.closed_by_username,
-                closed_at = CURRENT_TIMESTAMP,
-                message_count = EXCLUDED.message_count,
-                transcript = EXCLUDED.transcript
-        `, [
-            record.thread_id, record.season_id || null, weekNumber, record.division || null,
-            record.team1 || null, record.team2 || null, record.match_number || null,
-            closedByUsername || null, snapshot.length, JSON.stringify(snapshot),
-        ]);
-
-        // 4) Delete the live per-message rows — the snapshot is the kept transcript.
-        await pool.query('DELETE FROM thread_messages WHERE thread_id = $1', [record.thread_id]).catch(() => {});
+        const result = await transcriptStore.writeArchive({
+            archiveTable: 'thread_archives', keyCol: 'thread_id', key: record.thread_id,
+            liveTable: 'thread_messages', liveCol: 'thread_id', discordCount,
+            insertSql: `
+                INSERT INTO thread_archives (thread_id, season_id, week_number, division, team1, team2, match_number, closed_by_username, message_count, transcript)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)
+                ON CONFLICT (thread_id) DO UPDATE SET
+                    closed_by_username = EXCLUDED.closed_by_username,
+                    closed_at = CURRENT_TIMESTAMP,
+                    message_count = EXCLUDED.message_count,
+                    transcript = EXCLUDED.transcript`,
+            insertParams: (merged) => [
+                record.thread_id, record.season_id || null, weekNumber, record.division || null,
+                record.team1 || null, record.team2 || null, record.match_number || null,
+                closedByUsername || null, merged.length, JSON.stringify(merged),
+            ],
+        });
+        if (!result.ok) Logger.error(`Transcript NOT saved for ${record.team1} vs ${record.team2} (${record.thread_id}): ${result.reason}`);
+        return result;
     } catch (err) {
-        Logger.error('archiveWeekThread failed', err.message || err);
-    }
-}
-
-/**
- * Read the live per-message rows for a ticket/thread and return them as a frozen
- * array of message objects (the same shape the website transcript viewer renders).
- * Used to snapshot the final transcript on close before the live rows are deleted.
- * @param {'thread_messages'|'ticket_messages'} table
- * @param {'thread_id'|'channel_id'} idCol
- * @param {string} id
- */
-async function buildTranscriptSnapshot(table, idCol, id) {
-    try {
-        const r = await pool.query(
-            `SELECT message_id, author_id, author_username, author_display, author_avatar,
-                    author_color, is_bot, content, attachments, embeds, message_created_at
-             FROM ${table} WHERE ${idCol} = $1
-             ORDER BY message_created_at ASC, id ASC`,
-            [id]
-        );
-        return r.rows.map((m) => ({
-            messageId: m.message_id,
-            authorId: m.author_id,
-            authorUsername: m.author_username,
-            authorDisplay: m.author_display || m.author_username,
-            authorAvatar: m.author_avatar,
-            authorColor: m.author_color,
-            isBot: !!m.is_bot,
-            content: m.content || '',
-            attachments: m.attachments || [],
-            embeds: m.embeds || [],
-            createdAt: m.message_created_at,
-        }));
-    } catch {
-        return [];
+        Logger.error(`archiveWeekThread failed for ${record.team1} vs ${record.team2}`, err);
+        return { ok: false, reason: err.message || String(err) };
     }
 }
 
@@ -310,13 +304,25 @@ async function getWeekThreadIds(weekNumber) {
 
     try {
         const result = await pool.query(
-            'SELECT thread_id, division, team1, team2, match_number, season_id FROM week_threads WHERE week_number = $1',
+            'SELECT id, thread_id, division, team1, team2, match_number, season_id FROM week_threads WHERE week_number = $1',
             [weekNumber]
         );
         return result.rows;
     } catch (error) {
         Logger.error(`Failed to get week ${weekNumber} thread IDs`, error);
         return [];
+    }
+}
+
+/** Delete specific week_threads rows (the ones a delete actually handled). */
+async function deleteWeekThreadRowsById(ids) {
+    if (!isDatabaseAvailable() || !ids.length) return false;
+    try {
+        await pool.query('DELETE FROM week_threads WHERE id = ANY($1::int[])', [ids]);
+        return true;
+    } catch (error) {
+        Logger.error(`Failed to delete ${ids.length} week thread record(s)`, error);
+        return false;
     }
 }
 
@@ -655,19 +661,23 @@ async function deleteWeekThreads(guild, weekNumber, client, closedByUsername = '
     let deletedCount = 0;
     let failedCount = 0;
     let transcriptCount = 0;
+    const keptForTranscript = [];
+    const processedIds = [];
 
     for (const record of threadRecords) {
         try {
-            const thread = await client.channels.fetch(record.thread_id).catch(() => null);
+            const thread = record.thread_id ? await client.channels.fetch(record.thread_id).catch(() => null) : null;
             if (thread) {
-                // Save the transcript on the website (thread_messages mirror +
-                // thread_archives header) BEFORE deleting the Discord thread.
-                try {
-                    await archiveWeekThread(record, weekNumber, closedByUsername, thread);
-                    transcriptCount++;
-                } catch (archiveError) {
-                    Logger.error(`Failed to archive transcript for ${record.team1} vs ${record.team2}`, archiveError);
+                // Save the transcript on the website BEFORE deleting the Discord
+                // thread — and if it can't be saved, KEEP the thread (and its row,
+                // so a retry can try again) rather than lose the only copy.
+                const archived = await archiveWeekThread(record, weekNumber, closedByUsername, thread);
+                if (!archived.ok) {
+                    failedCount++;
+                    keptForTranscript.push(`${record.team1} vs ${record.team2}`);
+                    continue;
                 }
+                transcriptCount++;
 
                 // Post a pointer to the website transcript (no more dpaste link).
                 if (transcriptChannel) {
@@ -686,26 +696,36 @@ async function deleteWeekThreads(guild, weekNumber, client, closedByUsername = '
 
                 await thread.delete(`Week ${weekNumber} thread cleanup`);
                 deletedCount++;
+                processedIds.push(record.id);
             } else {
-                // Thread doesn't exist anymore, still archive the header so the
-                // website keeps the transcript, then count as handled.
-                await archiveWeekThread(record, weekNumber, closedByUsername, null).catch(() => {});
+                // Thread doesn't exist anymore — save whatever was captured live.
+                if (record.thread_id) {
+                    const archived = await archiveWeekThread(record, weekNumber, closedByUsername, null);
+                    if (archived.ok && archived.count > 0) transcriptCount++;
+                }
                 deletedCount++;
+                processedIds.push(record.id);
             }
         } catch (error) {
             Logger.error(`Failed to delete thread ${record.thread_id}`, error);
             failedCount++;
         }
-        
+
         // Small delay to avoid rate limits
         await new Promise(resolve => setTimeout(resolve, 500));
     }
 
-    // Delete records from database
-    await deleteWeekThreadRecords(weekNumber);
+    // Remove only the rows that were actually handled. A thread kept because its
+    // transcript couldn't be saved keeps its row, so it stays tracked + captured
+    // and the next delete attempt retries it.
+    await deleteWeekThreadRowsById(processedIds);
+    await refreshKnownThreadIds().catch(() => {});
 
+    if (keptForTranscript.length) {
+        Logger.error(`Week ${weekNumber}: kept ${keptForTranscript.length} thread(s) because their transcript could not be saved: ${keptForTranscript.join(', ')}`);
+    }
     Logger.success(`Deleted ${deletedCount} threads for Week ${weekNumber} (${failedCount} failed, ${transcriptCount} transcripts saved)`);
-    return { success: true, deletedCount, failedCount, transcriptCount };
+    return { success: true, deletedCount, failedCount, transcriptCount, keptForTranscript };
 }
 
 /**
@@ -928,8 +948,12 @@ async function deleteSingleWeekThread(guild, weekThreadId, client, closedByUsern
         if (record.thread_id) {
             const thread = await client.channels.fetch(String(record.thread_id)).catch(() => null);
             // Archive whether or not the Discord thread still exists — the
-            // transcript rows are the thing worth keeping.
-            await archiveWeekThread(record, record.week_number, closedByUsername, thread);
+            // transcript rows are the thing worth keeping. If a live thread's
+            // transcript can't be saved, keep the thread.
+            const archived = await archiveWeekThread(record, record.week_number, closedByUsername, thread);
+            if (thread && !archived.ok) {
+                return { success: false, message: `kept the thread — its transcript could not be saved (${archived.reason})` };
+            }
 
             if (thread) {
                 const transcriptChannel = await client.channels
@@ -1054,7 +1078,10 @@ async function processWeekThreadActions(client) {
                 [
                     row.id,
                     result.success ? 'fulfilled' : 'failed',
-                    result.success ? `deleted ${result.deletedCount}, ${result.transcriptCount} transcripts saved` : (result.error || 'failed'),
+                    result.success
+                        ? `deleted ${result.deletedCount}, ${result.transcriptCount} transcripts saved`
+                          + (result.keptForTranscript?.length ? `; KEPT ${result.keptForTranscript.length} thread(s) whose transcript could not be saved (${result.keptForTranscript.join(', ')}) — retry the delete` : '')
+                        : (result.error || 'failed'),
                 ]
             );
         } catch (err) {
@@ -1078,19 +1105,44 @@ let threadsBackfilled = false;
 async function backfillOpenThreads(client) {
     if (!isDatabaseAvailable() || threadsBackfilled) return;
     threadsBackfilled = true;
+    await catchUpWeekThreads(client, 'startup');
+}
+
+/**
+ * Pull in every message the live capture missed — e.g. while the bot was down.
+ * For each tracked thread it reads back from the newest message already captured
+ * (or the whole history if nothing is captured yet). Runs at startup and every
+ * 10 minutes, so downtime can no longer leave holes in a transcript.
+ */
+let catchUpRunning = false;
+async function catchUpWeekThreads(client, why = 'periodic') {
+    if (!isDatabaseAvailable() || catchUpRunning) return;
+    catchUpRunning = true;
+    let threads = 0;
+    let added = 0;
     try {
-        const r = await pool.query(`SELECT thread_id FROM week_threads WHERE thread_id IS NOT NULL AND is_closed = FALSE`);
+        const r = await pool.query(`SELECT thread_id FROM week_threads WHERE thread_id IS NOT NULL`);
         for (const row of r.rows) {
             const thread = await client.channels.fetch(row.thread_id).catch(() => null);
             if (!thread || typeof thread.messages?.fetch !== 'function') continue;
-            const fetched = await thread.messages.fetch({ limit: 100 }).catch(() => null);
-            if (!fetched) continue;
-            const ordered = Array.from(fetched.values()).reverse();
-            for (const msg of ordered) await captureThreadMessage(msg);
+            // Startup re-reads the WHOLE history (a message captured live just after
+            // a restart must not hide older ones missed during the downtime); the
+            // periodic pass only reads what's newer than the last captured message.
+            const since = why === 'startup'
+                ? null
+                : await transcriptStore.newestCapturedId('thread_messages', 'thread_id', row.thread_id).catch(() => undefined);
+            if (since === undefined) continue; // DB blip — try next round
+            const res = await transcriptStore.backfillChannel(
+                thread, (msg) => captureThreadMessage(msg, { force: true }), { stopAtId: since }
+            );
+            threads++;
+            added += res.fetched || 0;
         }
-        Logger.info(`Thread transcripts backfilled for ${r.rows.length} open thread(s)`);
+        if (why === 'startup' || added) Logger.info(`Thread transcripts caught up (${why}): ${added} message(s) across ${threads} thread(s)`);
     } catch (err) {
-        Logger.error('backfillOpenThreads failed', err.message || err);
+        Logger.error('Thread transcript catch-up failed', err);
+    } finally {
+        catchUpRunning = false;
     }
 }
 
@@ -1117,6 +1169,8 @@ function startPendingWeekThreadWatcher(client, intervalMs = 60 * 1000) {
         await backfillOpenThreads(client).catch(() => {});
     }, 5000);
     pendingScanInterval = setInterval(tick, intervalMs);
+    // Transcript safety net: re-read anything live capture missed, every 10 min.
+    setInterval(() => { catchUpWeekThreads(client).catch(() => {}); }, 10 * 60 * 1000);
     Logger.info(`Pending week-thread watcher started (every ${Math.round(intervalMs / 1000)}s)`);
 }
 
@@ -1258,7 +1312,9 @@ module.exports = {
 
                 if (result.success) {
                     await interaction.followUp({
-                        content: `✅ Deleted **${result.deletedCount}** match thread(s) for ${weekLabel(weekNumber)} and saved their transcripts on the website.${result.failedCount > 0 ? ` (${result.failedCount} failed to delete)` : ''}`,
+                        content: `✅ Deleted **${result.deletedCount}** match thread(s) for ${weekLabel(weekNumber)} and saved their transcripts on the website.${result.failedCount > 0 ? ` (${result.failedCount} failed to delete)` : ''}`
+                            + (result.keptForTranscript?.length ? `
+Kept ${result.keptForTranscript.length} thread(s) because their transcript could not be saved: ${result.keptForTranscript.join(', ')}. Run the delete again to retry.` : ''),
                         ephemeral: true
                     });
                 } else {

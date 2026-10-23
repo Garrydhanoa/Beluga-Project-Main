@@ -15,6 +15,7 @@ const ALLOWED = new Set([
   'health', 'status', 'players', 'run', 'resume', 'stop',
   'update-player', 'update-players', 'retry-blocked', 'queue', 'events',
   'search', 'sheet-index', 'rotate-ip', 'proxies', 'config', 'diag',
+  'eligibility', // lifetime-wins: ranges from column R + read-only impact preview
 ])
 
 async function proxy(request, params, method) {
@@ -41,7 +42,7 @@ async function proxy(request, params, method) {
       'Content-Type': 'application/json',
       ...(SCRAPER_TOKEN ? { 'X-Auth-Token': SCRAPER_TOKEN } : {}),
     },
-    signal: AbortSignal.timeout(12000),
+    signal: AbortSignal.timeout(base === 'eligibility' ? 45000 : 12000),
   }
   if (method === 'POST') {
     const body = await request.text().catch(() => '')

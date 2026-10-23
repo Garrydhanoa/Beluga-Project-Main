@@ -558,6 +558,24 @@ async function runMigrations() {
   // Consolidated final transcript snapshot written on close/delete; per-message
   // thread_messages rows are then deleted to keep the DB lean.
   await step('thread_archives.transcript', `ALTER TABLE thread_archives ADD COLUMN IF NOT EXISTS transcript JSONB`)
+  // transcript_files — copies of IMAGE attachments from tickets + week threads (the
+  // bot writes them at capture time; Discord's links expire). Mirrors the bot's
+  // src/utils/transcriptStore.js — keep the two definitions in sync.
+  await step('transcript_files', `
+    CREATE TABLE IF NOT EXISTS transcript_files (
+      id            BIGSERIAL PRIMARY KEY,
+      scope         TEXT NOT NULL,
+      parent_id     TEXT NOT NULL,
+      message_id    TEXT,
+      attachment_id TEXT UNIQUE,
+      name          TEXT,
+      content_type  TEXT,
+      size          INTEGER,
+      data          BYTEA NOT NULL,
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `)
+  await step('idx_transcript_files_parent', `CREATE INDEX IF NOT EXISTS idx_transcript_files_parent ON transcript_files(scope, parent_id)`)
 
   // week_thread_actions — website-owned queue. The website "Delete week N" inserts
   // a row; the bot polls it and runs the SAME flow as /week-thread delete: deletes
@@ -800,6 +818,96 @@ async function runMigrations() {
   await step('idx_higgen_logs_time', `CREATE INDEX IF NOT EXISTS idx_higgen_logs_time ON higgen_logs(occurred_at DESC)`)
   await step('idx_higgen_logs_actor', `CREATE INDEX IF NOT EXISTS idx_higgen_logs_actor ON higgen_logs(actor_id, occurred_at DESC)`)
   await step('idx_higgen_logs_action', `CREATE INDEX IF NOT EXISTS idx_higgen_logs_action ON higgen_logs(action)`)
+
+  // ── login security (lib/security.js) ─────────────────────────────────────
+  // ip_bans: an auto-ban (3 strikes) or a manual ban by a super admin. A ban stays
+  // until lifted (expires_at is only set if a timed ban is ever wanted).
+  await step('ip_bans', `
+    CREATE TABLE IF NOT EXISTS ip_bans (
+      id                BIGSERIAL PRIMARY KEY,
+      ip                TEXT NOT NULL,
+      reason            TEXT,
+      auto              BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_by        TEXT,
+      expires_at        TIMESTAMPTZ,
+      lifted_at         TIMESTAMPTZ,
+      lifted_by         TEXT,
+      lift_reason       TEXT,
+      last_discord_id   TEXT,
+      last_discord_name TEXT,
+      strike_count      INTEGER NOT NULL DEFAULT 0
+    )
+  `)
+  await step('idx_ip_bans_active', `CREATE INDEX IF NOT EXISTS idx_ip_bans_active ON ip_bans(ip) WHERE lifted_at IS NULL`)
+  // security_strikes: one row per failed login. voided_at = cancelled by the outage guard.
+  await step('security_strikes', `
+    CREATE TABLE IF NOT EXISTS security_strikes (
+      id           BIGSERIAL PRIMARY KEY,
+      at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ip           TEXT NOT NULL,
+      kind         TEXT NOT NULL,
+      path         TEXT,
+      discord_id   TEXT,
+      discord_name TEXT,
+      device_id    TEXT,
+      error_sig    TEXT,
+      detail       TEXT,
+      voided_at    TIMESTAMPTZ
+    )
+  `)
+  await step('idx_security_strikes_ip', `CREATE INDEX IF NOT EXISTS idx_security_strikes_ip ON security_strikes(ip, at DESC)`)
+  // security_devices: a first-party device cookie + a light browser fingerprint, and
+  // every Discord account that has signed in from that device.
+  await step('security_devices', `
+    CREATE TABLE IF NOT EXISTS security_devices (
+      device_id   TEXT PRIMARY KEY,
+      fp_hash     TEXT,
+      fingerprint JSONB,
+      first_seen  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_seen   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_ip     TEXT,
+      discord_ids TEXT[] NOT NULL DEFAULT '{}'
+    )
+  `)
+  // web_sessions: the registry behind "who is online", "log this person out" and
+  // "log everyone out" (NextAuth JWTs are stateless on their own).
+  await step('web_sessions', `
+    CREATE TABLE IF NOT EXISTS web_sessions (
+      sid            TEXT PRIMARY KEY,
+      discord_id     TEXT NOT NULL,
+      username       TEXT,
+      display_name   TEXT,
+      avatar_url     TEXT,
+      email          TEXT,
+      login_intent   TEXT,
+      gate_passed    BOOLEAN NOT NULL DEFAULT FALSE,
+      is_director    BOOLEAN NOT NULL DEFAULT FALSE,
+      is_super_admin BOOLEAN NOT NULL DEFAULT FALSE,
+      access_granted BOOLEAN NOT NULL DEFAULT FALSE,
+      ip             TEXT,
+      country        TEXT,
+      city           TEXT,
+      region         TEXT,
+      isp            TEXT,
+      user_agent     TEXT,
+      browser        TEXT,
+      os             TEXT,
+      device_type    TEXT,
+      device_id      TEXT,
+      fp_hash        TEXT,
+      guilds         JSONB,
+      identity       JSONB,
+      created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_seen_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_path      TEXT,
+      revoked_at     TIMESTAMPTZ,
+      revoked_by     TEXT,
+      revoke_reason  TEXT
+    )
+  `)
+  await step('idx_web_sessions_seen', `CREATE INDEX IF NOT EXISTS idx_web_sessions_seen ON web_sessions(last_seen_at DESC)`)
+  await step('idx_web_sessions_user', `CREATE INDEX IF NOT EXISTS idx_web_sessions_user ON web_sessions(discord_id)`)
 
   // The old two-surface log (`site_logs`, read by the now-deleted Logs tab and the
   // first higgenlogs build) is retired. Its rows were thin and unreadable — the

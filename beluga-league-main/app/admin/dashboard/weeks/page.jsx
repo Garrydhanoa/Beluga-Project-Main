@@ -128,7 +128,9 @@ export default function WeekThreadsPage() {
     const r = await fetch(`/api/admin/transcripts?weekThreads=${week}&seasonId=${data.season.id}`, { method: 'DELETE' })
     const d = await r.json().catch(() => ({}))
     setBusy(false)
-    alert(r.ok ? `Deleted ${d.deletedMessages || 0} messages + ${d.deletedArchives || 0} archives across ${d.threads || 0} thread(s).` : 'Failed to delete transcripts.')
+    alert(r.ok
+      ? `Deleted ${d.deletedMessages || 0} messages + ${d.deletedArchives || 0} archives across ${d.threads || 0} thread(s).${d.note ? `\n${d.note}` : ''}`
+      : (d.error || 'Failed to delete transcripts.'))
     await reload()
   }
 
@@ -141,7 +143,7 @@ export default function WeekThreadsPage() {
     const r = await fetch(`/api/admin/transcripts?ticket=${encodeURIComponent(threadId)}`, { method: 'DELETE' })
     const d = await r.json().catch(() => ({}))
     setBusy(false)
-    alert(r.ok ? `Deleted ${d.deletedMessages || 0} message(s) + ${d.deletedArchives || 0} archive(s).` : 'Failed to delete transcript.')
+    alert(r.ok ? `Deleted ${d.deletedMessages || 0} message(s) + ${d.deletedArchives || 0} archive(s).` : (d.error || 'Failed to delete transcript.'))
     await reload()
   }
 
@@ -151,14 +153,16 @@ export default function WeekThreadsPage() {
     if (!threadIds?.length) return
     if (!confirm(`Delete ALL ${threadIds.length} saved transcript(s) for Week ${week}? Cannot be undone.`)) return
     setBusy(true)
-    let msgs = 0, arch = 0
+    let msgs = 0, arch = 0, lockedCount = 0
     for (const tid of threadIds) {
       const r = await fetch(`/api/admin/transcripts?ticket=${encodeURIComponent(tid)}`, { method: 'DELETE' })
       const d = await r.json().catch(() => ({}))
       if (r.ok) { msgs += d.deletedMessages || 0; arch += d.deletedArchives || 0 }
+      else if (r.status === 423) lockedCount++
     }
     setBusy(false)
-    alert(`Deleted ${msgs} message(s) + ${arch} archive(s) across ${threadIds.length} thread(s).`)
+    alert(`Deleted ${msgs} message(s) + ${arch} archive(s) across ${threadIds.length - lockedCount} thread(s).`
+      + (lockedCount ? `\n${lockedCount} transcript(s) are locked — transcripts can only be deleted 30 days after they close.` : ''))
     await reload()
   }
 
@@ -244,6 +248,7 @@ export default function WeekThreadsPage() {
           subtitle={`thread ${transcriptThread.threadId}`}
           messagesUrl={`/api/admin/thread-messages/${encodeURIComponent(transcriptThread.threadId)}`}
           onClose={() => setTranscriptThread(null)}
+          downloadUrl={`/api/admin/transcripts/export?type=thread&id=${encodeURIComponent(transcriptThread.threadId)}`}
         />
       )}
       {unreportedBlock && (

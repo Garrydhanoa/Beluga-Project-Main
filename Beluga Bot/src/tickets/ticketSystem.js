@@ -303,7 +303,7 @@ async function handleConfirmClose(interaction, reasonId) {
     if (!memberIsTicketStaff(interaction.member, reason)) {
         return interaction.reply({ content: '❌ Only staff can confirm a close.', flags: EPHEMERAL });
     }
-    await interaction.reply({ content: `🔒 Closing — transcript is saved on the website. (by <@${interaction.user.id}>)` });
+    await interaction.reply({ content: `🔒 Closing — saving the transcript to the website. (by <@${interaction.user.id}>)` });
     // Archive BEFORE deleting the row/channel so the closed ticket actually shows
     // up in the website admin Tickets tab. Reuses the same backfill + archive path
     // the old /openticket close uses (writes ticket_archives, which the website
@@ -318,10 +318,20 @@ async function handleConfirmClose(interaction, reasonId) {
             createdByUsername: null,
             createdAt: null,
         };
-        await backfillTicketChannel(interaction.channel).catch(() => {});
-        await archiveTicket(ticketData, interaction.user.username);
+        const back = await backfillTicketChannel(interaction.channel);
+        const archived = back.error
+            ? { ok: false, reason: `could not read the channel (${back.error})` }
+            : await archiveTicket(ticketData, interaction.user.username, back.fetched);
+        if (!archived.ok) {
+            // Never delete a ticket whose transcript isn't safely stored.
+            Logger.error(`Ticket ${interaction.channel.name} NOT closed — transcript could not be saved: ${archived.reason}`);
+            await interaction.channel.send('The transcript could not be saved, so this ticket was kept open. Please try closing it again in a few minutes.').catch(() => {});
+            return;
+        }
     } catch (err) {
-        Logger.error('Ticket archive on close failed', err.message || err);
+        Logger.error('Ticket archive on close failed — ticket kept open', err);
+        await interaction.channel.send('The transcript could not be saved, so this ticket was kept open. Please try closing it again in a few minutes.').catch(() => {});
+        return;
     }
     try {
         await TicketDB.delete(interaction.channel.id);

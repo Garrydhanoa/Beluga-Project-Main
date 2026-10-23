@@ -132,6 +132,21 @@ const PHRASES = {
   'rosters.update': 'changed a roster',
   'players.update': 'edited a player',
   'transcripts.update': 'acted on a thread transcript',
+  'transcripts.delete': 'deleted a saved transcript',
+  'transcripts.export': 'downloaded a transcript as an HTML file',
+  'security.revoke': 'logged one session out of the website',
+  'security.revoke-user': 'logged a person out of the website everywhere',
+  'security.revoke-all': 'logged EVERYONE out of the website (super admins kept)',
+  'security.ban': 'manually blocked an IP address',
+  'security.unban': 'unblocked an IP address',
+  'security.login': 'signed in',
+  'security.login-denied': 'was denied admin access',
+  'security.login-failed': 'had a Discord login fail',
+  'security.gate-failed': 'entered a wrong admin password',
+  'security.auto-ban': 'had their IP blocked automatically',
+  'security.login-broken': 'hit a website-wide Discord login failure',
+  'security.page-view': 'viewed a page',
+  'applications.submit': 'submitted an application',
 }
 
 export function phraseFor(action, method = 'POST') {
@@ -367,7 +382,9 @@ export function withAudit(handler, { action = null } = {}) {
       if (session) actor = actorFrom(session)
     } catch { /* unauth or session unavailable — the handler will 401 anyway */ }
 
-    const ip = request?.headers?.get?.('x-forwarded-for')?.split(',')[0]?.trim() || null
+    // Cloudflare's header is the real client IP (it overwrites any client-sent value).
+    const ip = request?.headers?.get?.('cf-connecting-ip')?.trim()
+      || request?.headers?.get?.('x-forwarded-for')?.split(',')[0]?.trim() || null
     const userAgent = request?.headers?.get?.('user-agent') || null
 
     // Best-effort readable body snapshot (cloned so the handler can still read it).

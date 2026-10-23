@@ -4,32 +4,28 @@ import { useState } from 'react'
 import { useEffect } from 'react'
 import { signIn, useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
+import { checkSecurityStatus, collectFingerprint } from '../../lib/clientSecurity'
+import { authErrorMessage } from '../../lib/authRouting'
 
 export default function AdminGateLogin() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [ban, setBan] = useState(null)
   const { data: session, status } = useSession()
   const router = useRouter()
 
   useEffect(() => {
     const authError = new URLSearchParams(window.location.search).get('error')
-    if (authError) {
-      setError('Discord login failed. Please try again.')
-    }
+    if (authError) setError(authErrorMessage(authError))
+    checkSecurityStatus().then((s) => { if (s.banned) setBan(s.message) })
   }, [])
 
+  // Already signed in with admin access → straight to the dashboard. Anyone else
+  // (an applicant session, a previous denied attempt) just sees the gate.
   useEffect(() => {
-    if (status !== 'authenticated') {
-      return
-    }
-
-    if (session?.isDirector) {
-      router.replace('/admin/dashboard')
-    } else {
-      router.replace('/admin/denied')
-    }
+    if (status === 'authenticated' && session?.adminAccess) router.replace('/admin/dashboard')
   }, [status, session, router])
 
   async function handleSubmit(e) {
@@ -41,23 +37,41 @@ export default function AdminGateLogin() {
       const res = await fetch('/api/admin/gate-login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, fp: collectFingerprint() }),
       })
+      const data = await res.json().catch(() => ({}))
 
-      const data = await res.json()
-
+      if (data.banned) {
+        setBan(data.error)
+        setLoading(false)
+        return
+      }
       if (data.success) {
-        // Gate passed — redirect to Discord OAuth
+        // Continue to Discord. Whether the password was right is decided on the
+        // server after Discord login — the page can't tell.
         const callbackUrl = `${window.location.origin}/admin/dashboard`
         await signIn('discord', { callbackUrl, redirect: true })
       } else {
-        setError('Invalid credentials')
+        setError(data.error || 'Something went wrong. Please try again.')
         setLoading(false)
       }
     } catch {
       setError('Something went wrong. Please try again.')
       setLoading(false)
     }
+  }
+
+  if (ban) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="w-full max-w-md px-6">
+          <div className="bg-gray-900/80 backdrop-blur-xl border border-red-500/30 rounded-2xl p-8 shadow-2xl text-center">
+            <h1 className="text-2xl font-bold text-white mb-3">Access blocked</h1>
+            <p className="text-gray-300 text-sm leading-relaxed">{ban}</p>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -111,12 +125,12 @@ export default function AdminGateLogin() {
             disabled={loading}
             className="w-full py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-colors"
           >
-            {loading ? 'Verifying...' : 'Continue'}
+            {loading ? 'Continuing to Discord…' : 'Continue'}
           </button>
         </form>
 
         <p className="text-center text-gray-600 text-xs mt-6">
-          Authorized personnel only
+          Authorized personnel only · sign-ins are recorded
         </p>
       </div>
       </div>

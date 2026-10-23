@@ -14,6 +14,7 @@
 
 const { pool, isDatabaseAvailable } = require('../utils/database');
 const Logger = require('../utils/logger');
+const { ROLES } = require('../constants/roles');
 
 function dbAvailable() {
     return typeof isDatabaseAvailable === 'function' ? isDatabaseAvailable() : isDatabaseAvailable;
@@ -23,14 +24,28 @@ function dbAvailable() {
 const MAX_LEN = 1900;
 
 /**
- * Replace the {mention} token with the real Discord mention. Falls back to no
- * mention (token stripped) if we have no discord_id.
+ * Replace the {mention} token with the real Discord mention (stripped if we have
+ * no discord_id) and {salary_crew} with the Salary Crew role mention.
  */
 function renderMessage(row) {
     const mention = row.discord_id ? `<@${row.discord_id}>` : '';
-    let text = String(row.message || '').replace(/\{mention\}/g, mention).trim();
+    let text = String(row.message || '')
+        .replace(/\{mention\}/g, mention)
+        .replace(/\{salary_crew\}/g, `<@&${ROLES.SALARY_CREW}>`)
+        .trim();
     if (text.length > MAX_LEN) text = text.slice(0, MAX_LEN - 1) + '…';
     return text;
+}
+
+/**
+ * Who a message may actually ping. Lifetime-wins alerts are for Salary Crew: they
+ * NAME the player (clickable) but must not ping them; the ranges notice pings
+ * nobody. Everything else keeps the old behaviour (pings the player it's about).
+ */
+function allowedMentionsFor(row) {
+    if (row.kind === 'wins_alert') return { parse: [], roles: [ROLES.SALARY_CREW], users: [] };
+    if (row.kind === 'wins_info') return { parse: [] };
+    return { parse: [], users: row.discord_id ? [String(row.discord_id)] : [], roles: [] };
 }
 
 async function postPendingOutbox(client) {
@@ -54,7 +69,7 @@ async function postPendingOutbox(client) {
                 const content = renderMessage(row);
                 if (!content) throw new Error('empty message after render');
 
-                await channel.send({ content });
+                await channel.send({ content, allowedMentions: allowedMentionsFor(row) });
                 await pool.query(
                     `UPDATE trn_outbox SET sent = TRUE, sent_at = now(), error = NULL WHERE id = $1`,
                     [row.id]

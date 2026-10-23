@@ -47,7 +47,7 @@ export async function POST(request, ctx) {
     try {
       return NextResponse.json(await setTrnConfig(body))
     } catch (e) {
-      return NextResponse.json({ error: String(e?.message || e) }, { status: 500 })
+      return NextResponse.json({ error: String(e?.message || e) }, { status: e?.status || 500 })
     }
   }, { action: 'mmr.config' })
   return audited(request, ctx)

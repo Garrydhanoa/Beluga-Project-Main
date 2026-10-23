@@ -4,16 +4,25 @@ import { authOptions } from '../../../lib/authOptions'
 import { ensureLeagueSchema } from '../../../lib/leagueSchema'
 import { query } from '../../../lib/db'
 import { rateLimit, getClientIp } from '../../../lib/rateLimit'
+import { BAN_MESSAGE, isAccessBlocked, logSecurityEvent } from '../../../lib/security'
 
 export const dynamic = 'force-dynamic'
 
 const MAX_FILE_BYTES = 8 * 1024 * 1024
 const MAX_FILES = 3
 
-// Public: list active forms (+ whether the visitor is signed in).
-export async function GET() {
+// Public: list active forms (+ whether the visitor is signed in). A blocked IP gets
+// the ban notice instead (ban scope = logins, admin, applications).
+export async function GET(request) {
   await ensureLeagueSchema()
   const session = await getServerSession(authOptions)
+  const ban = await isAccessBlocked({
+    ip: getClientIp(request), discordId: session?.discordUserId || null,
+    cookieGet: (n) => request.cookies.get(n)?.value,
+  })
+  if (ban) {
+    return NextResponse.json({ forms: [], signedIn: false, username: null, banned: true, message: BAN_MESSAGE })
+  }
   const forms = await query(
     `SELECT id, name, description, require_in_server, questions, max_file_mb FROM app_forms WHERE is_active = TRUE ORDER BY id DESC`
   ).catch(() => ({ rows: [] }))
@@ -32,6 +41,11 @@ export async function POST(request) {
   if (!session?.discordUserId) {
     return NextResponse.json({ error: 'Sign in with Discord first.' }, { status: 401 })
   }
+  const ban = await isAccessBlocked({
+    ip: getClientIp(request), discordId: session.discordUserId,
+    cookieGet: (n) => request.cookies.get(n)?.value,
+  })
+  if (ban) return NextResponse.json({ error: BAN_MESSAGE, banned: true }, { status: 403 })
 
   // Throttle submissions (each stores up to 3×8MB in Postgres): 5 per 10 min per user
   // and per IP, to prevent storage-exhaustion abuse.
@@ -111,6 +125,18 @@ export async function POST(request) {
     `INSERT INTO site_logins (discord_id, username, context) VALUES ($1, $2, $3)`,
     [String(session.discordUserId), session.discordUsername || null, `submitted form #${formId}`]
   ).catch(() => {})
+  await logSecurityEvent({
+    eventType: 'submit', outcome: 'success', action: 'applications.submit', location: 'Applications',
+    actor: { name: session.discordUsername || 'unknown', tag: session.discordUsername, discordId: session.discordUserId },
+    ip, userAgent: request.headers.get('user-agent'),
+    summary: `${session.discordUsername || 'Someone'} submitted the “${form.name}” application.`,
+    details: [
+      ['Form', form.name],
+      ['Submission #', String(submissionId)],
+      ['Answers', String(answers.length)],
+      ['Files attached', fileBuffers.length ? fileBuffers.map((f) => f.name).join(', ') : 'None'],
+    ],
+  })
 
   return NextResponse.json({ ok: true, submissionId, note: 'Submitted — staff will see it in Discord shortly.' })
 }

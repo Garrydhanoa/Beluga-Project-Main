@@ -343,7 +343,7 @@ async function startListener(client) {
         listenClient.on('notification', () => { drainQueue(client); });
         listenClient.on('error', (err) => {
             Logger.warning(`DM listener dropped (${err.message}); the poll fallback keeps jobs moving.`);
-            try { listenClient.release(); } catch { /* already gone */ }
+            try { listenClient.release(err); } catch { /* already gone */ }
             listenClient = null;
             setTimeout(() => startListener(client), 10 * 1000);
         });

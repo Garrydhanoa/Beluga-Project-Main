@@ -1,6 +1,15 @@
 import DiscordProvider from 'next-auth/providers/discord'
+import { getAdminDiscordIds, isSuperAdminId } from './adminIds'
+import { pushAuthError } from './authRequestContext'
+import { onSignIn } from './loginSecurity'
+import { IDLE_LIMIT_MS, getSessionState, restoreSessionRow, revokeSession } from './security'
 
-const SEVEN_DAYS_SECONDS = 60 * 60 * 24 * 7
+export { getAdminDiscordIds, isSuperAdminId }
+
+// The cookie itself may live up to a year; lib/security.js's session registry is what
+// actually ends a session — 7 days idle for everyone except ADMIN_DISCORD_IDS, who
+// are never logged out (operator rule). Revocation ("log out") is enforced there too.
+const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365
 
 // The entire admin panel authorizes on a JWT session cookie encrypted with
 // NEXTAUTH_SECRET. If that secret is missing, the shipped placeholder, or too short,
@@ -43,28 +52,6 @@ const RATE_LIMIT_BACKOFF_MS = 5 * 60 * 1000 // after a 429, don't retry for 5 mi
 // fetch Discord at most once per TTL per user (and not at all during a backoff).
 const roleCache = new Map() // discordUserId -> { roles, isDirector, username, checkedAt, rateLimitedUntil }
 
-export function getAdminDiscordIds() {
-  const raw = process.env.ADMIN_DISCORD_IDS || process.env.ADMIN_DISCORD_ID || ''
-  return raw
-    .split(',')
-    .map((id) => id.trim())
-    .filter(Boolean)
-}
-
-/**
- * "Super admin" = an ID explicitly listed in ADMIN_DISCORD_IDS. That list is the
- * league's privileged-access allowlist (it already bypasses the director check),
- * so it is also what gates the hidden audit log at /admin/dashboard/higgenlogs.
- *
- * Being a director is NOT enough — the whole point of the audit log is that the
- * people it might incriminate cannot read or curate it. Fails CLOSED: if the env
- * var is unset, nobody is a super admin.
- */
-export function isSuperAdminId(discordUserId) {
-  if (!discordUserId) return false
-  return getAdminDiscordIds().includes(String(discordUserId))
-}
-
 function applyBypass(token) {
   const ids = getAdminDiscordIds()
   if (ids.length && token.discordUserId && ids.includes(String(token.discordUserId))) {
@@ -73,10 +60,13 @@ function applyBypass(token) {
   }
 }
 
-async function refreshDiscordRoles(token) {
+// Returns the fresh guild-member object when Discord was actually asked (null when a
+// cache/backoff short-circuited or the user isn't in the league server). `force`
+// skips the fresh-cache shortcut — used at sign-in so the login record is current.
+async function refreshDiscordRoles(token, { force = false } = {}) {
   if (!token.accessToken) {
     applyBypass(token)
-    return
+    return null
   }
 
   const guildId = process.env.DISCORD_GUILD_ID
@@ -84,7 +74,7 @@ async function refreshDiscordRoles(token) {
   if (!guildId || !directorRoleId) {
     console.warn('[auth] DISCORD_GUILD_ID or DISCORD_DIRECTOR_ROLE_ID not set; skipping role check')
     applyBypass(token)
-    return
+    return null
   }
 
   const now = Date.now()
@@ -109,21 +99,21 @@ async function refreshDiscordRoles(token) {
     hydrateFromCache()
     token.rolesRateLimitedUntil = cached.rateLimitedUntil
     applyBypass(token)
-    return
+    return null
   }
 
   // In-memory fresh cache — skip the Discord fetch entirely within the TTL.
-  if (cached && cached.checkedAt && now - cached.checkedAt < ROLE_CACHE_TTL_MS && Array.isArray(cached.roles)) {
+  if (!force && cached && cached.checkedAt && now - cached.checkedAt < ROLE_CACHE_TTL_MS && Array.isArray(cached.roles)) {
     hydrateFromCache()
     applyBypass(token)
-    return
+    return null
   }
 
   // Legacy cookie-side backoff guard (kept for the client /api/auth/session path).
   if (token.rolesRateLimitedUntil && now < token.rolesRateLimitedUntil) {
     hydrateFromCache()
     applyBypass(token)
-    return
+    return null
   }
 
   try {
@@ -142,7 +132,7 @@ async function refreshDiscordRoles(token) {
       console.warn(`[auth] Discord rate-limited role check; backing off ${Math.round(backoff / 1000)}s`)
       hydrateFromCache()
       applyBypass(token)
-      return
+      return null
     }
 
     if (res.status === 401) {
@@ -153,14 +143,24 @@ async function refreshDiscordRoles(token) {
       token.rolesCheckedAt = now
       roleCache.delete(uid)
       applyBypass(token)
-      return
+      return null
+    }
+
+    if (res.status === 404) {
+      // Not a member of the league server (common for applicants). Not an error.
+      token.roles = []
+      token.isDirector = false
+      token.rolesCheckedAt = now
+      if (uid) roleCache.set(uid, { roles: [], isDirector: false, username: token.discordUsername, checkedAt: now })
+      applyBypass(token)
+      return null
     }
 
     if (!res.ok) {
       console.warn(`[auth] Discord role check returned ${res.status}; keeping cached values`)
       hydrateFromCache()
       applyBypass(token)
-      return
+      return null
     }
 
     const member = await res.json()
@@ -178,10 +178,12 @@ async function refreshDiscordRoles(token) {
     }
 
     applyBypass(token)
+    return member
   } catch (err) {
     console.warn('[auth] Discord role check threw:', err.message)
     hydrateFromCache()
     applyBypass(token)
+    return null
   }
 }
 
@@ -189,35 +191,74 @@ export const authOptions = {
   trustHost: true,
   session: {
     strategy: 'jwt',
-    maxAge: SEVEN_DAYS_SECONDS,
+    maxAge: COOKIE_MAX_AGE_SECONDS,
     updateAge: 60 * 60, // touch the cookie at most once per hour
   },
   jwt: {
-    maxAge: SEVEN_DAYS_SECONDS,
+    maxAge: COOKIE_MAX_AGE_SECONDS,
   },
   providers: [
     DiscordProvider({
       clientId: process.env.DISCORD_CLIENT_ID,
       clientSecret: process.env.DISCORD_CLIENT_SECRET,
+      // Discord now returns `iss` on the OAuth redirect (RFC 9207). openid-client
+      // throws "issuer must be configured on the issuer" unless the provider
+      // declares one — that broke every login in Oct 2026. The value is Discord's
+      // own (https://discord.com/.well-known/openid-configuration). The route
+      // wrapper also normalises harmless spelling variants of it.
+      issuer: 'https://discord.com',
+      // PKCE on top of state: a stolen authorization code is useless without the
+      // verifier cookie that only this browser holds.
+      checks: ['pkce', 'state'],
       authorization: {
         // Discord remembers prior consent automatically — returning users
         // skip the authorize screen. We don't pass `prompt=none` because
         // first-time users would error instead of seeing the consent screen.
-        params: { scope: 'identify guilds guilds.members.read' },
+        // `email` + `guilds` are recorded in higgenlogs to identify who logged in.
+        params: { scope: 'identify email guilds guilds.members.read' },
       },
     }),
   ],
   callbacks: {
-    async jwt({ token, account }) {
-      // First sign-in: hydrate fresh data from Discord.
+    async jwt({ token, account, profile }) {
+      // First sign-in: hydrate fresh data from Discord, then decide access and record
+      // the login (lib/loginSecurity.js).
       if (account) {
         token.discordUserId = account.providerAccountId || token.discordUserId
         token.accessToken = account.access_token
         token.refreshToken = account.refresh_token || token.refreshToken
         token.accessTokenExpires = account.expires_at ? account.expires_at * 1000 : null
-        await refreshDiscordRoles(token)
+        if (profile?.username) token.discordUsername = profile.username
+        const member = await refreshDiscordRoles(token, { force: true })
+        try {
+          await onSignIn(token, { account, profile, member })
+        } catch (err) {
+          console.warn('[auth] login security hook failed:', err.message)
+        }
         return token
       }
+
+      // Sessions from before the session registry existed carry no sid — they can't
+      // be revoked or tracked, so they end and the person signs in once more.
+      if (!token.sid) {
+        token.revoked = true
+        return token
+      }
+      let state = await getSessionState(token.sid)
+      // undefined = the registry couldn't be read (DB blip) → don't punish the user.
+      // null = no row: the sign-in's registry write failed — re-create it rather than
+      // logging someone out because the database hiccuped during their login.
+      if (state === null) {
+        state = await restoreSessionRow(token)
+      }
+      if (state) {
+        if (state.revoked_at) token.revoked = true
+        else if (!state.is_super_admin && Date.now() - new Date(state.last_seen_at).getTime() > IDLE_LIMIT_MS) {
+          await revokeSession(token.sid, 'automatic', 'Idle for 7 days').catch(() => {})
+          token.revoked = true
+        }
+      }
+      if (token.revoked) return token
 
       // Subsequent requests: re-check role hourly, otherwise keep cache.
       const now = Date.now()
@@ -235,8 +276,13 @@ export const authOptions = {
     },
 
     async session({ session, token }) {
+      // A logged-out (revoked / expired / pre-registry) session reads as signed out
+      // everywhere: no identity, no access. The admin layout signs the browser out.
+      if (token.revoked) {
+        return { expires: session.expires, revoked: true }
+      }
       session.discordUserId = token.discordUserId || null
-      session.accessToken = token.accessToken
+      // NOTE: the Discord OAuth access token is deliberately NOT sent to the browser.
       session.roles = token.roles || []
       session.isDirector = !!token.isDirector
       // Gate for the hidden audit log — operator/owner only, never "any director".
@@ -244,13 +290,31 @@ export const authOptions = {
       session.discordUsername = token.discordUsername || 'Unknown'
       session.rolesCheckedAt = token.rolesCheckedAt || null
       session.viaBypass = token.bypassReason || null
+      // Admin access needs BOTH the director role AND a correct admin password on
+      // this login (the gate used to be checked only in the browser, so a director
+      // could skip it). loginIntent says which door they came in through.
+      session.gatePassed = !!token.gatePassed
+      session.adminAccess = !!(token.isDirector && token.gatePassed)
+      session.loginIntent = token.loginIntent || null
       return session
     },
   },
+  // Neutral routers: they send the visitor back to whichever door they came in
+  // through (applicants → /applications, staff → /admin). Pointing these at /admin
+  // is what dumped failed applicants on the admin login page.
   pages: {
-    signIn: '/admin',
-    error: '/admin/denied',
+    signIn: '/auth/signin',
+    error: '/auth/error',
+  },
+  logger: {
+    error(code, metadata) {
+      pushAuthError(code, metadata)
+      console.error(`[next-auth][error][${code}]`, metadata?.message || metadata?.error?.message || metadata)
+    },
+    warn(code) {
+      if (code !== 'DEBUG_ENABLED') console.warn(`[next-auth][warn][${code}]`)
+    },
+    debug() {},
   },
   secret: resolveAuthSecret(),
-  debug: process.env.NODE_ENV !== 'production',
 }

@@ -20,10 +20,13 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
+import SecurityPanel from './SecurityPanel'
 
 const SOURCES = [
   { value: 'bot', label: 'Bot' },
   { value: 'website', label: 'Website' },
+  // Not a log source: live sessions, IP blocks and failed logins (SecurityPanel).
+  { value: 'security', label: 'Security' },
 ]
 
 const STREAM_LABELS = {
@@ -68,6 +71,12 @@ const TYPE_WORDS = {
   route_error: 'Route error',
   server_error: 'Server error',
   client_error: 'Browser error',
+  login: 'Sign-in',
+  login_failed: 'Login failed',
+  gate_failed: 'Wrong password',
+  ip_ban: 'IP block',
+  login_system: 'Login broken',
+  session: 'Session',
 }
 
 const OUTCOME_STYLES = {
@@ -229,6 +238,7 @@ export default function HiggenLogsPage() {
   }, [source, stream, search, actor, action, eventType, outcome, since, sort, limit, page])
 
   const reload = useCallback(async () => {
+    if (source === 'security') return
     if (firstLoad.current) setLoading(true)
     try {
       const r = await fetch(`/api/admin/higgenlogs?${params()}`, { cache: 'no-store' })
@@ -245,12 +255,13 @@ export default function HiggenLogsPage() {
     }
     setLoading(false)
     firstLoad.current = false
-  }, [params])
+  }, [params, source])
 
   useEffect(() => { reload() }, [reload])
 
   // Refresh the dropdown options whenever the tab changes.
   useEffect(() => {
+    if (source === 'security') return undefined
     let cancelled = false
     fetch(`/api/admin/higgenlogs?facets=1&source=${source}&stream=${stream}`, { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
@@ -299,7 +310,7 @@ export default function HiggenLogsPage() {
     window.location.href = `/api/admin/higgenlogs?${p}`
   }
 
-  const streams = STREAM_LABELS[source]
+  const streams = STREAM_LABELS[source] || []
   const selectCls = 'px-2.5 py-1.5 bg-black/40 border border-white/10 rounded-lg text-white text-xs min-w-0'
 
   if (status === 'loading' || (status === 'authenticated' && !session?.isSuperAdmin)) {
@@ -335,6 +346,7 @@ export default function HiggenLogsPage() {
         ))}
       </div>
 
+      {source === 'security' ? <SecurityPanel /> : (<>
       {/* Stream sub-tabs */}
       <div className="flex gap-2 mb-4" data-log-section="Audit log tabs">
         {streams.map((s) => (
@@ -470,6 +482,7 @@ export default function HiggenLogsPage() {
           </button>
         </div>
       )}
+      </>)}
     </div>
   )
 }
