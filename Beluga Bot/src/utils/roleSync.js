@@ -541,6 +541,16 @@ class RoleSyncManager {
 
 const roleSyncManager = new RoleSyncManager();
 
+/**
+ * Every Discord ID in SalSheet column P, or null when the sheet could not be read
+ * (an empty sheet and a failed read must not look the same to the invite backfill).
+ */
+async function getSalSheetDiscordIds() {
+    const players = await roleSyncManager.getAllPlayerData();
+    if (!players.length) return null;
+    return new Set(players.map(p => String(p.discordId)));
+}
+
 async function performRoleSync(client) {
     try {
         // ===== STEP 1: Salary Lock Update (runs first) =====
@@ -590,6 +600,16 @@ async function performRoleSync(client) {
 
         // Set of all Discord IDs present in the sal sheet (used by the verification gate)
         const sheetIdSet = new Set(players.map(p => p.discordId));
+
+        // Invite campaign backup: anyone tracked who is now in the SalSheet counts as
+        // registered (catches staff manual adds the /register hook never sees).
+        // Fire-and-forget so it can never slow or break role sync.
+        try {
+            const { sweepRegistrations } = require('../invites/inviteTracker');
+            sweepRegistrations(client, sheetIdSet).catch((err) => Logger.error('Invite registration sweep failed', err));
+        } catch (inviteError) {
+            Logger.error('Invite registration sweep failed to start', inviteError);
+        }
 
         // ===== Verification gate (runs over ALL guild members) =====
         // - Unverified takes priority: any member with the Unverified role has the
@@ -1130,5 +1150,6 @@ function startRoleSyncScheduler(client) {
 
 module.exports = {
     startRoleSyncScheduler,
-    performRoleSync
+    performRoleSync,
+    getSalSheetDiscordIds
 };

@@ -115,6 +115,19 @@ const PHRASES = {
   'ticket-config.update': 'changed the ticket configuration',
   'site-content.update': 'edited site content',
   'notification.update': 'changed the site notification',
+  'invites.view': 'opened the Invites tab',
+  'invites.approve': 'approved a queued invite',
+  'invites.reject': 'removed an invite so it no longer counts',
+  'invites.no-inviter': 'closed an invite with no inviter',
+  'invites.assign': 'credited a member to an inviter by hand',
+  'invites.claim-approve': 'approved an invite claim',
+  'invites.claim-reject': 'rejected an invite claim',
+  'invites.adjust': 'adjusted someone’s invite count by hand',
+  'invites.tag-code': 'changed whether an invite code is a general link',
+  'invites.refresh-codes': 'asked the bot to re-sync the invite list',
+  'invites.campaign-update': 'changed the invite campaign’s name, prize or end date',
+  'invites.campaign-end': 'ENDED and archived the invite campaign',
+  'invites.settings': 'changed the invite campaign settings',
   'applications.update': 'acted on an application',
   'esubs.update': 'changed emergency subs',
   'mmr.run': 'started an MMR update run',
@@ -336,6 +349,7 @@ const WRITE_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE'])
  * operator wants on record.
  */
 const READ_NOISE = [
+  '/api/admin/invites/player',
   '/api/admin/dm/unread',
   '/api/admin/dm/inbox',
   '/api/admin/dm/jobs',

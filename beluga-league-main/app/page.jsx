@@ -6,6 +6,7 @@ import { motion, useInView, animate } from 'framer-motion';
 import BackgroundDecoration from './components/BackgroundDecoration';
 import TeamLogoImg from './components/TeamLogo';
 import LatestResults from './components/LatestResults';
+import InviteLeadersPreview from './components/InviteLeadersPreview';
 import { useSiteContent, MontageSection, QuoteStrip, HallOfFame } from './components/SiteExtras';
 import { SOCIALS } from '../lib/socials';
 
@@ -739,6 +740,9 @@ export default function Home() {
 
       {/* ============ LATEST RESULTS (5 most recent confirmed series) ============ */}
       <LatestResults />
+
+      {/* ============ TOP INVITERS (invite campaign top 5 → /invites) ============ */}
+      <InviteLeadersPreview />
 
       {/* ============ HALL OF FAME (most championships) ============ */}
       <HallOfFame />

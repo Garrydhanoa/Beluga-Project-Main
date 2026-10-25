@@ -95,6 +95,9 @@ export default function LeaderboardsPage() {
           The league&apos;s top performers — average leaders (min. {leaders?.minGames ?? 25} games),
           team totals, and franchise records, by division.
         </p>
+        <Link href="/invites" className="inline-block mt-3 text-xs font-bold uppercase tracking-wider text-cyan-200 hover:text-white">
+          Invite leaderboard →
+        </Link>
       </div>
 
       {/* Controls: scope toggle + prominent division tabs */}

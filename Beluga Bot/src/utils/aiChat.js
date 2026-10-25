@@ -8,23 +8,30 @@ const { safeFetch } = require('./ssrfGuard');
 
 /**
  * Provider catalogue. Models chosen as the best current option per provider
- * (June 2026). Groq's Llama 4 vision models were deprecated, so Groq is
- * text-only here and image work is routed to Google/Mistral.
+ * (Oct 2026). Groq retired every Llama model, so Groq runs gpt-oss text-only
+ * and image work is routed to Google/Mistral.
  */
 const PROVIDERS = {
     google: {
         label: 'Google · Gemma 4',
         text: 'gemma-4-31b-it',
         vision: 'gemma-4-31b-it',
+        // Gemma 4 500s intermittently and its good answers take 35-40s, so a
+        // failed/timed-out Gemma call is retried once on Flash-Lite (~1-3s)
+        // before the chain moves to the next provider.
+        fallback: 'gemini-flash-lite-latest',
         supportsVision: true,
         envKey: 'GEMINI_API_KEY',
     },
     groq: {
-        label: 'Groq · Llama 3.3 70B',
-        text: 'llama-3.3-70b-versatile',
+        label: 'Groq · GPT-OSS 120B',
+        text: 'openai/gpt-oss-120b',
         vision: null,
         supportsVision: false,
         envKey: 'GROQ_API_KEY',
+        // gpt-oss reasons before answering and those tokens count against
+        // max_tokens; low effort keeps the reply from being starved.
+        extraBody: { reasoning_effort: 'low' },
     },
     mistral: {
         label: 'Mistral · Medium 3.5',
@@ -41,6 +48,14 @@ const PROVIDERS = {
 const TEXT_PREFERENCE = ['google', 'mistral', 'groq'];
 // Vision fallback chain (skip groq — no production vision model right now).
 const VISION_ORDER = ['google', 'mistral'];
+
+// Per-request ceiling for every provider call. There was none, so one hung
+// call could stall a reply for 100s+ before the fallback ever ran.
+const AI_TIMEOUT_MS = 15000;
+
+function fetchWithTimeout(url, options) {
+    return fetch(url, { ...options, signal: AbortSignal.timeout(AI_TIMEOUT_MS) });
+}
 
 // Personas + the shared league facts live in one place now, since the DM
 // responder and the server chatbot both build on them.
@@ -253,50 +268,55 @@ class AIChatHandler {
     }
 
     async callGoogleText(history, userMessage, displayName, effectiveSystem) {
-        try {
-            const apiKey = process.env.GEMINI_API_KEY;
-            if (!this.validKey(apiKey)) return null;
-            const model = PROVIDERS.google.text;
+        if (!this.validKey(process.env.GEMINI_API_KEY)) return null;
 
-            // Gemma is most compatible when the system prompt is delivered as a
-            // leading user/model exchange rather than a system role.
-            const contents = [
-                { role: 'user', parts: [{ text: effectiveSystem }] },
-                { role: 'model', parts: [{ text: "Understood — I'm ready to help the Beluga League community." }] },
-            ];
-            for (const e of history.slice(-this.apiSendLimit)) {
-                let u = `${e.displayName}: ${e.userMessage}`;
-                if (e.imageContext) u += ` [earlier they shared an image showing: ${e.imageContext}]`;
-                contents.push({ role: 'user', parts: [{ text: u }] });
-                contents.push({ role: 'model', parts: [{ text: e.botResponse }] });
+        // Gemma is most compatible when the system prompt is delivered as a
+        // leading user/model exchange rather than a system role.
+        const contents = [
+            { role: 'user', parts: [{ text: effectiveSystem }] },
+            { role: 'model', parts: [{ text: "Understood — I'm ready to help the Beluga League community." }] },
+        ];
+        for (const e of history.slice(-this.apiSendLimit)) {
+            let u = `${e.displayName}: ${e.userMessage}`;
+            if (e.imageContext) u += ` [earlier they shared an image showing: ${e.imageContext}]`;
+            contents.push({ role: 'user', parts: [{ text: u }] });
+            contents.push({ role: 'model', parts: [{ text: e.botResponse }] });
+        }
+        contents.push({ role: 'user', parts: [{ text: `${displayName}: ${userMessage}` }] });
+
+        const generationConfig = { temperature: 0.7, topP: 0.95, maxOutputTokens: 1024 };
+        for (const model of [PROVIDERS.google.text, PROVIDERS.google.fallback]) {
+            const text = await this.googleGenerate(model, contents, generationConfig, 'Google');
+            if (text) {
+                Logger.info(`AI text via Google (${model})`);
+                return this.cleanResponse(text);
             }
-            contents.push({ role: 'user', parts: [{ text: `${displayName}: ${userMessage}` }] });
+        }
+        return null;
+    }
 
-            const res = await fetch(
-                `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+    /** One generateContent call. Returns the answer text, or null on any failure. */
+    async googleGenerate(model, contents, generationConfig, label) {
+        try {
+            const res = await fetchWithTimeout(
+                `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`,
                 {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contents,
-                        generationConfig: { temperature: 0.7, topP: 0.95, maxOutputTokens: 1024 },
-                    }),
+                    body: JSON.stringify({ contents, generationConfig }),
                 }
             );
-
             if (!res.ok) {
                 const t = await res.text();
-                Logger.warning(`Google API error (${res.status}): ${t.substring(0, 200)}`);
+                Logger.warning(`${label} ${model} error (${res.status}): ${t.substring(0, 200)}`);
                 return null;
             }
             const data = await res.json();
             const parts = data?.candidates?.[0]?.content?.parts || [];
             const text = parts.filter(p => p && p.text && !p.thought).map(p => p.text).join(' ').trim();
-            if (!text) return null;
-            Logger.info('AI text via Google (Gemma 4)');
-            return this.cleanResponse(text);
+            return text || null;
         } catch (error) {
-            Logger.warning('Google API failed:', error.message);
+            Logger.warning(`${label} ${model} failed:`, error.message);
             return null;
         }
     }
@@ -320,7 +340,7 @@ class AIChatHandler {
             }
             messages.push({ role: 'user', content: `${displayName}: ${userMessage}` });
 
-            const res = await fetch(endpoints[provider], {
+            const res = await fetchWithTimeout(endpoints[provider], {
                 method: 'POST',
                 headers: {
                     Authorization: `Bearer ${apiKey}`,
@@ -332,6 +352,7 @@ class AIChatHandler {
                     max_tokens: 350,
                     temperature: 0.8,
                     top_p: 0.95,
+                    ...(PROVIDERS[provider].extraBody || {}),
                 }),
             });
 
@@ -354,7 +375,7 @@ class AIChatHandler {
     // ----- vision ----------------------------------------------------------
 
     /**
-     * Analyze an image URL, trying Gemma first then Mistral. Returns
+     * Analyze an image URL, trying Gemma, then Gemini Flash-Lite, then Mistral. Returns
      * { response, context } or null if every vision provider fails.
      */
     async analyzeImage(imageUrl, userMessage, displayName) {
@@ -439,44 +460,26 @@ class AIChatHandler {
     }
 
     async visionGoogle(prepared, userMessage, displayName) {
-        try {
-            const apiKey = process.env.GEMINI_API_KEY;
-            if (!this.validKey(apiKey)) return null;
-            const model = PROVIDERS.google.vision;
+        if (!this.validKey(process.env.GEMINI_API_KEY)) return null;
 
-            const contents = [
-                { role: 'user', parts: [{ text: this.systemPrompt + '\n\nLook at the image and respond naturally to the user.' }] },
-                { role: 'model', parts: [{ text: 'Understood.' }] },
-                {
-                    role: 'user',
-                    parts: [
-                        { text: `${displayName}: ${userMessage || 'What is in this image?'}` },
-                        { inline_data: { mime_type: prepared.mime, data: prepared.base64 } },
-                    ],
-                },
-            ];
+        const contents = [
+            { role: 'user', parts: [{ text: this.systemPrompt + '\n\nLook at the image and respond naturally to the user.' }] },
+            { role: 'model', parts: [{ text: 'Understood.' }] },
+            {
+                role: 'user',
+                parts: [
+                    { text: `${displayName}: ${userMessage || 'What is in this image?'}` },
+                    { inline_data: { mime_type: prepared.mime, data: prepared.base64 } },
+                ],
+            },
+        ];
 
-            const res = await fetch(
-                `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-                {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ contents, generationConfig: { temperature: 0.7, maxOutputTokens: 600 } }),
-                }
-            );
-            if (!res.ok) {
-                const t = await res.text();
-                Logger.warning(`Google vision error (${res.status}): ${t.substring(0, 200)}`);
-                return null;
-            }
-            const data = await res.json();
-            const parts = data?.candidates?.[0]?.content?.parts || [];
-            const text = parts.filter(p => p && p.text && !p.thought).map(p => p.text).join(' ').trim();
-            return text ? this.cleanResponse(text) : null;
-        } catch (error) {
-            Logger.warning('Google vision failed:', error.message);
-            return null;
+        const generationConfig = { temperature: 0.7, maxOutputTokens: 600 };
+        for (const model of [PROVIDERS.google.vision, PROVIDERS.google.fallback]) {
+            const text = await this.googleGenerate(model, contents, generationConfig, 'Google vision');
+            if (text) return this.cleanResponse(text);
         }
+        return null;
     }
 
     async visionMistral(prepared, userMessage, displayName) {
@@ -496,7 +499,7 @@ class AIChatHandler {
                 },
             ];
 
-            const res = await fetch('https://api.mistral.ai/v1/chat/completions', {
+            const res = await fetchWithTimeout('https://api.mistral.ai/v1/chat/completions', {
                 method: 'POST',
                 headers: {
                     Authorization: `Bearer ${apiKey}`,

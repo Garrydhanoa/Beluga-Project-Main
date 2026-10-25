@@ -23,6 +23,7 @@ const { startTeamConstantsSync } = require('./utils/constantsSync');
 const ticketSystem = require('./tickets/ticketSystem');
 const appBridge = require('./applications/appBridge');
 const higgenLog = require('./utils/higgenLog');
+const inviteRouter = require('./invites/inviteRouter');
 
 // Errors that mean "a connection blipped", not "the process is broken". Database
 // restarts on Railway, Discord REST hiccups and dropped sockets all look like this.
@@ -49,7 +50,8 @@ class BelugaLeagueBot {
                 GatewayIntentBits.MessageContent, // Required for reading message content
                 GatewayIntentBits.GuildPresences,  // Required for tracking presence updates
                 GatewayIntentBits.GuildMessageReactions,  // Required for reaction events
-                GatewayIntentBits.DirectMessages  // Required for the DM Center inbox
+                GatewayIntentBits.DirectMessages,  // Required for the DM Center inbox
+                GatewayIntentBits.GuildInvites  // Invite campaign: InviteCreate/InviteDelete keep the invite-use cache current
             ],
             partials: [Partials.Message, Partials.Channel, Partials.Reaction] // Required for reactions on old messages
         });
@@ -273,6 +275,16 @@ class BelugaLeagueBot {
                 Logger.error('Failed to start season actions poller/approvals', seasonError);
             }
 
+            // Invite campaign: invite-use cache, lifetime backfill + 30-min reconcile,
+            // claim-window expiry, campaign end-date reminder, live leaderboard and
+            // the website action queue.
+            try {
+                const { startInvites } = require('./invites');
+                startInvites(client).catch((inviteError) => Logger.error('Failed to start invite tracking', inviteError));
+            } catch (inviteError) {
+                Logger.error('Failed to start invite tracking', inviteError);
+            }
+
             // Ballchasing imports for hand-reported series: staff report a series on
             // the admin panel and attach a group link or per-game replay links; the
             // bot owns the Ballchasing key + parser, so it pulls the real stats in.
@@ -360,6 +372,15 @@ class BelugaLeagueBot {
                     }
                 }
 
+                // Invite campaign (`inv:` ids — leaderboard pages/toggle/person select,
+                // /invite-reset confirm). Before the generic select/button routing so
+                // the register catch-all can never swallow them.
+                if (typeof interaction.customId === 'string' && inviteRouter.isInviteId(interaction.customId)) {
+                    await inviteRouter.route(interaction);
+                    drainAudit('Handled by the invite campaign controls.');
+                    return;
+                }
+
                 if (interaction.isCommand()) {
                     const command = this.commandHandler.getCommand(interaction.commandName);
 
@@ -377,6 +398,13 @@ class BelugaLeagueBot {
                     }
 
                     await command.execute(interaction);
+                    // A command that refused (no permission, failed validation) can
+                    // say so, instead of the row reading as a plain success.
+                    const reported = higgenLog.takeSubRouterOutcome(interaction.id);
+                    if (reported) {
+                        auditOutcome = reported.outcome;
+                        if (reported.note) auditNote = reported.note;
+                    }
                 }
                 else if (interaction.isModalSubmit()) {
                     // Handle modal submissions (for registration)
@@ -537,7 +565,7 @@ class BelugaLeagueBot {
                     }
 
                     if (imageUrls.length > 0) {
-                        Logger.info(`Detected ${imageUrls.length} image(s) - running vision (Gemma → Mistral)`);
+                        Logger.info(`Detected ${imageUrls.length} image(s) - running vision (Gemma → Flash-Lite → Mistral)`);
                         const visionResult = await this.aiChat.analyzeImage(
                             imageUrls[0],
                             cleanedMessage || "What's in this image?",
@@ -682,6 +710,17 @@ class BelugaLeagueBot {
         // players not in the server). Non-fatal + fire-and-forget; no-ops if they're
         // not in the SalSheet.
         this.client.on(Events.GuildMemberAdd, async (member) => {
+            // Invite campaign: work out who invited them. Kicked off FIRST and not
+            // awaited — the invite-use diff should read Discord's counters as close
+            // to the join as possible, and nothing below should wait on it.
+            try {
+                if (!member.user?.bot) {
+                    const { onMemberJoin } = require('./invites/inviteTracker');
+                    onMemberJoin(member).catch((err) => Logger.error('guildMemberAdd invite tracking failed', err));
+                }
+            } catch (error) {
+                Logger.error('guildMemberAdd invite tracking failed', error);
+            }
             try {
                 if (member.user?.bot) return;
                 const { enqueueRejoinUpdate } = require('./stats/registerQueue');
@@ -749,6 +788,23 @@ class BelugaLeagueBot {
             } catch (error) {
                 Logger.error('guildMemberRemove handler failed', error);
             }
+            // Invite campaign: a counted invitee leaving drops their inviter's count.
+            try {
+                if (!member?.user?.bot) {
+                    const { onMemberLeave } = require('./invites/inviteTracker');
+                    onMemberLeave(member).catch((err) => Logger.error('guildMemberRemove invite tracking failed', err));
+                }
+            } catch (error) {
+                Logger.error('guildMemberRemove invite tracking failed', error);
+            }
+        });
+
+        // Invite campaign: keep the invite-use cache current (backup attribution).
+        this.client.on(Events.InviteCreate, (invite) => {
+            try { require('./invites/inviteCache').onInviteCreate(invite); } catch (error) { Logger.error('inviteCreate handler failed', error); }
+        });
+        this.client.on(Events.InviteDelete, (invite) => {
+            try { require('./invites/inviteCache').onInviteDelete(invite); } catch (error) { Logger.error('inviteDelete handler failed', error); }
         });
 
         this.client.on(Events.Error, (error) => {

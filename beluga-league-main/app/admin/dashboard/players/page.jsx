@@ -536,6 +536,24 @@ function IdentityToolsBox({ accounts, knownNames, player, discordId, identMsg, i
   )
 }
 
+/** "Invited by X · Invited N" — from the invite campaign (admin Invites tab). */
+function InviteSummaryLine({ discordId }) {
+  const [s, setS] = useState(null)
+  useEffect(() => {
+    fetch(`/api/admin/invites/player?id=${encodeURIComponent(discordId)}`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then(setS)
+      .catch(() => {})
+  }, [discordId])
+  if (!s) return null
+  return (
+    <div className="text-[11px] text-white/55 mt-1">
+      Invited by <span className="text-white/80">{s.invitedBy?.name || (s.joinSource ? `nobody (${s.joinSource})` : '—')}</span>
+      {' · '}Invited <span className="text-white/80">{s.lifetimeInvites}</span> player{s.lifetimeInvites === 1 ? '' : 's'}
+    </div>
+  )
+}
+
 function PlayerDetailModal({ discordId, onClose }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -572,6 +590,7 @@ function PlayerDetailModal({ discordId, onClose }) {
                 )}
               </div>
               <div className="text-[10px] font-mono text-white/40 mt-1">ID: {data.player.discordId}</div>
+              <InviteSummaryLine discordId={data.player.discordId} />
               {data.player.lastSeen && (
                 <div className="text-[10px] text-white/40">Last seen: {new Date(data.player.lastSeen).toLocaleString()}</div>
               )}

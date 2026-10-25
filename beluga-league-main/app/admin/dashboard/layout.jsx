@@ -26,6 +26,7 @@ const NAV = [
   { label: 'Week Threads', href: '/admin/dashboard/weeks', icon: 'thread' },
   { label: 'Notification', href: '/admin/dashboard/notification', icon: 'bell' },
   { label: 'DM Center', href: '/admin/dashboard/dm', icon: 'mail' },
+  { label: 'Invites', href: '/admin/dashboard/invites', icon: 'invite' },
   { label: 'Tickets', href: '/admin/dashboard/tickets', icon: 'alert' },
   // NOTE: there is no Logs entry. The old Logs tab was removed; the full audit
   // trail lives at /admin/dashboard/higgenlogs, which is deliberately unlinked and
@@ -49,6 +50,7 @@ const ICON_PATHS = {
   link: 'M13.828 10.172a4 4 0 010 5.656l-3 3a4 4 0 01-5.656-5.656l1.5-1.5m6.828-6.828a4 4 0 015.656 5.656l-1.5 1.5',
   dollar: 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V6m0 10v2m0-2c-1.11 0-2.08-.402-2.599-1',
   mail: 'M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z',
+  invite: 'M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z',
 }
 
 function Icon({ name, className = 'h-4 w-4' }) {

@@ -1296,6 +1296,130 @@ async function runMigrations() {
   await step('idx_dm_messages_convo', `CREATE INDEX IF NOT EXISTS idx_dm_messages_convo ON dm_messages(discord_id, id DESC)`)
   await step('idx_dm_messages_queued', `CREATE INDEX IF NOT EXISTS idx_dm_messages_queued ON dm_messages(status, id) WHERE direction = 'out'`)
 
+  // ---------- Invite campaign (MIRRORED in Beluga Bot/src/invites/inviteSchema.js) ----------
+  // The bot tracks joins/registrations; this site's admin Invites tab records staff
+  // decisions, tags, adjustments and settings. One invites row per invitee.
+  await step('invite_campaigns', `CREATE TABLE IF NOT EXISTS invite_campaigns (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    prize TEXT,
+    starts_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ends_at TIMESTAMPTZ,
+    ended_at TIMESTAMPTZ,
+    status TEXT NOT NULL DEFAULT 'active',
+    end_pinged_at TIMESTAMPTZ,
+    final_top JSONB,
+    created_by TEXT,
+    ended_by TEXT
+    )`)
+  await step('uq_invite_campaigns_active', `CREATE UNIQUE INDEX IF NOT EXISTS uq_invite_campaigns_active ON invite_campaigns ((status)) WHERE status = 'active'`)
+  await step('invites', `CREATE TABLE IF NOT EXISTS invites (
+    invitee_id TEXT PRIMARY KEY,
+    joined_at TIMESTAMPTZ,
+    left_at TIMESTAMPTZ,
+    in_guild BOOLEAN NOT NULL DEFAULT TRUE,
+    account_created_at TIMESTAMPTZ,
+    pre_launch BOOLEAN NOT NULL DEFAULT FALSE,
+    known_before BOOLEAN NOT NULL DEFAULT FALSE,
+    join_count INTEGER NOT NULL DEFAULT 1,
+    source_type TEXT NOT NULL DEFAULT 'unknown',
+    invite_code TEXT,
+    discord_inviter_id TEXT,
+    diff_inviter_id TEXT,
+    diff_code TEXT,
+    diff_result TEXT,
+    inviter_id TEXT,
+    verified_via TEXT,
+    verified_at TIMESTAMPTZ,
+    flags TEXT[] NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'tracked',
+    registered_at TIMESTAMPTZ,
+    counted_at TIMESTAMPTZ,
+    credited_campaign_id INTEGER,
+    claimable_until TIMESTAMPTZ,
+    notified_at TIMESTAMPTZ,
+    claim_posted_at TIMESTAMPTZ,
+    review_posted_at TIMESTAMPTZ,
+    admin_locked BOOLEAN NOT NULL DEFAULT FALSE,
+    decided_by TEXT,
+    decided_at TIMESTAMPTZ,
+    decision_note TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`)
+  await step('idx_invites_inviter', `CREATE INDEX IF NOT EXISTS idx_invites_inviter ON invites (inviter_id, status)`)
+  await step('idx_invites_status', `CREATE INDEX IF NOT EXISTS idx_invites_status ON invites (status)`)
+  await step('invite_events', `CREATE TABLE IF NOT EXISTS invite_events (
+    id BIGSERIAL PRIMARY KEY,
+    invitee_id TEXT,
+    inviter_id TEXT,
+    kind TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    actor_id TEXT,
+    actor_name TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`)
+  await step('idx_invite_events_invitee', `CREATE INDEX IF NOT EXISTS idx_invite_events_invitee ON invite_events (invitee_id, created_at DESC)`)
+  await step('idx_invite_events_inviter', `CREATE INDEX IF NOT EXISTS idx_invite_events_inviter ON invite_events (inviter_id, created_at DESC)`)
+  await step('invite_claims', `CREATE TABLE IF NOT EXISTS invite_claims (
+    id SERIAL PRIMARY KEY,
+    invitee_id TEXT NOT NULL,
+    claimer_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    decided_by TEXT,
+    decided_at TIMESTAMPTZ,
+    note TEXT
+    )`)
+  await step('uq_invite_claims_one_pending', `CREATE UNIQUE INDEX IF NOT EXISTS uq_invite_claims_one_pending ON invite_claims (claimer_id) WHERE status = 'pending'`)
+  await step('idx_invite_claims_invitee', `CREATE INDEX IF NOT EXISTS idx_invite_claims_invitee ON invite_claims (invitee_id, status)`)
+  await step('invite_adjustments', `CREATE TABLE IF NOT EXISTS invite_adjustments (
+    id SERIAL PRIMARY KEY,
+    inviter_id TEXT NOT NULL,
+    delta INTEGER NOT NULL,
+    scope TEXT NOT NULL DEFAULT 'both',
+    campaign_id INTEGER,
+    reason TEXT NOT NULL,
+    actor_id TEXT,
+    actor_name TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`)
+  await step('idx_invite_adjustments_inviter', `CREATE INDEX IF NOT EXISTS idx_invite_adjustments_inviter ON invite_adjustments (inviter_id)`)
+  await step('invite_codes', `CREATE TABLE IF NOT EXISTS invite_codes (
+    code TEXT PRIMARY KEY,
+    inviter_id TEXT,
+    inviter_is_bot BOOLEAN NOT NULL DEFAULT FALSE,
+    channel_id TEXT,
+    uses INTEGER NOT NULL DEFAULT 0,
+    max_uses INTEGER NOT NULL DEFAULT 0,
+    temporary BOOLEAN NOT NULL DEFAULT FALSE,
+    expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ,
+    deleted_at TIMESTAMPTZ,
+    is_vanity BOOLEAN NOT NULL DEFAULT FALSE,
+    is_general BOOLEAN NOT NULL DEFAULT FALSE,
+    label TEXT,
+    synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`)
+  await step('invite_settings', `CREATE TABLE IF NOT EXISTS invite_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`)
+  await step('invite_actions', `CREATE TABLE IF NOT EXISTS invite_actions (
+    id SERIAL PRIMARY KEY,
+    action TEXT NOT NULL,
+    payload JSONB,
+    status TEXT NOT NULL DEFAULT 'pending',
+    requested_by_discord_id TEXT,
+    requested_by_username TEXT,
+    result TEXT,
+    requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    fulfilled_at TIMESTAMPTZ
+    )`)
+  await step('idx_invite_actions_status', `CREATE INDEX IF NOT EXISTS idx_invite_actions_status ON invite_actions (status, id)`)
+  await step('invite_campaigns.seed', `INSERT INTO invite_campaigns (name) SELECT 'Campaign 1' WHERE NOT EXISTS (SELECT 1 FROM invite_campaigns)`)
+
   const elapsedMs = Date.now() - started
   lastReport = { ran, failed, elapsedMs, finishedAt: new Date().toISOString() }
   console.log(`[schema] migration complete in ${elapsedMs}ms — ${ran.length} ok, ${failed.length} failed`)

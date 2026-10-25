@@ -937,6 +937,15 @@ module.exports = {
                         }
                     }
 
+                    // Invite campaign: credit whoever invited this member. Fire-and-forget
+                    // + non-fatal — never blocks the registration.
+                    try {
+                        const { onRegistrationComplete } = require('../invites/inviteTracker');
+                        onRegistrationComplete(interaction.client, session.userId).catch(() => {});
+                    } catch (inviteError) {
+                        Logger.error('Failed to run invite registration hook (registration still saved)', inviteError);
+                    }
+
                     // Send registration announcement
                     await sendRegistrationAnnouncement(interaction.client, session);
 

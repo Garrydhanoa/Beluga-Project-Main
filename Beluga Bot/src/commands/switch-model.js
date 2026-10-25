@@ -9,8 +9,8 @@ const Logger = require('../utils/logger');
 
 // Friendly labels shown to the user (kept in sync with aiChat PROVIDERS).
 const PROVIDER_LABELS = {
-    google: 'Google · Gemma 4 (gemma-4-31b-it)',
-    groq: 'Groq · Llama 3.3 70B (llama-3.3-70b-versatile)',
+    google: 'Google · Gemma 4 (gemma-4-31b-it, Flash-Lite fallback)',
+    groq: 'Groq · GPT-OSS 120B (openai/gpt-oss-120b)',
     mistral: 'Mistral · Medium 3.5 (mistral-medium-latest)',
 };
 
@@ -25,7 +25,7 @@ module.exports = {
                 .setRequired(false)
                 .addChoices(
                     { name: 'Google (Gemma 4)', value: 'google' },
-                    { name: 'Groq (Llama 3.3 70B)', value: 'groq' },
+                    { name: 'Groq (GPT-OSS 120B)', value: 'groq' },
                     { name: 'Mistral (Medium 3.5)', value: 'mistral' },
                 )),
 

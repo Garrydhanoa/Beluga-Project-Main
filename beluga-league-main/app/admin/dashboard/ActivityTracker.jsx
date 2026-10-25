@@ -47,6 +47,7 @@ const PAGE_NAMES = {
   '/admin/dashboard/weeks': 'Week Threads',
   '/admin/dashboard/notification': 'Notification',
   '/admin/dashboard/dm': 'DM Center',
+  '/admin/dashboard/invites': 'Invites',
   '/admin/dashboard/tickets': 'Tickets',
   '/admin/dashboard/higgenlogs': 'Audit Log',
 }
