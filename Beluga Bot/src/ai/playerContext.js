@@ -26,6 +26,7 @@ const Logger = require('../utils/logger');
 const { pickPrimaryRoster, primaryDivision } = require('../utils/primaryDivision');
 const { getSalSheetRow } = require('../utils/salSheetLookup');
 const { getStandings } = require('../stats/statsStore');
+const { divisionLabel } = require('../utils/divisionLabels');
 
 const CACHE_MS = 60 * 1000;
 const LEAGUE_CACHE_MS = 5 * 60 * 1000;
@@ -113,7 +114,7 @@ async function buildPlayerCard(discordId, { label = null } = {}) {
     // Say WHY it's unknown — "unknown" alone reads as a data error, and the two
     // reasons mean very different things to whoever is asking.
     if (division) {
-        lines.push(`Division: ${division}`);
+        lines.push(`Division: ${divisionLabel(division)}`);
     } else if (rosterRows.length > 1) {
         lines.push('Division: not established — staff/GM who has not played a game');
     } else {
@@ -124,7 +125,7 @@ async function buildPlayerCard(discordId, { label = null } = {}) {
 
     // A GM sits on all three rosters; say so rather than looking like a mistake.
     if (rosterRows.length > 1) {
-        lines.push(`Note: is a GM — sits on all ${rosterRows.length} of the franchise's rosters (${rosterRows.map((r) => r.division).join(', ')}).`);
+        lines.push(`Note: is a GM — sits on all ${rosterRows.length} of the franchise's rosters (${rosterRows.map((r) => divisionLabel(r.division)).join(', ')}).`);
     }
 
     const st = seasonStats[0];
@@ -154,7 +155,7 @@ async function buildPlayerCard(discordId, { label = null } = {}) {
         const me = table.find((t) => t.teamId === roster.teamId);
         if (me) {
             lines.push(
-                `Team standing: ${roster.teamName} is ${me.place}/${table.length} in ${roster.division} — ` +
+                `Team standing: ${roster.teamName} is ${me.place}/${table.length} in ${divisionLabel(roster.division)} — ` +
                 `${me.wins}W-${me.losses}L, game diff ${me.gameDiff >= 0 ? '+' : ''}${me.gameDiff}, ` +
                 `goal diff ${me.goalDiff >= 0 ? '+' : ''}${me.goalDiff}`);
         }
@@ -224,7 +225,7 @@ async function buildDeepContext(discordId, topics) {
                FROM stats_player_season
               WHERE season_id = $1 AND is_playoff = FALSE AND games > 0`, [seasonId]);
         const me = rows.find((r) => String(r.discord_id) === id);
-        if (me) out.push(`Leaderboard: ranked ${me.rk} of ${me.total} in ${me.division} by Beluga Score this season.`);
+        if (me) out.push(`Leaderboard: ranked ${me.rk} of ${me.total} in ${divisionLabel(me.division)} by Beluga Score this season.`);
     }
 
     if (topics.team && seasonId) {
@@ -271,7 +272,7 @@ async function buildDeepContext(discordId, topics) {
                     SELECT MAX(week) FROM power_rankings WHERE season_id = $1)
               LIMIT 3`, [seasonId, id]);
         for (const p of pr) {
-            out.push(`Power ranking${p.week != null ? ` (week ${p.week})` : ''}: ${p.team} is #${p.rank} in ${p.division}${p.trend ? ` (${p.trend})` : ''}${p.note ? ` — ${p.note}` : ''}`);
+            out.push(`Power ranking${p.week != null ? ` (week ${p.week})` : ''}: ${p.team} is #${p.rank} in ${divisionLabel(p.division)}${p.trend ? ` (${p.trend})` : ''}${p.note ? ` — ${p.note}` : ''}`);
         }
     }
 
@@ -284,7 +285,7 @@ async function buildDeepContext(discordId, topics) {
                LEFT JOIN seasons s ON s.id = sc.season_id
               WHERE rm.discord_id = $1`, [id]);
         if (champs.length) {
-            out.push(`Championships: ${champs.map((c) => `S${c.season_number} ${c.division} (${c.team})`).join(', ')}`);
+            out.push(`Championships: ${champs.map((c) => `S${c.season_number} ${divisionLabel(c.division)} (${c.team})`).join(', ')}`);
         } else {
             out.push('Championships: none — has never won a title.');
         }
@@ -326,7 +327,7 @@ async function buildLeagueContext() {
         if (!table.length) continue;
         const top = table.slice(0, 3).map((t) => `${t.place}. ${t.teamName} ${t.wins}-${t.losses}`);
         const bottom = table[table.length - 1];
-        out.push(`  ${division}: ${top.join(', ')} … last: ${bottom.teamName} ${bottom.wins}-${bottom.losses} (${table.length} teams)`);
+        out.push(`  ${divisionLabel(division)}: ${top.join(', ')} … last: ${bottom.teamName} ${bottom.wins}-${bottom.losses} (${table.length} teams)`);
     }
 
     const text = out.length > 1 ? out.join('\n') : '';
@@ -391,7 +392,7 @@ async function buildRoastAngles(discordId) {
           WHERE season_id = $1 AND division = $2 AND is_playoff = FALSE AND games > 0`,
         [seasonId, st.division]);
     const me = ranked.find((r) => String(r.discord_id) === id);
-    if (me) out.push(`Ranks ${me.from_bottom} from the BOTTOM of ${me.total} players in ${st.division}.`);
+    if (me) out.push(`Ranks ${me.from_bottom} from the BOTTOM of ${me.total} players in ${divisionLabel(st.division)}.`);
 
     // Paid like X, playing like Y — the meanest honest line available.
     if (sheet?.salary != null) {
@@ -402,7 +403,7 @@ async function buildRoastAngles(discordId) {
         if (avg?.a) {
             const ratio = n(st.beluga_score) / n(avg.a);
             const verdict = ratio < 0.85 ? 'well BELOW' : ratio > 1.15 ? 'above' : 'about';
-            out.push(`Beluga Score ${Number(st.beluga_score).toFixed(2)} vs ${st.division} average ${Number(avg.a).toFixed(2)} — ${verdict} average, on a ${sheet.salary} salary.`);
+            out.push(`Beluga Score ${Number(st.beluga_score).toFixed(2)} vs ${divisionLabel(st.division)} average ${Number(avg.a).toFixed(2)} — ${verdict} average, on a ${sheet.salary} salary.`);
         }
     }
 
@@ -493,7 +494,7 @@ async function buildContextBlock({ discordId, displayName, message, mode } = {})
         return [
             '[LEAGUE DATA — current and accurate. Use it when it is relevant to what they asked.',
             'Never dump it verbatim, never list it out, and do not mention that you were given data.',
-            'If something is not here, say you do not know rather than guessing.]',
+            'If something is not here, look it up if you have a way to, and otherwise say you do not know rather than guessing.]',
             '',
             parts.join('\n\n'),
         ].join('\n');

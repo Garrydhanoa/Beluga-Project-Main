@@ -167,6 +167,13 @@ const FORM_NAMES = [
     ['main_account', 'registration — main account'],
     ['alt_account', 'registration — alt account'],
     ['staff_report', 'staff series report'],
+    ['md:editm', 'strike package'],
+    ['md:voidm', 'void case'],
+    ['md:addreasonm', 'case reason'],
+    ['md:apm', 'appeal decision'],
+    ['md:flm:allow', 'chat filter allow-list'],
+    ['md:flm', 'chat filter punishment'],
+    ['md:', 'moderation'],
 ];
 
 function friendlyFormName(customId) {

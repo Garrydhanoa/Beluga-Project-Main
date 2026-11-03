@@ -10,7 +10,7 @@
  *
  * Column map (SalSheet!A:W), matching `commands/whois.js`:
  *   B(1) nickname · I(8) FA? · J(9) Eligible? · K(10) IR? · L(11) Suspended?
- *   O(14) SAL lock · P(15) Discord ID · R(17) League · U(20) RFA
+ *   N(13) SALARY · O(14) SAL lock · P(15) Discord ID · R(17) League · U(20) RFA
  * plus C(2) 2s PEAK and D(3) 3s PEAK.
  */
 
@@ -64,6 +64,7 @@ async function fetchFresh() {
             freeAgent: yes(row[8]),
             eligible: yes(row[9]),
             salary: num(row[14]),
+            calculated: num(row[13]),
             league: normalizeLeague(row[17]),
             rfa: yes(row[20]),
             // NOTE: IR (K) and Suspended (L) are deliberately NOT exposed — this
@@ -100,10 +101,20 @@ async function getSalSheetRow(discordId) {
     return map.get(String(discordId)) || null;
 }
 
+/**
+ * Skips the cache, for a decision that can't go on a ten-minute-old salary (staff may have
+ * just changed it). Still serves stale data if the read fails, so a Sheets outage doesn't
+ * stop a one-day sub.
+ */
+async function getFreshSalSheetRow(discordId) {
+    cache.fetchedAt = 0;
+    return getSalSheetRow(discordId);
+}
+
 /** Just the League value — the tie-breaker for which division a GM belongs to. */
 async function getSheetLeague(discordId) {
     const row = await getSalSheetRow(discordId);
     return row?.league || null;
 }
 
-module.exports = { getSalSheetMap, getSalSheetRow, getSheetLeague };
+module.exports = { getSalSheetMap, getSalSheetRow, getFreshSalSheetRow, getSheetLeague };

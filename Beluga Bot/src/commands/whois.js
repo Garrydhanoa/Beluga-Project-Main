@@ -6,6 +6,7 @@ const path = require('path');
 const { config } = require('../config/config');
 const { siteFooter, appendFooter, siteUrl } = require('../utils/siteFooter');
 const Logger = require('../utils/logger');
+const { divisionLabelUpper } = require('../utils/divisionLabels');
 
 const SPREADSHEET_ID = '1cnrCOiAX5PfcxqpTX16YvbPVYnBxZiCk_zSCDqoeDGs';
 
@@ -254,13 +255,13 @@ function getCaptainRoles(playerData) {
     const captainRoles = [];
     
     if (playerData.aaCaptain && playerData.aaCaptain.trim() !== '') {
-        captainRoles.push('AA Captain');
+        captainRoles.push('Academy Captain');
     }
     if (playerData.aaaCaptain && playerData.aaaCaptain.trim() !== '') {
-        captainRoles.push('AAA Captain');
+        captainRoles.push('Contenders Captain');
     }
     if (playerData.majorsCaptain && playerData.majorsCaptain.trim() !== '') {
-        captainRoles.push('Majors Captain');
+        captainRoles.push('Premier Captain');
     }
     
     return captainRoles;
@@ -359,7 +360,7 @@ module.exports = {
                 // Show division if available
                 if (salSheetData.division && salSheetData.division.trim() !== '') {
                     partialEmbed.addFields([
-                        { name: '🏆 League', value: salSheetData.division.toUpperCase(), inline: true }
+                        { name: '🏆 League', value: divisionLabelUpper(salSheetData.division), inline: true }
                     ]);
                 }
 

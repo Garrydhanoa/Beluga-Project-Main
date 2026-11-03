@@ -3,6 +3,7 @@ const Logger = require('../utils/logger');
 const { getTeamSchedule } = require('../constants/schedule');
 const { attachTeamLogo, teamAutocomplete, findTeam, getTeamColorInt } = require('../utils/teamRoles');
 const { siteFooter } = require('../utils/siteFooter');
+const { divisionLabel } = require('../utils/divisionLabels');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -14,9 +15,9 @@ module.exports = {
                 .setDescription('Select the division')
                 .setRequired(true)
                 .addChoices(
-                    { name: 'Majors', value: 'MAJORS' },
-                    { name: 'AAA', value: 'AAA' },
-                    { name: 'AA', value: 'AA' }
+                    { name: 'Premier', value: 'MAJORS' },
+                    { name: 'Contenders', value: 'AAA' },
+                    { name: 'Academy', value: 'AA' }
                 )
         )
         .addStringOption(option =>
@@ -45,7 +46,7 @@ module.exports = {
                 const inAnyDivision = await findTeam(teamName);
                 if (inAnyDivision) {
                     return await interaction.editReply({
-                        content: `**${teamName}** does not play in the ${division} division. They play in ${inAnyDivision.division}.`,
+                        content: `**${teamName}** does not play in the ${divisionLabel(division)} division. They play in ${divisionLabel(inAnyDivision.division)}.`,
                     });
                 }
                 return await interaction.editReply({
@@ -58,7 +59,7 @@ module.exports = {
 
             if (Object.keys(teamSchedule).length === 0) {
                 return await interaction.editReply({
-                    content: `No schedule found for **${teamName}** in ${division}.`,
+                    content: `No schedule found for **${teamName}** in ${divisionLabel(division)}.`,
                 });
             }
 
@@ -93,9 +94,9 @@ module.exports = {
 
             const scheduleEmbed = new EmbedBuilder()
                 .setTitle(`${teamName}`)
-                .setDescription(`**${division} Division Schedule**\n\n${formattedSchedule}`)
+                .setDescription(`**${divisionLabel(division)} Division Schedule**\n\n${formattedSchedule}`)
                 .setColor(teamColor)
-                .setFooter({ text: `${division} Division | (H) Home | (A) Away` })
+                .setFooter({ text: `${divisionLabel(division)} Division | (H) Home | (A) Away` })
                 .setTimestamp();
 
             // Try to attach team logo as thumbnail (from DB, exact team id)

@@ -29,6 +29,7 @@
 
 const { pool, isDatabaseAvailable } = require('../utils/database');
 const Logger = require('../utils/logger');
+const { divisionLabel } = require('../utils/divisionLabels');
 
 const PLAYOFF_WEEK_FLOOR = 90;
 
@@ -248,7 +249,7 @@ async function generateBracket(seasonId, division, standings, { qualifierCount =
     if (!db()) throw new Error('Database unavailable');
     const qualifiers = Math.max(2, Number(qualifierCount) || 8);
     if (standings.length < qualifiers) {
-        throw new Error(`Need at least ${qualifiers} teams with results in ${division} (have ${standings.length}).`);
+        throw new Error(`Need at least ${qualifiers} teams with results in ${divisionLabel(division)} (have ${standings.length}).`);
     }
 
     const totalRounds = roundCountFor(qualifiers);
@@ -267,7 +268,7 @@ async function generateBracket(seasonId, division, standings, { qualifierCount =
         const br = await client.query(
             `INSERT INTO playoff_brackets (season_id, division, name, is_published, display_order, qualifier_count)
              VALUES ($1, $2, $3, TRUE, 0, $4) RETURNING id`,
-            [seasonId, division, `${division} Playoffs`, qualifiers]
+            [seasonId, division, `${divisionLabel(division)} Playoffs`, qualifiers]
         );
         const bracketId = br.rows[0].id;
 

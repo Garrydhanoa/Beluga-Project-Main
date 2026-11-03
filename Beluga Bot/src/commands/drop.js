@@ -7,6 +7,8 @@ const Logger = require('../utils/logger');
 const { ROLES, TEAM_ROLES, NP_ROLES } = require('../constants/roles');
 const { TransactionDB } = require('../utils/database');
 const { attachTeamLogo } = require('../utils/teamRoles');
+const { divisionLabel } = require('../utils/divisionLabels');
+const { managerRoleEntries } = require('../utils/franchiseManagers');
 
 // Command-specific constants
 const TRANSACTION_REQUEST_CHANNEL_ID = '1178913188750823544';
@@ -303,8 +305,8 @@ function canUserDrop(member, targetMember, division) {
         return { allowed: false };
     }
     
-    // Check if GM (team-specific)
-    for (const [teamName, gmRoleId] of Object.entries(ROLES.GM_ROLES)) {
+    // Check if GM or Assistant GM (team-specific)
+    for (const [teamName, gmRoleId] of managerRoleEntries()) {
         if (member.roles.cache.has(gmRoleId)) {
             // GM can only drop players from their own team
             if (playerInfo.teamName === teamName) {
@@ -383,9 +385,9 @@ module.exports = {
                 let errorMessage = '❌ You do not have permission to drop this player.';
                 
                 // Check if user is a GM or Captain but for wrong team
-                for (const [teamName, gmRoleId] of Object.entries(ROLES.GM_ROLES)) {
+                for (const [teamName, gmRoleId] of managerRoleEntries()) {
                     if (interaction.member.roles.cache.has(gmRoleId) && teamName !== playerInfo.teamName) {
-                        errorMessage = `❌ You are the GM of ${teamName} and can only drop players from your own team. ${player.username} is on ${playerInfo.teamName}.`;
+                        errorMessage = `❌ You are the GM/AGM of ${teamName} and can only drop players from your own team. ${player.username} is on ${playerInfo.teamName}.`;
                         break;
                     }
                 }
@@ -401,8 +403,8 @@ module.exports = {
                 if (userCaptainDivisions.length > 0) {
                     const captainTeamName = getUserTeamNameAllDivisions(interaction.member);
                     if (!userCaptainDivisions.includes(division)) {
-                        const divisionsText = userCaptainDivisions.join(', ');
-                        errorMessage = `❌ You are a Captain for ${divisionsText} and can only drop players from those divisions. ${player.username} is in ${division}.`;
+                        const divisionsText = userCaptainDivisions.map(divisionLabel).join(', ');
+                        errorMessage = `❌ You are a Captain for ${divisionsText} and can only drop players from those divisions. ${player.username} is in ${divisionLabel(division)}.`;
                     } else if (!captainTeamName) {
                         errorMessage = `❌ You do not have a team role in any division.`;
                     } else if (captainTeamName !== playerInfo.teamName) {
@@ -434,7 +436,7 @@ module.exports = {
                     .setDescription(`${player}, are you sure you want to leave **${playerInfo.teamName}**?\n\n⚠️ **Important:** If you accept, you will be placed on **Restricted Free Agent (RFA)** status for **1 week**.`)
                     .addFields(
                         { name: 'Team', value: playerInfo.teamName, inline: true },
-                        { name: 'Division', value: division, inline: true },
+                        { name: 'Division', value: divisionLabel(division), inline: true },
                         { name: 'Player', value: player.username, inline: true },
                         { name: 'Requested By', value: interaction.user.username, inline: true }
                     )
@@ -490,7 +492,7 @@ module.exports = {
                     .setDescription(`**${playerInfo.teamName}** wants to drop ${player.username} from the roster.`)
                     .addFields(
                         { name: 'Team', value: playerInfo.teamName, inline: true },
-                        { name: 'Division', value: division, inline: true },
+                        { name: 'Division', value: divisionLabel(division), inline: true },
                         { name: 'Player', value: player.username, inline: true },
                         { name: 'Requested By', value: interaction.user.username, inline: true }
                     )
@@ -742,7 +744,7 @@ async function processDropCompletion(drop, message, client, isPlayerDecision) {
         
         const confirmationEmbed = new EmbedBuilder()
             .setTitle(`${drop.teamName} drop ${drop.playerUsername}`)
-            .setDescription(`${player} has been dropped from ${drop.division} league.${isPlayerDecision ? '\n\n⚠️ **Placed on RFA for 1 week**' : ''}`)
+            .setDescription(`${player} has been dropped from ${divisionLabel(drop.division)} league.${isPlayerDecision ? '\n\n⚠️ **Placed on RFA for 1 week**' : ''}`)
             .addFields(
                 { name: 'Requested By', value: drop.requestedByUsername, inline: true },
                 { name: 'Approved By (Salary Crew)', value: drop.approvedBy, inline: true },
@@ -777,7 +779,7 @@ async function processDropCompletion(drop, message, client, isPlayerDecision) {
                 .addFields(
                     { name: 'Player', value: drop.playerUsername, inline: true },
                     { name: 'Former Team', value: drop.teamName, inline: true },
-                    { name: 'Division', value: drop.division, inline: true },
+                    { name: 'Division', value: divisionLabel(drop.division), inline: true },
                     
                     { name: 'RFA Expires On', value: rfaExpiryFormatted, inline: false },
                     { name: 'Reason', value: 'Player Decision - Self Drop', inline: false }

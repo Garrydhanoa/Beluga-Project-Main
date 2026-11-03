@@ -7,11 +7,12 @@ import Avatar from '../components/Avatar'
 import TeamLogo from '../components/TeamLogo'
 import SeasonPicker from '../components/SeasonPicker'
 import { useSeason, seasonQuerySuffix } from '../components/SeasonContext'
+import { DIVISION_LABELS } from '../../lib/divisionLabels'
 
 const DIVISIONS = [
-  { key: 'Majors', label: 'Majors' },
-  { key: 'AAA', label: 'AAA' },
-  { key: 'AA', label: 'AA' },
+  { key: 'Majors', label: DIVISION_LABELS.Majors },
+  { key: 'AAA', label: DIVISION_LABELS.AAA },
+  { key: 'AA', label: DIVISION_LABELS.AA },
 ]
 
 function FadeIn({ children, delay = 0, y = 20, className = '' }) {

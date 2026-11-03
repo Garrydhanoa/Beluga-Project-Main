@@ -18,6 +18,8 @@
 const { pool, isDatabaseAvailable } = require('../utils/database');
 const Logger = require('../utils/logger');
 const { generateDmReply } = require('./dmAi');
+const { readMedia } = require('../ai/mediaReader');
+const { splitGifs, gifMessage } = require('../ai/claudeChat');
 const { getPersona } = require('../ai/persona');
 const { pickPrimaryRoster } = require('../utils/primaryDivision');
 const { getSheetLeague } = require('../utils/salSheetLookup');
@@ -196,6 +198,7 @@ async function maybeAiReply(message, aiChat, discordId) {
         const displayName = message.author.globalName || message.author.username;
         await message.channel.sendTyping().catch(() => {});
 
+        const media = aiChat?.claudeReady?.() ? await readMedia(message) : [];
         const reply = await generateDmReply({
             aiChat,
             discordId,
@@ -204,18 +207,27 @@ async function maybeAiReply(message, aiChat, discordId) {
             mode: persona,
             // Already stored above — don't feed it back as history.
             excludeMessageId: String(message.id),
+            media,
         });
         if (!reply) return;
 
-        const text = String(reply).slice(0, MAX_LEN);
-        const sent = await message.author.send({ content: text, allowedMentions: { parse: [] } });
-        await recordOutgoing({
-            discordId,
-            content: text,
-            authorName: persona === 'unhinged' ? 'Beluga AI (unhinged)' : 'Beluga AI',
-            source: 'ai',
-            discordMessageId: sent?.id ? String(sent.id) : null,
-        });
+        // A GIF goes out as its own message so Discord shows it on its own.
+        const { text, gifs } = splitGifs(reply);
+        const words = text.slice(0, MAX_LEN);
+        const outgoing = [
+            ...(words ? [{ content: words, payload: { content: words, allowedMentions: { parse: [] } } }] : []),
+            ...gifs.map((url) => ({ content: url, payload: gifMessage(url) })),
+        ];
+        for (const { content, payload } of outgoing) {
+            const sent = await message.author.send(payload);
+            await recordOutgoing({
+                discordId,
+                content,
+                authorName: persona === 'unhinged' ? 'Beluga AI (unhinged)' : 'Beluga AI',
+                source: 'ai',
+                discordMessageId: sent?.id ? String(sent.id) : null,
+            });
+        }
     } catch (err) {
         Logger.warning(`DM AI reply failed for ${discordId}: ${err?.code || ''} ${err?.message || err}`);
     }

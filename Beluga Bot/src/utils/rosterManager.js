@@ -1,7 +1,10 @@
 const { EmbedBuilder, AttachmentBuilder } = require('discord.js');
 const Logger = require('./logger');
+const higgenLog = require('./higgenLog');
 const { RosterDB, LeagueDB, isDatabaseAvailable } = require('./database');
 const { CHANNELS } = require('../constants/roles');
+const { divisionLabel: divisionDisplay } = require('./divisionLabels');
+const { sameDivision } = require('./primaryDivision');
 const {
     getActiveTeams,
     getTeamDiscordRoles,
@@ -36,17 +39,20 @@ async function getLogoAttachment(teamId, teamName) {
 /**
  * Generate a hash for roster data to detect changes
  */
-function generateRosterHash(rosterData) {
+function generateRosterHash(rosterData, { seasonNumber = null, colorInt = null } = {}) {
     const { teamName, division, gm, captain, players } = rosterData;
 
     const gmId = gm ? gm.id : 'none';
+    const agmIds = (rosterData.agms || []).map(m => m.id).sort().join(',') || 'none';
     const captainId = captain ? captain.id : 'none';
     const playerIds = players
         .map(p => p.id)
         .sort()
         .join(',');
 
-    return `${teamName}|${division}|${gmId}|${captainId}|${playerIds}`;
+    // Season + colour are part of the hash so a rollover or a franchise colour
+    // change re-renders the embed instead of being skipped as "no changes".
+    return `S${seasonNumber ?? '?'}|${colorInt ?? ''}|${teamName}|${division}|${gmId}|${agmIds}|${captainId}|${playerIds}`;
 }
 
 /**
@@ -88,6 +94,13 @@ async function getTeamRoster(guild, team, division) {
             }
         }
 
+        // Assistant GM(s) from the franchise AGM role (S11).
+        let agms = [];
+        if (roles.agmRoleId) {
+            const agmRole = await guild.roles.fetch(roles.agmRoleId).catch(() => null);
+            if (agmRole) agms = [...agmRole.members.values()].filter(m => m.id !== gm?.id);
+        }
+
         const players = [];
         for (const [, member] of members) {
             players.push(member);
@@ -98,6 +111,7 @@ async function getTeamRoster(guild, team, division) {
             teamName: team.name,
             division,
             gm,
+            agms,
             captain,
             players,
             totalPlayers: members.size
@@ -109,19 +123,26 @@ async function getTeamRoster(guild, team, division) {
 }
 
 /**
- * Create roster embed for a team (color from the DB franchise color).
+ * Create roster embed for a team (color from the DB franchise color). The
+ * season number sits in the footer so every message says which season it is.
  */
 function createRosterEmbed(rosterData, { colorInt = 0x3498DB, seasonNumber = null } = {}) {
     const { teamName, division, gm, captain, players, totalPlayers } = rosterData;
 
     const embed = new EmbedBuilder()
-        .setTitle(`${teamName} — ${DIVISION_LABELS[division] || division}${seasonNumber != null ? ` · Season ${seasonNumber}` : ''}`)
+        .setTitle(`${teamName} — ${divisionDisplay(division)}`)
         .setColor(colorInt)
         .setThumbnail('attachment://team_logo.png')
         .setTimestamp();
+    if (seasonNumber != null) embed.setFooter({ text: `Season ${seasonNumber}` });
 
     const gmText = gm ? (gm.nickname || gm.user.username) : '*No GM assigned*';
     embed.addFields({ name: '👑 General Manager', value: gmText, inline: false });
+
+    const agms = rosterData.agms || [];
+    if (agms.length) {
+        embed.addFields({ name: 'Assistant GM', value: agms.map(m => m.nickname || m.user.username).join('\n').slice(0, 1024), inline: false });
+    }
 
     const captainText = captain ? (captain.nickname || captain.user.username) : '*No captain assigned*';
     embed.addFields({ name: '⭐ Captain', value: captainText, inline: false });
@@ -145,7 +166,7 @@ function createRosterEmbed(rosterData, { colorInt = 0x3498DB, seasonNumber = nul
 }
 
 function buildRosterMembers(rosterData) {
-    const rolePriority = { gm: 3, captain: 2, player: 1 };
+    const rolePriority = { gm: 4, agm: 3, captain: 2, player: 1 };
     const byId = new Map();
 
     const upsert = (member, role) => {
@@ -166,6 +187,7 @@ function buildRosterMembers(rosterData) {
     };
 
     upsert(rosterData.gm, 'gm');
+    (rosterData.agms || []).forEach((member) => upsert(member, 'agm'));
     upsert(rosterData.captain, 'captain');
 
     rosterData.players.forEach((member) => upsert(member, 'player'));
@@ -213,7 +235,25 @@ async function updateDivisionRoster(client, division) {
         const seasonNumber = activeSeason.season_number ?? activeSeason.seasonNumber ?? null;
 
         // DB team list for this division.
-        const divisionTeams = (await getActiveTeams()).filter((t) => t.division === divisionLabel);
+        const divisionTeams = (await getActiveTeams()).filter((t) => sameDivision(t.division, divisionLabel));
+
+        // Embeds are tracked per season, so a new season starts empty: fresh
+        // messages get posted and last season's stay in the channel as history.
+        const saved = await RosterDB.getSeasonEmbeds(activeSeason.id, division);
+        if (!saved) return false; // DB read failed — don't risk duplicate posts
+
+        // One "Season N" divider per channel, before the season's first embed.
+        if (saved.size === 0 && divisionTeams.length && !(await RosterDB.getHeader(activeSeason.id, division))) {
+            try {
+                const header = await channel.send({
+                    content: `## Season ${seasonNumber ?? ''} Rosters — ${divisionDisplay(division)}`,
+                    allowedMentions: { parse: [] },
+                });
+                await RosterDB.saveHeader(activeSeason.id, division, channelId, header.id);
+            } catch (error) {
+                Logger.error(`Failed to post the Season ${seasonNumber} roster header for ${division}`, error);
+            }
+        }
 
         for (const team of divisionTeams) {
             const rosterData = await getTeamRoster(channel.guild, team, division);
@@ -223,43 +263,59 @@ async function updateDivisionRoster(client, division) {
             const members = buildRosterMembers(rosterData);
             await LeagueDB.syncTeamRoster(activeSeason.id, team.id, members);
 
-            const currentHash = generateRosterHash(rosterData);
-            const savedMessage = await RosterDB.get(team.name, division);
+            const colorInt = await getTeamColorInt(team.id);
+            const currentHash = generateRosterHash(rosterData, { seasonNumber, colorInt });
+            const savedMessage = saved.get(team.id);
 
-            let messageExists = false;
+            let message = null;
             if (savedMessage && savedMessage.messageId) {
-                try {
-                    await channel.messages.fetch(savedMessage.messageId);
-                    messageExists = true;
-                } catch {
-                    messageExists = false;
-                    Logger.warning(`Roster message for ${team.name} ${division} was deleted, will recreate`);
-                }
+                message = await channel.messages.fetch(savedMessage.messageId).catch(() => null);
+                if (!message) Logger.warning(`Roster message for ${team.name} ${division} was deleted, will recreate`);
             }
 
-            if (messageExists && savedMessage.rosterHash === currentHash) {
+            if (message && savedMessage.rosterHash === currentHash) {
                 continue; // no changes
             }
 
-            const colorInt = await getTeamColorInt(team.id);
             const embed = createRosterEmbed(rosterData, { colorInt, seasonNumber });
             const logoAttachment = await getLogoAttachment(team.id, team.name);
             const messageOptions = { embeds: [embed] };
             if (logoAttachment) messageOptions.files = [logoAttachment];
 
             try {
-                if (messageExists) {
-                    const message = await channel.messages.fetch(savedMessage.messageId);
+                if (message) {
                     await message.edit(messageOptions);
-                    await RosterDB.save(team.name, division, channelId, message.id, currentHash);
+                    await RosterDB.saveEmbed(activeSeason.id, team.id, team.name, division, channelId, message.id, currentHash);
                     Logger.info(`Updated roster message for ${team.name} ${division}`);
                 } else {
                     const newMessage = await channel.send(messageOptions);
-                    await RosterDB.save(team.name, division, channelId, newMessage.id, currentHash);
+                    await RosterDB.saveEmbed(activeSeason.id, team.id, team.name, division, channelId, newMessage.id, currentHash);
                     Logger.success(`Created roster message for ${team.name} ${division}`);
                 }
             } catch (error) {
                 Logger.error(`Failed to create/update roster for ${team.name} ${division}`, error);
+            }
+        }
+
+        // A team disabled or removed during the season loses its embed. Teams
+        // from past seasons are never touched — those messages are history.
+        const activeIds = new Set(divisionTeams.map((t) => t.id));
+        for (const row of saved.values()) {
+            if (activeIds.has(row.teamId)) continue;
+            const old = await channel.messages.fetch(row.messageId).catch(() => null);
+            try {
+                if (old) await old.delete();
+                await RosterDB.deleteEmbed(activeSeason.id, row.teamId);
+                Logger.info(`Removed the roster embed for ${row.teamName} ${division} (team no longer active)`);
+                higgenLog.logInteraction({
+                    eventType: 'job', action: 'rosters.embed_removed',
+                    actor: { name: 'Beluga League BOT', id: null },
+                    what: `removed the Season ${seasonNumber} ${divisionDisplay(division)} roster embed for ${row.teamName}, because that team is no longer active`,
+                    location: `#${channel.name}`,
+                    details: [['Team', `${row.teamName} (${divisionDisplay(division)})`], ['Season', String(seasonNumber ?? '—')]],
+                });
+            } catch (error) {
+                Logger.error(`Failed to remove the roster embed for ${row.teamName} ${division}`, error);
             }
         }
 

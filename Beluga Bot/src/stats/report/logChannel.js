@@ -27,11 +27,14 @@ function truncate(str, n) {
  * @param {string} [opts.groupUrl]
  * @param {boolean} [opts.pingSalaryCrew=true]
  * @param {boolean} [opts.pingInThread=true]
+ * @param {Array} [opts.components]    buttons for the log-channel embed
+ * @returns {Promise<import('discord.js').Message|null>} the log-channel post
  */
 async function logEdge(client, {
     summary, detail = null, error = null, thread = null, division = null,
-    groupUrl = null, pingSalaryCrew = true, pingInThread = true,
+    groupUrl = null, pingSalaryCrew = true, pingInThread = true, components = [],
 } = {}) {
+    let posted = null;
     const crewPing = pingSalaryCrew && SALARY_CREW_ROLE_ID ? `<@&${SALARY_CREW_ROLE_ID}>` : '';
     const rawError = error
         ? (error.stack || error.message || String(error))
@@ -69,7 +72,7 @@ async function logEdge(client, {
             if (detail) embed.addFields({ name: 'Details', value: truncate(detail, 1000) });
 
             const content = crewPing || undefined;
-            await channel.send({ content, embeds: [embed] });
+            posted = await channel.send({ content, embeds: [embed], components });
             if (rawError) {
                 await channel.send({ content: `\`\`\`\n${truncate(rawError, 1800)}\n\`\`\`` });
             }
@@ -88,6 +91,7 @@ async function logEdge(client, {
             Logger.error('logEdge: failed to ping in thread', err);
         }
     }
+    return posted;
 }
 
 module.exports = { logEdge };

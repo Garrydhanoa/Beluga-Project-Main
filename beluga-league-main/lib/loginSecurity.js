@@ -70,7 +70,10 @@ function fmtDate(d) {
 function intentFromPath(path) {
   const p = String(path || '')
   if (p.startsWith('/admin')) return 'admin'
+  if (p.startsWith('/applications/appeal')) return 'appeal'
   if (p.startsWith('/applications')) return 'applications'
+  if (p.startsWith('/gm-test')) return 'gm-test'
+  if (p.startsWith('/agm-test')) return 'agm-test'
   return 'site'
 }
 
@@ -79,7 +82,7 @@ function pathFromCallbackUrl(raw) {
   try { return new URL(raw, process.env.NEXTAUTH_URL || 'http://localhost').pathname } catch { return null }
 }
 
-const INTENT_WORDS = { admin: 'the admin panel', applications: 'Applications', site: 'the website' }
+const INTENT_WORDS = { admin: 'the admin panel', applications: 'Applications', appeal: 'a moderation appeal', 'gm-test': 'the GM rulebook test', 'agm-test': 'the AGM rulebook test', site: 'the website' }
 
 async function discordGet(path, accessToken) {
   try {
@@ -291,7 +294,11 @@ export async function handleAuthFailure(req, errorCode) {
 
   const geo = await lookupIp(info.ip)
   let strike = { count: 0, ban: null }
-  if (kind !== 'system') {
+  // Pressing Cancel only counts against someone at the admin door. Everywhere else
+  // it's a change of mind, and three of them would lock a banned person out of the
+  // appeal form they have one chance at.
+  const harmlessCancel = providerError === 'access_denied' && intent !== 'admin'
+  if (kind !== 'system' && !harmlessCancel) {
     strike = await recordStrike({
       ip: info.ip, kind, path: callbackPath, deviceId, errorSig: sig, detail: human, bypass,
     })

@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { divisionLabel } from '../../../../lib/divisionLabels'
 
 const DIVISIONS = ['Majors', 'AAA', 'AA']
 
@@ -171,7 +172,7 @@ function ScheduleBody({ season, data, busy, onGenerate, onResetGenerate, onPatch
               {generatedAt && <span> · generated {new Date(generatedAt).toLocaleString()}</span>}
             </div>
             <div className="text-xs text-white/40 mt-1">
-              {counts.map((c) => `${c.division}: ${c.count}`).join(' · ')} matches
+              {counts.map((c) => `${divisionLabel(c.division)}: ${c.count}`).join(' · ')} matches
             </div>
           </div>
           <div className="flex gap-2">
@@ -213,7 +214,7 @@ function ScheduleBody({ season, data, busy, onGenerate, onResetGenerate, onPatch
           return (
             <div key={d} className={`p-3 rounded-xl border ${ok ? 'bg-white/[0.04] border-white/10' : 'bg-yellow-500/5 border-yellow-400/30'}`}>
               <div className="flex items-center justify-between">
-                <span className="text-sm font-black text-white tracking-wider uppercase">{d}</span>
+                <span className="text-sm font-black text-white tracking-wider uppercase">{divisionLabel(d)}</span>
                 <span className={`text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded ${ok ? 'bg-green-500/15 text-green-300' : 'bg-yellow-500/15 text-yellow-200'}`}>
                   {ok ? `${c} matches` : 'no schedule'}
                 </span>
@@ -245,7 +246,7 @@ function ScheduleBody({ season, data, busy, onGenerate, onResetGenerate, onPatch
             return (
               <div key={d} className="rounded-2xl bg-white/[0.02] border border-white/10 overflow-hidden">
                 <div className="px-5 py-3 border-b border-white/10 flex items-center justify-between">
-                  <h3 className="text-sm font-black text-white tracking-wider uppercase">{d}</h3>
+                  <h3 className="text-sm font-black text-white tracking-wider uppercase">{divisionLabel(d)}</h3>
                   <span className="text-xs text-white/50">{weekNums.length} weeks · {(matches.filter((m) => m.division === d)).length} matches</span>
                 </div>
                 <div className="p-4 space-y-4">
@@ -360,7 +361,7 @@ function AddMatchInline({ division, teams, existingWeeks, onAdd }) {
   if (!open) {
     return (
       <button onClick={() => setOpen(true)} className="text-[11px] text-blue-300 hover:text-blue-200 px-2 py-1">
-        + Add match to {division}
+        + Add match to {divisionLabel(division)}
       </button>
     )
   }

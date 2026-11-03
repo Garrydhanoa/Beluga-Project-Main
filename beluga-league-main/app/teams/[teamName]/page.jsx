@@ -8,8 +8,9 @@ import { majorsSchedule, aaaSchedule, getTeamInitials } from '../../../lib/sched
 import Avatar from '../../components/Avatar'
 import TeamLogoImg from '../../components/TeamLogo'
 import { useSeason, seasonQuerySuffix } from '../../components/SeasonContext'
+import { DIVISION_LABELS } from '../../../lib/divisionLabels'
 
-const ROLE_LABEL = { gm: 'General Manager', captain: 'Captain', player: 'Player', sub: 'Sub', np: 'Non-Playing' }
+const ROLE_LABEL = { gm: 'General Manager', agm: 'Assistant GM', captain: 'Captain', player: 'Player', sub: 'Sub', np: 'Non-Playing' }
 // fakePlayers retired — when the API has no roster data, getTeamRoster()
 // returns an empty roster + null GM so the page renders an honest empty state.
 const getAllPlayers = () => []
@@ -135,9 +136,9 @@ function getTeamSchedule(teamName, division) {
 }
 
 const DIVISION_LABEL = {
-  major: 'Majors',
-  aaa: 'AAA',
-  aa: 'AA',
+  major: DIVISION_LABELS.Majors,
+  aaa: DIVISION_LABELS.AAA,
+  aa: DIVISION_LABELS.AA,
 }
 
 // ====================================================================
@@ -266,6 +267,7 @@ export default function TeamPage() {
         role: m.role || 'player',
         isCaptain: m.role === 'captain',
         salary: typeof m.salary === 'number' ? m.salary : (m.salary != null ? Number(m.salary) : null),
+        suspension: m.suspension || null,
       })
       const players = divData.roster.filter((m) => m.role !== 'gm').map(mapMember)
       const gmEntry = divData.roster.find((m) => m.role === 'gm')
@@ -714,6 +716,7 @@ function RosterTab({ teamName, roster, onfieldCap }) {
                       {p.displayName}
                     </div>
                     {p.username && <div className="text-[10px] text-blue-300/50 truncate">@{p.username}</div>}
+                    {p.suspension && <div className="text-[10px] font-bold text-red-300 truncate">{p.suspension}</div>}
                   </div>
                   <span
                     className={`flex-shrink-0 text-[9px] font-bold tracking-[0.15em] uppercase px-2.5 py-1 rounded-full border ${

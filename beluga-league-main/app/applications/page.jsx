@@ -79,6 +79,13 @@ export default function ApplicationsPage() {
         <p className="mb-6 text-center text-xs text-blue-200/60">Signed in as <span className="font-bold text-blue-200">{data.username}</span></p>
       )}
 
+      {!ban && data?.appeal && (
+        <a href="/applications/appeal" className="block mb-6 p-5 rounded-2xl bg-red-500/10 border border-red-400/30 hover:bg-red-500/15">
+          <div className="text-white font-bold">Your ban or suspension</div>
+          <div className="text-xs text-red-100/80 mt-0.5">See the details, your appeal date and the appeal form.</div>
+        </a>
+      )}
+
       {ban ? null : !data ? (
         <div className="text-center text-blue-200/60">Loading…</div>
       ) : data.forms.length === 0 ? (

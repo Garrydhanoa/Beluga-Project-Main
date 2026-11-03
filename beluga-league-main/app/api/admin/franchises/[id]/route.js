@@ -38,6 +38,7 @@ async function patchHandler(request, { params }) {
   if (body.defaultDivision !== undefined) patch.defaultDivision = body.defaultDivision
   if (body.isActive !== undefined) patch.isActive = body.isActive
   if (body.gmRoleId !== undefined) patch.gmRoleId = body.gmRoleId ? String(body.gmRoleId).trim() : null
+  if (body.agmRoleId !== undefined) patch.agmRoleId = body.agmRoleId ? String(body.agmRoleId).trim() : null
   if (body.npRoleId !== undefined) patch.npRoleId = body.npRoleId ? String(body.npRoleId).trim() : null
   if (body.discordInviteUrl !== undefined) patch.discordInviteUrl = body.discordInviteUrl ? String(body.discordInviteUrl).trim() : null
   if (body.color !== undefined) patch.color = body.color ? String(body.color).trim() : null

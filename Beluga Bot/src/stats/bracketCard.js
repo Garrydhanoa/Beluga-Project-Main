@@ -19,6 +19,7 @@ const { getTeamLogoBuffer, getTeamColorInt } = require('../utils/teamRoles');
 const { config } = require('../config/config');
 const Logger = require('../utils/logger');
 const { loadBracket, shortRoundName } = require('./playoffBracket');
+const { divisionLabelUpper } = require('../utils/divisionLabels');
 
 const FONT = (config && config.images && config.images.fontFamily) ? config.images.fontFamily : 'sans-serif';
 const DISPLAY = `Anton, ${FONT}`;
@@ -204,7 +205,7 @@ async function buildBracketCard(seasonId, division, { seasonNumber = null } = {}
         ctx.textAlign = 'left';
         ctx.fillStyle = '#ffffff';
         ctx.font = `44px ${DISPLAY}`;
-        ctx.fillText(`${String(division).toUpperCase()} PLAYOFFS`, PAD, 60);
+        ctx.fillText(`${divisionLabelUpper(division)} PLAYOFFS`, PAD, 60);
 
         ctx.fillStyle = '#7fb3e8';
         ctx.font = `bold 15px ${FONT}`;

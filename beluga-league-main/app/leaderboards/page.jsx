@@ -5,9 +5,10 @@ import Link from 'next/link'
 import TeamLogo from '../components/TeamLogo'
 import SeasonPicker from '../components/SeasonPicker'
 import { useSeason } from '../components/SeasonContext'
+import { DIVISION_LABELS, divisionLabel } from '../../lib/divisionLabels'
 
 const DIVISIONS = ['all', 'Majors', 'AAA', 'AA']
-const DIVISION_LABEL = { all: 'All Divisions', Majors: 'Majors', AAA: 'AAA', AA: 'AA' }
+const DIVISION_LABEL = { all: 'All Divisions', ...DIVISION_LABELS }
 
 // The board the operator cares about most leads; the rest follow.
 const STAT_ORDER = [
@@ -138,7 +139,7 @@ export default function LeaderboardsPage() {
             </h2>
             {Object.values(boards).every((b) => !b?.length) ? (
               <div className="p-8 rounded-2xl border border-dashed border-white/15 text-center text-white/50">
-                No players have reached {leaders?.minGames ?? 25} games {division === 'all' ? '' : `in ${division} `}yet.
+                No players have reached {leaders?.minGames ?? 25} games {division === 'all' ? '' : `in ${DIVISION_LABEL[division] || division} `}yet.
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -218,7 +219,7 @@ export default function LeaderboardsPage() {
                             <span className="truncate">{t.team}</span>
                           </Link>
                         </td>
-                        <td className="px-3 py-2 text-blue-200/80">{t.division}</td>
+                        <td className="px-3 py-2 text-blue-200/80">{divisionLabel(t.division)}</td>
                         <td className="px-3 py-2 text-right text-white/70">{t.games_played}</td>
                         <td className="px-3 py-2 text-right text-white/70">{t.goals}</td>
                         <td className="px-3 py-2 text-right text-white/70">{t.assists}</td>

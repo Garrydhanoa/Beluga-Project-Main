@@ -15,6 +15,9 @@ const {
 } = require('./commands/week-thread');
 const { startTicketSync } = require('./utils/ticketSync');
 const { collectImageUrls } = require('./utils/tenor');
+const { readMedia } = require('./ai/mediaReader');
+const chatJoin = require('./ai/chatJoin');
+const { splitGifs, gifMessage } = require('./ai/claudeChat');
 const { initAISettings } = require('./utils/aiSettings');
 const reportRouter = require('./stats/report/router');
 const reportIds = require('./stats/report/ids');
@@ -24,6 +27,7 @@ const ticketSystem = require('./tickets/ticketSystem');
 const appBridge = require('./applications/appBridge');
 const higgenLog = require('./utils/higgenLog');
 const inviteRouter = require('./invites/inviteRouter');
+const modRouter = require('./moderation/modRouter');
 
 // Errors that mean "a connection blipped", not "the process is broken". Database
 // restarts on Railway, Discord REST hiccups and dropped sockets all look like this.
@@ -51,7 +55,9 @@ class BelugaLeagueBot {
                 GatewayIntentBits.GuildPresences,  // Required for tracking presence updates
                 GatewayIntentBits.GuildMessageReactions,  // Required for reaction events
                 GatewayIntentBits.DirectMessages,  // Required for the DM Center inbox
-                GatewayIntentBits.GuildInvites  // Invite campaign: InviteCreate/InviteDelete keep the invite-use cache current
+                GatewayIntentBits.GuildInvites,  // Invite campaign: InviteCreate/InviteDelete keep the invite-use cache current
+                GatewayIntentBits.GuildModeration,  // Moderation: audit log entries for bans/kicks/timeouts done outside the bot
+                GatewayIntentBits.AutoModerationExecution  // Chat filter: messages Discord AutoMod blocks never reach MessageCreate
             ],
             partials: [Partials.Message, Partials.Channel, Partials.Reaction] // Required for reactions on old messages
         });
@@ -210,6 +216,14 @@ class BelugaLeagueBot {
                 Logger.error('Failed to start team constants sync', syncError);
             }
 
+            // Assistant GM roles (franchise agm_role_id) — same refresh cadence.
+            try {
+                const { startAgmRoleSync } = require('./utils/agmRoleSync');
+                startAgmRoleSync();
+            } catch (agmError) {
+                Logger.error('Failed to start AGM role sync', agmError);
+            }
+
             // Week-close sweep: when every thread of a week is closed (bot OR
             // website), post Game/Player of the Week and refresh power rankings.
             try {
@@ -275,6 +289,16 @@ class BelugaLeagueBot {
                 Logger.error('Failed to start season actions poller/approvals', seasonError);
             }
 
+            // GM / AGM rulebook test: no-ping staff notices for passes + retake
+            // requests, the advisory Salary Crew ✅/❌ tally, and carrying out the
+            // super admin's approve/deny (roles + DM) from higgenlogs → Tests.
+            try {
+                const { startCertBridge } = require('./certs/certBridge');
+                startCertBridge(client);
+            } catch (certError) {
+                Logger.error('Failed to start rulebook test bridge', certError);
+            }
+
             // Invite campaign: invite-use cache, lifetime backfill + 30-min reconcile,
             // claim-window expiry, campaign end-date reminder, live leaderboard and
             // the website action queue.
@@ -284,6 +308,25 @@ class BelugaLeagueBot {
             } catch (inviteError) {
                 Logger.error('Failed to start invite tracking', inviteError);
             }
+
+            // Moderation: the 60-second clock (series counting, auto-lifts, temp
+            // unbans), the Mod Logs website queue and the chat filter. Each in its own
+            // try so one failing can't stop the others.
+            try {
+                const { startModerationClock } = require('./moderation/suspensionTicker');
+                startModerationClock(client);
+                const { startModActions } = require('./moderation/modActions');
+                startModActions(client);
+            } catch (modError) {
+                Logger.error('Failed to start moderation system', modError);
+            }
+            try {
+                const { startFilter } = require('./moderation/filter');
+                startFilter(client).catch((filterError) => Logger.error('Failed to start chat filter', filterError));
+            } catch (filterError) {
+                Logger.error('Failed to start chat filter', filterError);
+            }
+            require('./ai/leagueData').start().catch((dataError) => Logger.error('Failed to start league lookups', dataError));
 
             // Ballchasing imports for hand-reported series: staff report a series on
             // the admin panel and attach a group link or per-game replay links; the
@@ -378,6 +421,15 @@ class BelugaLeagueBot {
                 if (typeof interaction.customId === 'string' && inviteRouter.isInviteId(interaction.customId)) {
                     await inviteRouter.route(interaction);
                     drainAudit('Handled by the invite campaign controls.');
+                    return;
+                }
+
+                // Moderation (`md:` ids — confirm cards, Director requests, case controls,
+                // chat filter panels, appeal votes). Before the generic routing below,
+                // which sends every other modal and select to the register flow.
+                if (typeof interaction.customId === 'string' && modRouter.isModId(interaction.customId)) {
+                    await modRouter.route(interaction);
+                    drainAudit('Handled by the moderation system.');
                     return;
                 }
 
@@ -527,6 +579,15 @@ class BelugaLeagueBot {
                 // Ignore messages from bots
                 if (message.author.bot) return;
 
+                // Chat filter. Before the @everyone return below, or anyone could
+                // dodge it by adding a ping. True means the message was removed.
+                try {
+                    const { onMessage } = require('./moderation/filter');
+                    if (await onMessage(message)) return;
+                } catch (filterError) {
+                    Logger.error('Chat filter hook failed', filterError);
+                }
+
                 // Ignore @everyone/@here pings to prevent spam responses
                 if (message.mentions.everyone) return;
 
@@ -556,10 +617,13 @@ class BelugaLeagueBot {
 
                     const displayName = message.member?.displayName || message.author.username;
 
+                    // Claude sees everything in the message itself, in its own voice.
+                    const media = this.aiChat.claudeReady() ? await readMedia(message) : [];
+
                     // Gather any images (uploads, embeds, Tenor/Giphy links) for vision
                     let imageUrls = [];
                     try {
-                        imageUrls = await collectImageUrls(message);
+                        if (!media.length) imageUrls = await collectImageUrls(message);
                     } catch (imgErr) {
                         Logger.warning('Image collection failed:', imgErr.message);
                     }
@@ -592,14 +656,16 @@ class BelugaLeagueBot {
                     // If an image was attached but vision failed everywhere, tell the
                     // model so it can acknowledge that honestly instead of ignoring it.
                     const userPrompt = imageUrls.length > 0
-                        ? `${cleanedMessage || 'I shared an image.'}\n\n[Note: an image/GIF was attached but it could not be analyzed right now — let them know politely and offer to help another way.]`
-                        : (cleanedMessage || 'Hello!');
+                        ? `${cleanedMessage || 'I shared an image.'}\n\n[Note: an image or GIF was shared but it would not load for you. Say so in a few words, the way someone in chat would.]`
+                        : (cleanedMessage || (media.length ? 'Take a look at this.' : 'Hello!'));
 
                     const aiResponse = await this.aiChat.generateAIResponse(
                         message.author.id,
                         userPrompt,
                         displayName,
-                        message.guild?.name
+                        message.guild?.name,
+                        null,
+                        media
                     );
 
                     setTimeout(async () => {
@@ -607,8 +673,42 @@ class BelugaLeagueBot {
                     }, 500 + Math.random() * 1200);
                     return;
                 }
+
+                // Nobody called it, but it can still join in. Not awaited, so it
+                // never holds up the bot.
+                chatJoin.observe(message, {
+                    aiChat: this.aiChat,
+                    send: (target, text) => this.sendAIReply(target, text),
+                });
             } catch (error) {
                 Logger.error('Error handling message events', error);
+            }
+        });
+
+        // Chat filter: a clean message edited into something else gets checked too.
+        this.client.on(Events.MessageUpdate, (oldMessage, newMessage) => {
+            try {
+                require('./moderation/filter').onMessageEdit(oldMessage, newMessage);
+            } catch (error) {
+                Logger.error('Chat filter edit hook failed', error);
+            }
+        });
+
+        // Chat filter: messages Discord AutoMod blocked never reach MessageCreate.
+        this.client.on(Events.AutoModerationActionExecution, (execution) => {
+            try {
+                require('./moderation/filter').onAutomodAction(execution);
+            } catch (error) {
+                Logger.error('Chat filter AutoMod hook failed', error);
+            }
+        });
+
+        // Moderation done outside the bot (Carl-bot, Dyno, right-click) becomes a case.
+        this.client.on(Events.GuildAuditLogEntryCreate, (entry, guild) => {
+            try {
+                require('./moderation/outsideActions').onAuditEntry(entry, guild);
+            } catch (error) {
+                Logger.error('Outside moderation hook failed', error);
             }
         });
 
@@ -720,6 +820,16 @@ class BelugaLeagueBot {
                 }
             } catch (error) {
                 Logger.error('guildMemberAdd invite tracking failed', error);
+            }
+            // Leaving and rejoining must not shake off a suspension. Own try so it
+            // can't skip anything below.
+            try {
+                if (!member.user?.bot) {
+                    const { reapplyOnJoin } = require('./moderation/suspensions');
+                    await reapplyOnJoin(member);
+                }
+            } catch (error) {
+                Logger.error('guildMemberAdd suspension re-apply failed', error);
             }
             try {
                 if (member.user?.bot) return;
@@ -888,13 +998,69 @@ class BelugaLeagueBot {
     // is the real guarantee: even if the text contains <@id>/@everyone, Discord
     // renders the name but notifies nobody (the "special box" that isn't a ping).
     // sanitizeResponse stays as a second, text-level safety net.
+    // Returns whether anything reached the channel.
     async sendAIReply(message, text) {
-        const content = this.sanitizeResponse(text);
+        // Words and a GIF go out together, so one reply is one message in the chat.
+        const { text: words, gifs } = splitGifs(text);
+        const [firstGif, ...otherGifs] = gifs;
+        const author = message.member?.displayName || message.author.username;
+        const where = `#${message.channel?.name || 'unknown'}`;
+        let answered = false;
         try {
-            await message.reply({ content, allowedMentions: { parse: [] } });
+            if (words || firstGif) {
+                await message.reply({
+                    ...(firstGif ? gifMessage(firstGif) : {}),
+                    ...(words ? { content: this.sanitizeResponse(words) } : {}),
+                    allowedMentions: { parse: [] },
+                });
+                answered = true;
+            }
+            for (const url of otherGifs) await message.channel.send(gifMessage(url));
         } catch (err) {
+            // The message went while the bot was writing. Discord refuses a reply to it, and
+            // staying quiet is right: its author took it back, or staff or the filter removed it.
+            if (/unknown.?message/i.test(err.message)) {
+                Logger.info(`Skipped an AI reply to ${author}: the message was deleted first`);
+                higgenLog.logInteraction({
+                    eventType: 'job',
+                    action: 'ai.reply_skipped',
+                    actor: { name: 'Beluga League BOT', id: null },
+                    what: `skipped a reply to ${author} because the message was deleted first`,
+                    location: where,
+                });
+                return answered;
+            }
             Logger.warning('Failed to send AI reply:', err.message);
+            higgenLog.logFailure({
+                summary: `The chat AI could not reply to ${author} in ${where}: ${err.message}`,
+                error: err, action: 'ai.reply_failed', where,
+            });
         }
+        if (answered) await this.logAIReply(message, author, where, words, gifs);
+        return answered;
+    }
+
+    // Every reply goes in higgenlogs word for word, so the bot's behaviour can be reviewed.
+    // Text from tickets and staff channels is never logged, and a failed check counts as private.
+    async logAIReply(message, author, where, words, gifs) {
+        const { getSettings } = require('./moderation/modConfig');
+        const { isFlagOnly } = require('./moderation/filter');
+        const settings = await getSettings().catch(() => null);
+        const shareable = settings && !isFlagOnly(message.channel, settings);
+        higgenLog.logInteraction({
+            eventType: 'job',
+            action: 'ai.replied',
+            actor: { name: 'Beluga League BOT', id: null },
+            what: `replied to ${author}`,
+            location: where,
+            details: shareable
+                ? [
+                    ['Their message', String(message.content || '').slice(0, 500) || '(no text)'],
+                    ['Reply', (words || '(GIF only)').slice(0, 800)],
+                    ...(gifs.length ? [['GIF', gifs.join(' ')]] : []),
+                ]
+                : [['Text', 'Left out: ticket or staff channel']],
+        });
     }
 
     startAutomaticMemberPull() {

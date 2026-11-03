@@ -671,6 +671,8 @@ async function runMigrations() {
   await step('team_franchises.np_role_id', `ALTER TABLE team_franchises ADD COLUMN IF NOT EXISTS np_role_id TEXT`)
   await step('team_franchises.discord_invite_url', `ALTER TABLE team_franchises ADD COLUMN IF NOT EXISTS discord_invite_url TEXT`)
   await step('team_franchises.color', `ALTER TABLE team_franchises ADD COLUMN IF NOT EXISTS color TEXT`)
+  // Assistant GM role (S11): same bot powers as the GM role, one per franchise.
+  await step('team_franchises.agm_role_id', `ALTER TABLE team_franchises ADD COLUMN IF NOT EXISTS agm_role_id TEXT`)
 
   // Shared bot+website key/value settings (e.g. stats_channel_id).
   await step('app_config', `
@@ -1419,6 +1421,484 @@ async function runMigrations() {
     )`)
   await step('idx_invite_actions_status', `CREATE INDEX IF NOT EXISTS idx_invite_actions_status ON invite_actions (status, id)`)
   await step('invite_campaigns.seed', `INSERT INTO invite_campaigns (name) SELECT 'Campaign 1' WHERE NOT EXISTS (SELECT 1 FROM invite_campaigns)`)
+
+  // GM / AGM rulebook certification (S11). Link-only /gm-test + /agm-test, run
+  // from the super-admin Tests tab in higgenlogs; the bot posts the staff notice,
+  // tallies Salary Crew reactions and grants roles. MIRRORED in
+  // Beluga Bot/src/certs/certSchema.js — keep the two in sync.
+  await step('cert_questions', `CREATE TABLE IF NOT EXISTS cert_questions (
+    id SERIAL PRIMARY KEY,
+    prompt TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'mc',
+    options JSONB NOT NULL DEFAULT '[]'::jsonb,
+    correct_index INTEGER NOT NULL DEFAULT 0,
+    rule_ref TEXT,
+    for_gm BOOLEAN NOT NULL DEFAULT TRUE,
+    for_agm BOOLEAN NOT NULL DEFAULT TRUE,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    updated_by TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`)
+  await step('cert_attempts', `CREATE TABLE IF NOT EXISTS cert_attempts (
+    id SERIAL PRIMARY KEY,
+    season_id INTEGER,
+    discord_id TEXT NOT NULL,
+    username TEXT,
+    test TEXT NOT NULL,
+    franchise_id INTEGER,
+    franchise_name TEXT,
+    status TEXT NOT NULL DEFAULT 'in_progress',
+    questions JSONB NOT NULL DEFAULT '[]'::jsonb,
+    answers JSONB NOT NULL DEFAULT '{}'::jsonb,
+    score INTEGER,
+    total INTEGER,
+    pct NUMERIC(5,2),
+    passed BOOLEAN,
+    signature TEXT,
+    acknowledged JSONB,
+    ip TEXT,
+    user_agent TEXT,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_active_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    submitted_at TIMESTAMPTZ
+    )`)
+  await step('idx_cert_attempts_person', `CREATE INDEX IF NOT EXISTS idx_cert_attempts_person ON cert_attempts (season_id, test, discord_id)`)
+  await step('ux_cert_attempts_open', `CREATE UNIQUE INDEX IF NOT EXISTS ux_cert_attempts_open ON cert_attempts (season_id, test, discord_id) WHERE status = 'in_progress'`)
+  await step('cert_requests', `CREATE TABLE IF NOT EXISTS cert_requests (
+    id SERIAL PRIMARY KEY,
+    attempt_id INTEGER UNIQUE REFERENCES cert_attempts(id) ON DELETE CASCADE,
+    season_id INTEGER,
+    discord_id TEXT NOT NULL,
+    username TEXT,
+    test TEXT NOT NULL,
+    franchise_id INTEGER,
+    franchise_name TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    notice_channel_id TEXT,
+    notice_message_id TEXT,
+    notice_failed BOOLEAN NOT NULL DEFAULT FALSE,
+    notice_synced BOOLEAN NOT NULL DEFAULT TRUE,
+    crew_approvals JSONB NOT NULL DEFAULT '[]'::jsonb,
+    crew_denials JSONB NOT NULL DEFAULT '[]'::jsonb,
+    decided_by TEXT,
+    decided_by_name TEXT,
+    decided_at TIMESTAMPTZ,
+    decision_note TEXT,
+    roles_granted JSONB NOT NULL DEFAULT '[]'::jsonb,
+    result TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`)
+  await step('idx_cert_requests_status', `CREATE INDEX IF NOT EXISTS idx_cert_requests_status ON cert_requests (status, id)`)
+  await step('cert_grants', `CREATE TABLE IF NOT EXISTS cert_grants (
+    id SERIAL PRIMARY KEY,
+    season_id INTEGER,
+    discord_id TEXT NOT NULL,
+    test TEXT NOT NULL,
+    extra INTEGER NOT NULL DEFAULT 1,
+    reason TEXT,
+    granted_by TEXT,
+    granted_by_name TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`)
+  await step('cert_retake_requests', `CREATE TABLE IF NOT EXISTS cert_retake_requests (
+    id SERIAL PRIMARY KEY,
+    season_id INTEGER,
+    discord_id TEXT NOT NULL,
+    username TEXT,
+    test TEXT NOT NULL,
+    attempt_id INTEGER,
+    note TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    notice_channel_id TEXT,
+    notice_message_id TEXT,
+    notice_failed BOOLEAN NOT NULL DEFAULT FALSE,
+    notice_synced BOOLEAN NOT NULL DEFAULT TRUE,
+    resolved_by TEXT,
+    resolved_by_name TEXT,
+    resolved_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`)
+  await step('cert_events', `CREATE TABLE IF NOT EXISTS cert_events (
+    id BIGSERIAL PRIMARY KEY,
+    season_id INTEGER,
+    attempt_id INTEGER,
+    discord_id TEXT,
+    username TEXT,
+    test TEXT,
+    event TEXT NOT NULL,
+    details JSONB NOT NULL DEFAULT '[]'::jsonb,
+    ip TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`)
+  await step('idx_cert_events_recent', `CREATE INDEX IF NOT EXISTS idx_cert_events_recent ON cert_events (created_at DESC)`)
+  await step('idx_cert_events_attempt', `CREATE INDEX IF NOT EXISTS idx_cert_events_attempt ON cert_events (attempt_id)`)
+
+  // ---------- Beluga Insider (insider_*) ----------
+  // MIRRORED from Beluga Bot/src/insider/insiderSchema.js. The bot builds packets and
+  // posts issues; this site hands packets to the writer and takes its drafts.
+  await step('insider_issues', `CREATE TABLE IF NOT EXISTS insider_issues (
+    id SERIAL PRIMARY KEY,
+    issue_date DATE NOT NULL UNIQUE,
+    issue_number INTEGER,
+    season_id INTEGER,
+    week INTEGER,
+    edition TEXT NOT NULL DEFAULT 'offseason',
+    period_start TIMESTAMPTZ NOT NULL,
+    period_end TIMESTAMPTZ NOT NULL,
+    status TEXT NOT NULL DEFAULT 'collecting',
+    packet JSONB,
+    draft JSONB,
+    final JSONB,
+    warnings JSONB NOT NULL DEFAULT '[]'::jsonb,
+    interview JSONB,
+    rewrite_note TEXT,
+    review_channel_id TEXT,
+    review_message_id TEXT,
+    review_thread_id TEXT,
+    approved_by_id TEXT,
+    approved_by_name TEXT,
+    published_at TIMESTAMPTZ,
+    published_message_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+    header_png BYTEA,
+    hidden BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`)
+  await step('idx_insider_issues_status', `CREATE INDEX IF NOT EXISTS idx_insider_issues_status ON insider_issues (status, issue_date DESC)`)
+  await step('idx_insider_issues_published', `CREATE INDEX IF NOT EXISTS idx_insider_issues_published ON insider_issues (published_at DESC)`)
+  await step('insider_queries', `CREATE TABLE IF NOT EXISTS insider_queries (
+    id BIGSERIAL PRIMARY KEY,
+    issue_id INTEGER,
+    sql TEXT NOT NULL,
+    row_count INTEGER,
+    result JSONB,
+    took_ms INTEGER,
+    error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`)
+  await step('idx_insider_queries_issue', `CREATE INDEX IF NOT EXISTS idx_insider_queries_issue ON insider_queries (issue_id, created_at)`)
+  await step('insider_edits', `CREATE TABLE IF NOT EXISTS insider_edits (
+    id BIGSERIAL PRIMARY KEY,
+    issue_id INTEGER NOT NULL,
+    section TEXT,
+    before TEXT,
+    after TEXT,
+    editor_id TEXT,
+    editor_name TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`)
+  await step('idx_insider_edits_recent', `CREATE INDEX IF NOT EXISTS idx_insider_edits_recent ON insider_edits (created_at DESC)`)
+
+  // ---------- Moderation (mod_*) ----------
+  // MIRRORED from Beluga Bot/src/moderation/modSchema.js. The bot owns every Discord
+  // side effect; the Mod Logs tab reads these and queues actions through mod_actions.
+  await step('mod_cases', `CREATE TABLE IF NOT EXISTS mod_cases (
+    id SERIAL PRIMARY KEY,
+    discord_id TEXT NOT NULL,
+    target_name TEXT,
+    kind TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    rule_code TEXT,
+    rule_label TEXT,
+    reason TEXT NOT NULL,
+    actor_id TEXT,
+    actor_name TEXT,
+    source TEXT NOT NULL DEFAULT 'command',
+    counts BOOLEAN NOT NULL DEFAULT TRUE,
+    strike_number INTEGER,
+    duration_seconds INTEGER,
+    expires_at TIMESTAMPTZ,
+    details JSONB NOT NULL DEFAULT '{}'::jsonb,
+    steps JSONB NOT NULL DEFAULT '{}'::jsonb,
+    msg_ids JSONB NOT NULL DEFAULT '{}'::jsonb,
+    action_id INTEGER,
+    legacy_ref TEXT,
+    voided_by_id TEXT,
+    voided_by_name TEXT,
+    void_reason TEXT,
+    voided_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`)
+  await step('idx_mod_cases_person', `CREATE INDEX IF NOT EXISTS idx_mod_cases_person ON mod_cases (discord_id, created_at DESC)`)
+  await step('idx_mod_cases_recent', `CREATE INDEX IF NOT EXISTS idx_mod_cases_recent ON mod_cases (created_at DESC)`)
+  await step('idx_mod_cases_expiry', `CREATE INDEX IF NOT EXISTS idx_mod_cases_expiry ON mod_cases (status, expires_at)`)
+  await step('ux_mod_cases_legacy', `CREATE UNIQUE INDEX IF NOT EXISTS ux_mod_cases_legacy ON mod_cases (legacy_ref) WHERE legacy_ref IS NOT NULL`)
+  await step('ux_mod_cases_action', `CREATE UNIQUE INDEX IF NOT EXISTS ux_mod_cases_action ON mod_cases (action_id) WHERE action_id IS NOT NULL`)
+  await step('mod_member_state', `CREATE TABLE IF NOT EXISTS mod_member_state (
+    discord_id TEXT PRIMARY KEY,
+    strikes INTEGER NOT NULL DEFAULT 0,
+    warned_at TIMESTAMPTZ,
+    last_chance BOOLEAN NOT NULL DEFAULT FALSE,
+    legacy_strikes INTEGER NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`)
+  await step('mod_suspensions', `CREATE TABLE IF NOT EXISTS mod_suspensions (
+    id SERIAL PRIMARY KEY,
+    case_id INTEGER NOT NULL,
+    discord_id TEXT NOT NULL,
+    unit TEXT NOT NULL,
+    total INTEGER,
+    served INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'active',
+    starts_at TIMESTAMPTZ,
+    ends_at TIMESTAMPTZ,
+    team_id INTEGER,
+    team_name TEXT,
+    division TEXT,
+    season_id INTEGER,
+    target_season_number INTEGER,
+    sheet_synced BOOLEAN NOT NULL DEFAULT FALSE,
+    release_state TEXT,
+    review_season_id INTEGER,
+    review_state TEXT,
+    lifted_at TIMESTAMPTZ,
+    lifted_by_id TEXT,
+    lifted_by_name TEXT,
+    lift_reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`)
+  await step('idx_mod_suspensions_active', `CREATE INDEX IF NOT EXISTS idx_mod_suspensions_active ON mod_suspensions (status, discord_id)`)
+  await step('idx_mod_suspensions_person', `CREATE INDEX IF NOT EXISTS idx_mod_suspensions_person ON mod_suspensions (discord_id, created_at DESC)`)
+  await step('mod_suspension_ledger', `CREATE TABLE IF NOT EXISTS mod_suspension_ledger (
+    suspension_id INTEGER NOT NULL,
+    series_id INTEGER NOT NULL,
+    team_id INTEGER,
+    counted BOOLEAN NOT NULL DEFAULT TRUE,
+    reason TEXT,
+    noted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (suspension_id, series_id)
+  )`)
+  await step('mod_thread_notices', `CREATE TABLE IF NOT EXISTS mod_thread_notices (
+    suspension_id INTEGER NOT NULL,
+    thread_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (suspension_id, thread_id, kind)
+  )`)
+  await step('mod_bans', `CREATE TABLE IF NOT EXISTS mod_bans (
+    case_id INTEGER PRIMARY KEY,
+    discord_id TEXT NOT NULL,
+    ban_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    unban_at TIMESTAMPTZ,
+    appeal_after TIMESTAMPTZ,
+    dm_status TEXT,
+    dm_error TEXT,
+    invite_url TEXT,
+    team_snapshot JSONB,
+    unbanned_at TIMESTAMPTZ,
+    unban_reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`)
+  await step('idx_mod_bans_person', `CREATE INDEX IF NOT EXISTS idx_mod_bans_person ON mod_bans (discord_id, created_at DESC)`)
+  await step('idx_mod_bans_expiry', `CREATE INDEX IF NOT EXISTS idx_mod_bans_expiry ON mod_bans (status, unban_at)`)
+  await step('mod_requests', `CREATE TABLE IF NOT EXISTS mod_requests (
+    id SERIAL PRIMARY KEY,
+    kind TEXT NOT NULL,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    status TEXT NOT NULL DEFAULT 'pending',
+    requested_by_id TEXT,
+    requested_by_name TEXT,
+    channel_id TEXT,
+    message_id TEXT,
+    decided_by_id TEXT,
+    decided_by_name TEXT,
+    decided_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`)
+  await step('idx_mod_requests_status', `CREATE INDEX IF NOT EXISTS idx_mod_requests_status ON mod_requests (status, created_at DESC)`)
+  await step('mod_appeals', `CREATE TABLE IF NOT EXISTS mod_appeals (
+    id SERIAL PRIMARY KEY,
+    case_id INTEGER NOT NULL UNIQUE,
+    discord_id TEXT NOT NULL,
+    discord_name TEXT,
+    kind TEXT NOT NULL,
+    answers JSONB NOT NULL DEFAULT '[]'::jsonb,
+    status TEXT NOT NULL DEFAULT 'voting',
+    vote_message_id TEXT,
+    director_message_id TEXT,
+    posted_at TIMESTAMPTZ,
+    decided_by_id TEXT,
+    decided_by_name TEXT,
+    decision_note TEXT,
+    decided_at TIMESTAMPTZ,
+    applied_at TIMESTAMPTZ,
+    invite_shown_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`)
+  await step('idx_mod_appeals_status', `CREATE INDEX IF NOT EXISTS idx_mod_appeals_status ON mod_appeals (status, created_at DESC)`)
+  await step('idx_mod_appeals_person', `CREATE INDEX IF NOT EXISTS idx_mod_appeals_person ON mod_appeals (discord_id)`)
+  await step('mod_appeal_votes', `CREATE TABLE IF NOT EXISTS mod_appeal_votes (
+    appeal_id INTEGER NOT NULL,
+    voter_id TEXT NOT NULL,
+    voter_name TEXT,
+    vote TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (appeal_id, voter_id)
+  )`)
+  await step('mod_evidence', `CREATE TABLE IF NOT EXISTS mod_evidence (
+    id SERIAL PRIMARY KEY,
+    case_id INTEGER NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'file',
+    filename TEXT,
+    mime TEXT,
+    size_bytes INTEGER,
+    bytes BYTEA,
+    text TEXT,
+    source_message_id TEXT,
+    added_by_id TEXT,
+    added_by_name TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`)
+  await step('idx_mod_evidence_case', `CREATE INDEX IF NOT EXISTS idx_mod_evidence_case ON mod_evidence (case_id)`)
+  await step('mod_events', `CREATE TABLE IF NOT EXISTS mod_events (
+    id BIGSERIAL PRIMARY KEY,
+    discord_id TEXT,
+    case_id INTEGER,
+    kind TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    actor_id TEXT,
+    actor_name TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`)
+  await step('idx_mod_events_person', `CREATE INDEX IF NOT EXISTS idx_mod_events_person ON mod_events (discord_id, created_at DESC)`)
+  await step('idx_mod_events_recent', `CREATE INDEX IF NOT EXISTS idx_mod_events_recent ON mod_events (created_at DESC)`)
+  await step('mod_actions', `CREATE TABLE IF NOT EXISTS mod_actions (
+    id SERIAL PRIMARY KEY,
+    action TEXT NOT NULL,
+    payload JSONB,
+    status TEXT NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    started_at TIMESTAMPTZ,
+    requested_by_discord_id TEXT,
+    requested_by_username TEXT,
+    result TEXT,
+    requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    fulfilled_at TIMESTAMPTZ
+  )`)
+  await step('idx_mod_actions_status', `CREATE INDEX IF NOT EXISTS idx_mod_actions_status ON mod_actions (status, id)`)
+  await step('mod_settings', `CREATE TABLE IF NOT EXISTS mod_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`)
+  await step('mod_words', `CREATE TABLE IF NOT EXISTS mod_words (
+    id SERIAL PRIMARY KEY,
+    word TEXT NOT NULL UNIQUE,
+    tier TEXT NOT NULL DEFAULT 'slur',
+    source TEXT,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    added_by TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`)
+  await step('mod_allowlist', `CREATE TABLE IF NOT EXISTS mod_allowlist (
+    id SERIAL PRIMARY KEY,
+    phrase TEXT NOT NULL UNIQUE,
+    added_by TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`)
+  await step('mod_flags', `CREATE TABLE IF NOT EXISTS mod_flags (
+    id SERIAL PRIMARY KEY,
+    layer TEXT NOT NULL,
+    message_id TEXT,
+    channel_id TEXT,
+    channel_name TEXT,
+    author_id TEXT NOT NULL,
+    author_name TEXT,
+    content TEXT,
+    matched TEXT,
+    verdict JSONB,
+    model TEXT,
+    case_id INTEGER,
+    status TEXT NOT NULL DEFAULT 'open',
+    alert_message_id TEXT,
+    reviewed_by_id TEXT,
+    reviewed_by_name TEXT,
+    reviewed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`)
+  await step('idx_mod_flags_status', `CREATE INDEX IF NOT EXISTS idx_mod_flags_status ON mod_flags (status, created_at DESC)`)
+  await step('idx_mod_flags_person', `CREATE INDEX IF NOT EXISTS idx_mod_flags_person ON mod_flags (author_id, created_at DESC)`)
+  await step('ux_mod_flags_message', `CREATE UNIQUE INDEX IF NOT EXISTS ux_mod_flags_message ON mod_flags (layer, message_id) WHERE message_id IS NOT NULL`)
+  await step('mod_ai_usage', `CREATE TABLE IF NOT EXISTS mod_ai_usage (
+    day DATE NOT NULL,
+    model TEXT NOT NULL,
+    requests INTEGER NOT NULL DEFAULT 0,
+    tokens INTEGER NOT NULL DEFAULT 0,
+    errors INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (day, model)
+  )`)
+  await step('mod_claude_account', `CREATE TABLE IF NOT EXISTS mod_claude_account (
+    id INTEGER PRIMARY KEY DEFAULT 1,
+    balance_usd NUMERIC(12,6) NOT NULL DEFAULT 5,
+    spent_usd NUMERIC(12,6) NOT NULL DEFAULT 0,
+    balance_set_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    balance_set_by TEXT,
+    state TEXT NOT NULL DEFAULT 'unknown',
+    alert_sent BOOLEAN NOT NULL DEFAULT FALSE,
+    empty_since TIMESTAMPTZ,
+    last_error TEXT
+  )`)
+  await step('mod_claude_account_row', `INSERT INTO mod_claude_account (id) VALUES (1) ON CONFLICT (id) DO NOTHING`)
+  await step('mod_claude_account_day_key', `ALTER TABLE mod_claude_account ADD COLUMN IF NOT EXISTS day_key TEXT`)
+  await step('mod_claude_account_day_spent', `ALTER TABLE mod_claude_account ADD COLUMN IF NOT EXISTS day_spent_usd NUMERIC(12,6) NOT NULL DEFAULT 0`)
+  await step('mod_claude_account_day_alert', `ALTER TABLE mod_claude_account ADD COLUMN IF NOT EXISTS day_alert_sent BOOLEAN NOT NULL DEFAULT FALSE`)
+  await step('mod_claude_usage', `CREATE TABLE IF NOT EXISTS mod_claude_usage (
+    day DATE NOT NULL,
+    purpose TEXT NOT NULL,
+    model TEXT NOT NULL,
+    requests INTEGER NOT NULL DEFAULT 0,
+    input_tokens BIGINT NOT NULL DEFAULT 0,
+    output_tokens BIGINT NOT NULL DEFAULT 0,
+    cost_usd NUMERIC(12,6) NOT NULL DEFAULT 0,
+    errors INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (day, purpose, model)
+  )`)
+  await step('mod_identities', `CREATE TABLE IF NOT EXISTS mod_identities (
+    id SERIAL PRIMARY KEY,
+    discord_id TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    key TEXT NOT NULL,
+    source TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (discord_id, platform, key)
+  )`)
+  await step('idx_mod_identities_key', `CREATE INDEX IF NOT EXISTS idx_mod_identities_key ON mod_identities (platform, key)`)
+  await step('mod_evasion_alerts', `CREATE TABLE IF NOT EXISTS mod_evasion_alerts (
+    id SERIAL PRIMARY KEY,
+    new_id TEXT NOT NULL,
+    banned_id TEXT NOT NULL,
+    key TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',
+    alert_message_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (new_id, banned_id, key)
+  )`)
+  await step('mod_staff_freezes', `CREATE TABLE IF NOT EXISTS mod_staff_freezes (
+    id SERIAL PRIMARY KEY,
+    staff_id TEXT NOT NULL,
+    staff_name TEXT,
+    reason TEXT,
+    frozen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    unfrozen_by_id TEXT,
+    unfrozen_by_name TEXT,
+    unfrozen_at TIMESTAMPTZ
+  )`)
+  await step('idx_mod_freezes_active', `CREATE INDEX IF NOT EXISTS idx_mod_freezes_active ON mod_staff_freezes (staff_id) WHERE unfrozen_at IS NULL`)
+  await step('mod_ff_warnings', `CREATE TABLE IF NOT EXISTS mod_ff_warnings (
+    season_id INTEGER NOT NULL,
+    team_id INTEGER NOT NULL,
+    level INTEGER NOT NULL,
+    forfeits INTEGER,
+    case_id INTEGER,
+    notified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (season_id, team_id, level)
+  )`)
+  await step('invite_codes.is_moderation', `ALTER TABLE invite_codes ADD COLUMN IF NOT EXISTS is_moderation BOOLEAN NOT NULL DEFAULT FALSE`)
 
   const elapsedMs = Date.now() - started
   lastReport = { ran, failed, elapsedMs, finishedAt: new Date().toISOString() }

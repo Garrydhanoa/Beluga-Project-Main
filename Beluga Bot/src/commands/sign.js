@@ -7,6 +7,10 @@ const Logger = require('../utils/logger');
 const { LeagueDB, TransactionDB, isDatabaseAvailable } = require('../utils/database');
 const { ROLES, TEAM_ROLES, NP_ROLES, getTeamChoices, getDivisionChoices } = require('../constants/roles');
 const { attachTeamLogo } = require('../utils/teamRoles');
+const { divisionLabel } = require('../utils/divisionLabels');
+const { managerRoleEntries } = require('../utils/franchiseManagers');
+const { addSuspensionWarning } = require('../moderation/suspensions');
+const { salaryBelowMinimum, belowMinimumMessage } = require('../utils/salaryMinimum');
 
 // Command-specific channel IDs
 const TRANSACTION_REQUEST_CHANNEL_ID = '1178913188750823544';
@@ -84,6 +88,8 @@ class GoogleSheetsManager {
                         inReserve: row[10], // Column K
                         suspended: row[11], // Column L
                         playing: row[12], // Column M
+                        calculated: row[13], // Column N
+                        salary: row[14], // Column O
                         division: row[17] // Column R
                     };
                 }
@@ -198,8 +204,8 @@ function canUserSign(member) {
         return { allowed: true, type: 'salary_crew' };
     }
     
-    // Check if GM (team-specific)
-    for (const [teamName, gmRoleId] of Object.entries(ROLES.GM_ROLES)) {
+    // Check if GM or Assistant GM (team-specific)
+    for (const [teamName, gmRoleId] of managerRoleEntries()) {
         if (member.roles.cache.has(gmRoleId)) {
             return { allowed: true, type: 'gm', teamName: teamName };
         }
@@ -249,14 +255,18 @@ function validateEligibility(userData) {
         errors.push('Player is in Reserve (IR)');
     }
     
-    if (userData.suspended === 'YES') {
-        errors.push('Player is Suspended');
-    }
-    
+    // Suspended players can sign (rule 6.1.3: they serve it once they're on a team).
+    // The request carries a warning instead; see addSuspensionWarning below.
+
     if (userData.playing !== 'YES') {
         errors.push('Player is not marked as Playing');
     }
-    
+
+    const lowSalary = salaryBelowMinimum(userData.salary, userData.calculated);
+    if (lowSalary !== null) {
+        errors.push(belowMinimumMessage(lowSalary));
+    }
+
     return {
         valid: errors.length === 0,
         errors
@@ -310,7 +320,7 @@ async function sendRosterAlert(client, teamName, division, rosterSize, limit) {
             content: `⚠️ ${salaryCrewMention} **ROSTER ALERT**`,
             embeds: [new EmbedBuilder()
                 .setTitle('🚨 Roster Over Capacity')
-                .setDescription(`**${teamName}** in **${division}** division has **${rosterSize} players** (maximum is ${limit})!`)
+                .setDescription(`**${teamName}** in **${divisionLabel(division)}** division has **${rosterSize} players** (maximum is ${limit})!`)
                 .setColor(0xFF0000)
                 .setTimestamp()
                 .setFooter({ text: 'Please review and resolve this roster issue' })
@@ -349,7 +359,7 @@ module.exports = {
                 
                 for (const [division, captainRoleId] of Object.entries(ROLES.CAPTAINS)) {
                     if (interaction.member.roles.cache.has(captainRoleId)) {
-                        errorMessage = `❌ You are a ${division} Captain but do not have a team role in any division. You must have a team role to sign players.`;
+                        errorMessage = `❌ You are a ${divisionLabel(division)} Captain but do not have a team role in any division. You must have a team role to sign players.`;
                         break;
                     }
                 }
@@ -380,16 +390,16 @@ module.exports = {
                 // Verify the team exists in the selected division
                 if (!TEAM_ROLES[division] || !TEAM_ROLES[division][teamName]) {
                     await interaction.editReply({
-                        content: `❌ Your team (${teamName}) does not exist in the ${division} division.`,
+                        content: `❌ Your team (${teamName}) does not exist in the ${divisionLabel(division)} division.`,
                     });
                     return;
                 }
             } else if (permissionCheck.type === 'captain') {
                 // Captain can sign in divisions where they have captain role
                 if (!permissionCheck.divisions.includes(division)) {
-                    const divisionsText = permissionCheck.divisions.join(', ');
+                    const divisionsText = permissionCheck.divisions.map(divisionLabel).join(', ');
                     await interaction.editReply({
-                        content: `❌ You are a Captain for ${divisionsText} and can only sign players to those divisions. You cannot sign to ${division}.`,
+                        content: `❌ You are a Captain for ${divisionsText} and can only sign players to those divisions. You cannot sign to ${divisionLabel(division)}.`,
                     });
                     return;
                 }
@@ -400,7 +410,7 @@ module.exports = {
                 // Verify the team exists in the selected division
                 if (!TEAM_ROLES[division] || !TEAM_ROLES[division][teamName]) {
                     await interaction.editReply({
-                        content: `❌ Your team (${teamName}) does not exist in the ${division} division.`,
+                        content: `❌ Your team (${teamName}) does not exist in the ${divisionLabel(division)} division.`,
                     });
                     return;
                 }
@@ -420,7 +430,7 @@ module.exports = {
             // Check if player's division in sheet matches selected division
             if (userData.division && userData.division.toUpperCase() !== division) {
                 await interaction.editReply({
-                    content: `❌ Player is registered in ${userData.division} division but you're trying to sign them to ${division}.`,
+                    content: `❌ Player is registered in ${divisionLabel(userData.division)} division but you're trying to sign them to ${divisionLabel(division)}.`,
                 });
                 return;
             }
@@ -433,13 +443,13 @@ module.exports = {
                 // Roster is already over capacity - alert Salary Crew and block
                 await sendRosterAlert(interaction.client, teamName, division, currentRosterSize, rosterLimit);
                 await interaction.editReply({
-                    content: `❌ **Cannot sign player:** ${teamName} roster in ${division} is already over capacity (${currentRosterSize}/${rosterLimit} players). Salary Crew has been notified of this roster issue.`,
+                    content: `❌ **Cannot sign player:** ${teamName} roster in ${divisionLabel(division)} is already over capacity (${currentRosterSize}/${rosterLimit} players). Salary Crew has been notified of this roster issue.`,
                 });
                 return;
             } else if (currentRosterSize >= rosterLimit) {
                 // Roster is at capacity - signing would exceed limit
                 await interaction.editReply({
-                    content: `❌ **Cannot sign player:** ${teamName} roster in ${division} is at full capacity (${currentRosterSize}/${rosterLimit} players). Signing this player would exceed the maximum roster size.`,
+                    content: `❌ **Cannot sign player:** ${teamName} roster in ${divisionLabel(division)} is at full capacity (${currentRosterSize}/${rosterLimit} players). Signing this player would exceed the maximum roster size.`,
                 });
                 return;
             }
@@ -453,13 +463,16 @@ module.exports = {
                 .setDescription(`Congratulations ${player}! You have received an offer to join **${teamName}**!`)
                 .addFields(
                     { name: 'Team', value: teamName, inline: true },
-                    { name: 'Division', value: division, inline: true },
+                    { name: 'Division', value: divisionLabel(division), inline: true },
                     { name: 'Player', value: player.username, inline: true },
                     { name: 'Offered By', value: interaction.user.username, inline: true }
                 )
                 .setColor(0x00FF00)
                 .setTimestamp()
                 .setFooter({ text: '✅ to confirm or ❌ to reject the offer. You have 12 hours to respond.' });
+
+            // Rule 6.1.3: a suspended free agent can sign, but everyone approving should know.
+            await addSuspensionWarning(transactionEmbed, player.id);
 
             const transactionMessage = await transactionChannel.send({
                 content: `${player} - React ✅ to confirm or ❌ to reject the offer. **Salary Crew** must also approve with ✅.`,
@@ -683,7 +696,7 @@ async function processSigningCompletion(transaction, message, client) {
         
         const confirmationEmbed = new EmbedBuilder()
             .setTitle(`${transaction.teamName} sign ${transaction.playerUsername}`)
-            .setDescription(`${player} signed to ${transaction.division} league.`)
+            .setDescription(`${player} signed to ${divisionLabel(transaction.division)} league.`)
             .addFields(
                 { name: 'Offer Submitted By', value: transaction.offeredByUsername, inline: true },
                 { name: 'Approved By (Salary Crew)', value: transaction.approvedBy, inline: true }

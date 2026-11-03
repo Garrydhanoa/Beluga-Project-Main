@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import { divisionLabel } from '../../../../lib/divisionLabels'
 
 /**
  * E-sub (one-day sub) usage for a season, one row per team, grouped by division.
@@ -161,7 +162,7 @@ export default function EsubPanel({ seasons }) {
               {byDivision.map((group) => (
                 <div key={group.division} className="rounded-xl bg-black/20 border border-white/10 overflow-hidden">
                   <div className="px-3 py-2 bg-black/30 text-[10px] uppercase tracking-wider text-blue-300/70 font-bold">
-                    {group.division}
+                    {divisionLabel(group.division)}
                   </div>
                   <div className="divide-y divide-white/5">
                     {group.rows.map((t) => (

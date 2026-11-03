@@ -413,16 +413,21 @@ async function buildWelcomeCard({ displayName, username, avatarBuffer, memberNum
     if (logos.length) {
         const bandY = H - 58;
         const dia = 44;
-        const step = Math.min(dia + 12, (W - 400) / logos.length);
+        // Measure the label first so the logo rail never runs under it.
+        const railLabel = `${logos.length} FRANCHISES  ·  ACADEMY  ·  CONTENDERS  ·  PREMIER`;
+        ctx.font = `bold 13px ${FONT}`;
+        const labelW = ctx.measureText(railLabel).width;
+        const railW = W - 44 - 44 - labelW - 28 - dia;
+        const step = Math.max(dia * 0.55, Math.min(dia + 12, railW / Math.max(1, logos.length - 1)));
         let lx = 44 + dia / 2;
         for (const e of logos) { drawLogoDisc(ctx, e, lx, bandY, dia); lx += step; }
         ctx.textAlign = 'right';
         ctx.fillStyle = 'rgba(255,255,255,0.55)'; ctx.font = `bold 13px ${FONT}`;
-        ctx.fillText(`${logos.length} FRANCHISES  ·  AA  ·  AAA  ·  MAJORS`, W - 44, bandY + 5);
+        ctx.fillText(railLabel, W - 44, bandY + 5);
     } else {
         ctx.textAlign = 'center';
         ctx.fillStyle = 'rgba(255,255,255,0.55)'; ctx.font = `bold 13px ${FONT}`;
-        ctx.fillText('AA  ·  AAA  ·  MAJORS', W / 2, H - 30);
+        ctx.fillText('ACADEMY  ·  CONTENDERS  ·  PREMIER', W / 2, H - 30);
     }
 
     return canvas.toBuffer('image/png');

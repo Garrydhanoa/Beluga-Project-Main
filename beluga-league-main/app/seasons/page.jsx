@@ -8,8 +8,9 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import TeamLogo from '../components/TeamLogo'
 import { useSeason } from '../components/SeasonContext'
+import { DIVISION_LABELS } from '../../lib/divisionLabels'
 
-const DIV_LABEL = { Majors: 'Majors', AAA: 'AAA', AA: 'AA' }
+const DIV_LABEL = DIVISION_LABELS
 const DIV_ACCENT = {
   Majors: 'from-yellow-400/20 to-amber-600/5 border-yellow-400/30 text-yellow-200',
   AAA: 'from-cyan-400/20 to-blue-600/5 border-cyan-400/30 text-cyan-200',

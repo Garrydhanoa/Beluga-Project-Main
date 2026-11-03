@@ -12,6 +12,7 @@ require('../utils/fontManager');
 const { createCanvas } = require('canvas');
 const { pool, isDatabaseAvailable } = require('../utils/database');
 const { config } = require('../../src/config/config');
+const { divisionLabel } = require('../utils/divisionLabels');
 
 const FONT = (config && config.images && config.images.fontFamily) ? config.images.fontFamily : 'sans-serif';
 const MIN_GAMES = 25; // matches the website leaderboards gate
@@ -165,7 +166,7 @@ async function buildLeaderboardImage(leaders, meta) {
     ctx.fillStyle = '#7dd3fc'; ctx.font = `bold 18px ${FONT}`;
     ctx.fillText('🐳 BELUGA LEAGUE  ·  LEADERBOARD', 40, 50);
     ctx.fillStyle = '#ffffff'; ctx.font = `bold 40px ${FONT}`;
-    ctx.fillText(meta.title || `${meta.division} Division`, 40, 96);
+    ctx.fillText(meta.title || `${divisionLabel(meta.division)} Division`, 40, 96);
     if (meta.seasonNumber != null) {
         ctx.textAlign = 'right';
         ctx.fillStyle = '#9fb6d8'; ctx.font = `bold 22px ${FONT}`;

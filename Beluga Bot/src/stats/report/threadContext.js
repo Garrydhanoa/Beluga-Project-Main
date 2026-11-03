@@ -215,10 +215,11 @@ async function getUserAuthorizedTeam(member, seasonId, homeTeam, awayTeam, divis
     const isAuthorizedFor = async (team, siblingIds) => {
         const roles = await getTeamDiscordRoles(team.id);
         if (hasRole(roles.gmRoleId)) return true;                                  // franchise/team GM role
+        if (hasRole(roles.agmRoleId)) return true;                                 // franchise Assistant GM role (same powers)
         if (hasRole(captainRoleId) && hasRole(roles.teamRoleId)) return true;      // division captain + on the team
         if (hasRole(captainRoleId) && hasRole(roles.npRoleId)) return true;        // division captain + franchise NP role
         const dbRole = rosterByTeam.get(team.id);
-        if (dbRole === 'captain' || dbRole === 'gm') return true;                  // roster role (DB)
+        if (dbRole === 'captain' || dbRole === 'gm' || dbRole === 'agm') return true; // roster role (DB)
         if (hasRole(captainRoleId) && rosterByTeam.has(team.id)) return true;      // division captain + on this roster (DB)
         // Cross-division captain: holds THIS division's captain role and belongs
         // to this team's franchise in some other division.

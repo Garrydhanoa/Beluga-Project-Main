@@ -5,6 +5,7 @@ import { resolveSeason } from '../../../../../lib/leagueStore'
 import { getMemberMap } from '../../../../../lib/discordMembers'
 import { getSalaryMap } from '../../../../../lib/salarySheet'
 import { getTeamStatsBundle } from '../../../../../lib/belugaStats'
+import { getSuspensionBadges } from '../../../../../lib/modStore'
 
 export const dynamic = 'force-dynamic'
 
@@ -69,6 +70,7 @@ export async function GET(request, { params }) {
       `, [season.id, t.id]),
       getTeamStatsBundle(season.id, t.id),
     ])
+    const suspensions = await getSuspensionBadges(rosterRes.rows.map((r) => r.discord_id))
 
     // Confirmed series results by week (fills schedule scores + the results list).
     const seriesByWeek = new Map()
@@ -110,6 +112,7 @@ export async function GET(request, { params }) {
           avatarUrl: m?.avatarUrl || null,
           role: r.role,
           salary: sheet?.salary ?? null,
+          suspension: suspensions.get(String(r.discord_id)) || null,
         }
       }),
       schedule: schedRes.rows.map((r) => {

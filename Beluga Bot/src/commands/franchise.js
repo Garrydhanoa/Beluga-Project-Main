@@ -2,6 +2,7 @@ const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const { pool, isDatabaseAvailable, LeagueDB } = require('../utils/database');
 const { siteFooter } = require('../utils/siteFooter');
 const Logger = require('../utils/logger');
+const { divisionLabel } = require('../utils/divisionLabels');
 
 /**
  * /franchise — pick a franchise (autocompleted from the database) and get its
@@ -72,7 +73,7 @@ module.exports = {
             embed.addFields({
                 name: season ? `Divisions (S${season.season_number ?? ''})` : 'Divisions',
                 value: teams.rows.length
-                    ? teams.rows.map((t) => `**${t.division}** — ${t.name}`).join('\n')
+                    ? teams.rows.map((t) => `**${divisionLabel(t.division)}** — ${t.name}`).join('\n')
                     : '_Not fielding any teams this season._',
                 inline: false,
             });
@@ -93,13 +94,16 @@ module.exports = {
                             [t.id, season.id]
                         );
                         const n = Number(used.rows[0]?.n || 0);
-                        lines.push(`**${t.division}**: ${n}/3 used${n >= 3 ? ' ⚠️' : ''}`);
+                        lines.push(`**${divisionLabel(t.division)}**: ${n}/3 used${n >= 3 ? ' ⚠️' : ''}`);
                     }
                     if (lines.length) embed.addFields({ name: 'One-day subs (this season)', value: lines.join('\n'), inline: false });
                 } catch { /* ODS section optional */ }
             }
             if (franchise.gm_role_id) {
                 embed.addFields({ name: 'GM', value: `<@&${franchise.gm_role_id}>`, inline: true });
+            }
+            if (franchise.agm_role_id) {
+                embed.addFields({ name: 'Assistant GM', value: `<@&${franchise.agm_role_id}>`, inline: true });
             }
             if (franchise.discord_invite_url) {
                 embed.addFields({ name: 'Discord', value: franchise.discord_invite_url, inline: true });

@@ -9,6 +9,7 @@ const Logger = require('../utils/logger');
 
 // Friendly labels shown to the user (kept in sync with aiChat PROVIDERS).
 const PROVIDER_LABELS = {
+    claude: 'Claude · Haiku 5.5 (claude-haiku-5-5)',
     google: 'Google · Gemma 4 (gemma-4-31b-it, Flash-Lite fallback)',
     groq: 'Groq · GPT-OSS 120B (openai/gpt-oss-120b)',
     mistral: 'Mistral · Medium 3.5 (mistral-medium-latest)',
@@ -24,6 +25,7 @@ module.exports = {
                 .setDescription('Provider to switch to. Leave empty to see the current one.')
                 .setRequired(false)
                 .addChoices(
+                    { name: 'Claude (Haiku 5.5)', value: 'claude' },
                     { name: 'Google (Gemma 4)', value: 'google' },
                     { name: 'Groq (GPT-OSS 120B)', value: 'groq' },
                     { name: 'Mistral (Medium 3.5)', value: 'mistral' },

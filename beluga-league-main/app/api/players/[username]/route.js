@@ -6,6 +6,7 @@ import { getMemberMap } from '../../../../lib/discordMembers'
 import { getPlayerStatsBundle } from '../../../../lib/belugaStats'
 import { getActiveSeason } from '../../../../lib/leagueStore'
 import { pickPrimaryRoster, primaryDivision } from '../../../../lib/primaryDivision'
+import { getSuspensionBadges } from '../../../../lib/modStore'
 
 export const dynamic = 'force-dynamic'
 
@@ -186,6 +187,7 @@ export async function GET(_request, { params }) {
         rosterRows: activeRosterRows.length ? activeRosterRows : (lastStint ? [lastStint] : []),
       }),
       eligible: sheet?.eligible ?? null,
+      suspension: (await getSuspensionBadges([discordId])).get(String(discordId)) || null,
       currentTeam: currentRoster?.team_name || null,
       currentTeamId: currentRoster?.team_id || null,
       isFreeAgent: !currentRoster,

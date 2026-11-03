@@ -5,6 +5,8 @@ const Logger = require('../utils/logger');
 const { LeagueDB, TransactionDB, isDatabaseAvailable } = require('../utils/database');
 const { ROLES, TEAM_ROLES, TEAM_NAMES, getTeamChoices } = require('../constants/roles');
 const { teamAutocomplete } = require('../utils/teamRoles');
+const { divisionLabel } = require('../utils/divisionLabels');
+const { managerRoleEntries, managerRoleIds, managesTeam } = require('../utils/franchiseManagers');
 
 // Command-specific constants
 const TRANSACTION_REQUEST_CHANNEL_ID = '1178913188750823544';
@@ -48,7 +50,8 @@ async function getRosterLimit(division, teamName) {
  * Check if user is GM
  */
 function isGM(member) {
-    return Object.values(ROLES.GM_ROLES).some(roleId => member.roles.cache.has(roleId));
+    // GM or Assistant GM (same powers)
+    return managerRoleIds().some(roleId => member.roles.cache.has(roleId));
 }
 
 /**
@@ -63,7 +66,7 @@ function isCaptain(member, division) {
  * Get user's team
  */
 function getUserTeam(member) {
-    for (const [teamName, roleId] of Object.entries(ROLES.GM_ROLES)) {
+    for (const [teamName, roleId] of managerRoleEntries()) {
         if (member.roles.cache.has(roleId)) {
             return teamName;
         }
@@ -314,7 +317,7 @@ module.exports = {
                     
                     if (newCount > limit) {
                         return await interaction.editReply({
-                            content: `❌ This trade would exceed the roster limit for ${team}'s ${division} division (${newCount}/${limit}).`,
+                            content: `❌ This trade would exceed the roster limit for ${team}'s ${divisionLabel(division)} division (${newCount}/${limit}).`,
                         });
                     }
                 }
@@ -342,8 +345,8 @@ module.exports = {
             }
 
             // Create trade proposal embed
-            const offeredPlayersText = offeredPlayerData.map(p => `<@${p.id}> (${p.division})`).join('\n');
-            const requestedPlayersText = requestedPlayerData.map(p => `<@${p.id}> (${p.division})`).join('\n');
+            const offeredPlayersText = offeredPlayerData.map(p => `<@${p.id}> (${divisionLabel(p.division)})`).join('\n');
+            const requestedPlayersText = requestedPlayerData.map(p => `<@${p.id}> (${divisionLabel(p.division)})`).join('\n');
 
             const tradeEmbed = new EmbedBuilder()
                 .setTitle(`🔄 Trade Proposal`)
@@ -483,8 +486,8 @@ module.exports = {
             // Send confirmation
             const transactionChannel = await client.channels.fetch(TRANSACTION_CONFIRMATION_CHANNEL_ID);
 
-            const offeredPlayersText = trade.offeredPlayers.map(p => `<@${p.id}> (${p.division})`).join('\n');
-            const requestedPlayersText = trade.requestedPlayers.map(p => `<@${p.id}> (${p.division})`).join('\n');
+            const offeredPlayersText = trade.offeredPlayers.map(p => `<@${p.id}> (${divisionLabel(p.division)})`).join('\n');
+            const requestedPlayersText = trade.requestedPlayers.map(p => `<@${p.id}> (${divisionLabel(p.division)})`).join('\n');
             
             // Build player pings for content (all traded players)
             const allPlayerPings = [...trade.offeredPlayers, ...trade.requestedPlayers].map(p => `<@${p.id}>`).join(' ');
@@ -579,8 +582,9 @@ module.exports = {
         if (!trade) return;
 
         const member = await reaction.message.guild.members.fetch(user.id);
-        const isInitiatorGM = user.id === trade.initiatorGMId;
-        const isReceivingGM = user.id === trade.receivingGMId;
+        // Either team's GM — or its Assistant GM (same powers) — can approve for it.
+        const isInitiatorGM = user.id === trade.initiatorGMId || managesTeam(member, trade.initiatorTeam);
+        const isReceivingGM = user.id === trade.receivingGMId || managesTeam(member, trade.receivingTeam);
         const isSalaryCrew = member.roles.cache.has(ROLES.SALARY_CREW);
 
         if (reaction.emoji.name === '✅') {

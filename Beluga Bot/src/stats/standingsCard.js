@@ -15,6 +15,7 @@ require('../utils/fontManager');
 const { createCanvas, loadImage } = require('canvas');
 const { getTeamLogoBuffer, getTeamColorInt } = require('../utils/teamRoles');
 const { config } = require('../../src/config/config');
+const { divisionLabelUpper } = require('../utils/divisionLabels');
 
 const FONT = (config && config.images && config.images.fontFamily) ? config.images.fontFamily : 'sans-serif';
 
@@ -100,7 +101,7 @@ async function buildStandingsImage(rows, meta) {
     ctx.fillText('🐳 BELUGA LEAGUE', W / 2, 50);
     ctx.fillStyle = '#FFFFFF';
     ctx.font = `bold 44px ${FONT}`;
-    ctx.fillText(`${String(meta.division).toUpperCase()} STANDINGS`, W / 2, 98);
+    ctx.fillText(`${divisionLabelUpper(meta.division)} STANDINGS`, W / 2, 98);
     if (meta.seasonNumber != null) {
         ctx.fillStyle = '#8aa8cc';
         ctx.font = `20px ${FONT}`;

@@ -36,6 +36,12 @@ export function routeAfterAuth(callbackPath, errorCode) {
   const path = callbackPath || '/'
   const q = errorCode ? `error=${encodeURIComponent(errorCode)}` : ''
   if (path.startsWith('/admin')) return q ? `/admin?${q}` : '/admin'
+  // A banned person's appeal page: keep them on it rather than the forms list.
+  if (path.startsWith('/applications/appeal')) return q ? `/applications/appeal?${q}` : '/applications/appeal'
   if (path.startsWith('/applications')) return q ? `/applications?${q}` : '/applications'
+  // GM / AGM rulebook tests (link-only pages) — send them back to their test.
+  for (const p of ['/gm-test', '/agm-test']) {
+    if (path.startsWith(p)) return q ? `${p}?${q}` : p
+  }
   return q ? `/?authError=${encodeURIComponent(errorCode)}` : path
 }

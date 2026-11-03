@@ -58,12 +58,13 @@ function num(v) {
   return Number.isNaN(f) ? null : f
 }
 
-// League salary → division thresholds (per the bot's /changed-sals grouping).
+// League salary → division code, S11 bands (mirrors SalSheet column R and the
+// bot's /changed-sals grouping): Premier 17+, Contenders 14.75–16.75, Academy ≤14.5.
 export function divisionForSalary(v) {
   const n = parseFloat(v)
   if (Number.isNaN(n)) return null
-  if (n >= 16) return 'Majors'
-  if (n >= 13) return 'AAA'
+  if (n >= 17) return 'Majors'
+  if (n >= 14.75) return 'AAA'
   return 'AA'
 }
 

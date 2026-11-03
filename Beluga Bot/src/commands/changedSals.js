@@ -44,11 +44,11 @@ module.exports = {
                 .setFooter({ text: `Requested by ${interaction.user.username}`, iconURL: interaction.user.displayAvatarURL() });
 
             // Group players by division
-            // AA: 0-12.75, AAA: 13-15.5, Majors: 16+
+            // S11 bands (same as SalSheet column R): Premier 17+, Contenders 14.75-16.75, Academy up to 14.5
             const divisionGroups = {
-                majors: [],    // 16+
-                aaa: [],       // 13-15.5
-                aa: [],        // 0-12.75
+                majors: [],    // 17+
+                aaa: [],       // 14.75-16.75
+                aa: [],        // up to 14.5
             };
 
             for (const player of manualSalaries) {
@@ -64,9 +64,9 @@ module.exports = {
                 const playerInfo = `${discordMention} - **$${salary}**\n*Adjusted by: ${adjustedBy} on ${adjustedAt}*`;
 
                 // Determine division based on salary
-                if (salary >= 16) {
+                if (salary >= 17) {
                     divisionGroups.majors.push(playerInfo);
-                } else if (salary >= 13 && salary <= 15.5) {
+                } else if (salary >= 14.75) {
                     divisionGroups.aaa.push(playerInfo);
                 } else {
                     divisionGroups.aa.push(playerInfo);
@@ -80,7 +80,7 @@ module.exports = {
                 chunks.forEach((chunk, index) => {
                     const suffix = chunks.length > 1 ? ` (Part ${index + 1})` : '';
                     embed.addFields({
-                        name: `🏆 Majors Division (16+)${suffix}`,
+                        name: `🏆 Premier Division (17+)${suffix}`,
                         value: chunk.join('\n\n'),
                         inline: false
                     });
@@ -92,7 +92,7 @@ module.exports = {
                 chunks.forEach((chunk, index) => {
                     const suffix = chunks.length > 1 ? ` (Part ${index + 1})` : '';
                     embed.addFields({
-                        name: `⭐ AAA Division (13-15.5)${suffix}`,
+                        name: `⭐ Contenders Division (14.75-16.75)${suffix}`,
                         value: chunk.join('\n\n'),
                         inline: false
                     });
@@ -104,7 +104,7 @@ module.exports = {
                 chunks.forEach((chunk, index) => {
                     const suffix = chunks.length > 1 ? ` (Part ${index + 1})` : '';
                     embed.addFields({
-                        name: `📊 AA Division (0-12.75)${suffix}`,
+                        name: `📊 Academy Division (up to 14.5)${suffix}`,
                         value: chunk.join('\n\n'),
                         inline: false
                     });
@@ -115,9 +115,9 @@ module.exports = {
             embed.addFields({
                 name: '📈 Summary',
                 value: `**Total Locked:** ${manualSalaries.length}\n` +
-                       `**Majors (16+):** ${divisionGroups.majors.length}\n` +
-                       `**AAA (13-15.5):** ${divisionGroups.aaa.length}\n` +
-                       `**AA (0-12.75):** ${divisionGroups.aa.length}`,
+                       `**Premier (17+):** ${divisionGroups.majors.length}\n` +
+                       `**Contenders (14.75-16.75):** ${divisionGroups.aaa.length}\n` +
+                       `**Academy (up to 14.5):** ${divisionGroups.aa.length}`,
                 inline: false
             });
 

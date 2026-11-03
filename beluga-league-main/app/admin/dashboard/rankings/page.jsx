@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react'
 import Avatar from '../../../components/Avatar'
+import { divisionLabel } from '../../../../lib/divisionLabels'
 
 const DIVISIONS = ['Majors', 'AAA', 'AA']
 // 'same' is what the auto formula writes and what the public TrendChip renders —
@@ -207,7 +208,7 @@ export default function RankingsPage() {
           {DIVISIONS.map((d) => (
             <button key={d} onClick={() => setDivision(d)}
               className={`px-3 py-1.5 text-xs font-bold rounded border ${division === d ? 'bg-blue-500/20 border-blue-400/50 text-blue-100' : 'bg-white/5 border-white/10 text-white/60'}`}>
-              {d}
+              {divisionLabel(d)}
             </button>
           ))}
         </div>
@@ -247,7 +248,7 @@ export default function RankingsPage() {
         <>
           <div className="rounded-2xl bg-white/[0.02] border border-white/10 overflow-hidden mb-4">
             {list.length === 0 ? (
-              <div className="p-8 text-center text-sm text-white/40">No {entityType === 'team' ? 'teams' : 'players'} ranked for {division} yet. Add some below.</div>
+              <div className="p-8 text-center text-sm text-white/40">No {entityType === 'team' ? 'teams' : 'players'} ranked for {divisionLabel(division)} yet. Add some below.</div>
             ) : (
               <ul className="divide-y divide-white/5">
                 {list.map((row, i) => (

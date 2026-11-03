@@ -23,7 +23,7 @@ const IMAGE_EXT_REGEX = /\.(png|jpe?g|gif|webp)(\?|#|$)/i;
 const LINK_RESOLVE_TIMEOUT_MS = 2500; // keep replies snappy
 
 // Hosts whose share links need an og:image lookup to find the real media.
-const RESOLVABLE_HOSTS = ['tenor.com', 'giphy.com', 'imgur.com'];
+const RESOLVABLE_HOSTS = ['tenor.com', 'giphy.com', 'klipy.com', 'imgur.com'];
 
 function looksLikeImageUrl(url) {
     return IMAGE_EXT_REGEX.test(url);
@@ -75,6 +75,36 @@ async function resolveLinkToImage(pageUrl) {
     }
 }
 
+const VIDEO_META = [
+    /<meta[^>]+property=["']og:video:secure_url["'][^>]+content=["']([^"']+)["']/i,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:video:secure_url["']/i,
+    /<meta[^>]+property=["']og:video(?::url)?["'][^>]+content=["']([^"']+)["']/i,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:video(?::url)?["']/i,
+];
+
+/**
+ * Like resolveLinkToImage, but prefers the moving version of a share link, which is what
+ * the frame reader needs. Falls back to the still when the page has no video.
+ */
+async function resolveLinkToMedia(pageUrl) {
+    try {
+        const res = await safeFetch(pageUrl, {
+            signal: AbortSignal.timeout(LINK_RESOLVE_TIMEOUT_MS * 2),
+            headers: { 'User-Agent': 'Mozilla/5.0 (compatible; BelugaBot/1.0)' },
+        });
+        if (res.ok) {
+            const html = await res.text();
+            for (const re of VIDEO_META) {
+                const m = html.match(re);
+                if (m && m[1]) return m[1].replace(/&amp;/g, '&');
+            }
+        }
+    } catch (err) {
+        Logger.warning(`Could not read media link ${pageUrl}: ${err.message}`);
+    }
+    return resolveLinkToImage(pageUrl);
+}
+
 /**
  * Collect still-image URLs from a message. Resolves share links as needed.
  * Returns a de-duplicated array (best/most-direct sources first).
@@ -120,5 +150,7 @@ async function collectImageUrls(message) {
 module.exports = {
     collectImageUrls,
     resolveLinkToImage,
+    resolveLinkToMedia,
+    isResolvableLink,
     looksLikeImageUrl,
 };

@@ -7,6 +7,8 @@ const Logger = require('../utils/logger');
 const { LeagueDB, TransactionDB, isDatabaseAvailable } = require('../utils/database');
 const { ROLES, TEAM_ROLES, NP_ROLES } = require('../constants/roles');
 const { attachTeamLogo } = require('../utils/teamRoles');
+const { divisionLabel } = require('../utils/divisionLabels');
+const { managerRoleEntries } = require('../utils/franchiseManagers');
 
 // Command-specific constants
 const TRANSACTION_REQUEST_CHANNEL_ID = '1178913188750823544';
@@ -230,8 +232,8 @@ function canUserManageIR(member, targetMember) {
         return { allowed: false };
     }
     
-    // Check if GM (team-specific, any division)
-    for (const [teamName, gmRoleId] of Object.entries(ROLES.GM_ROLES)) {
+    // Check if GM or Assistant GM (team-specific, any division)
+    for (const [teamName, gmRoleId] of managerRoleEntries()) {
         if (member.roles.cache.has(gmRoleId)) {
             // GM can manage IR for their team in any division
             if (playerInfo.teamName === teamName) {
@@ -338,9 +340,9 @@ module.exports = {
                 let errorMessage = '❌ You do not have permission to manage IR for this player.';
                 
                 // Provide specific error messages
-                for (const [teamName, gmRoleId] of Object.entries(ROLES.GM_ROLES)) {
+                for (const [teamName, gmRoleId] of managerRoleEntries()) {
                     if (interaction.member.roles.cache.has(gmRoleId) && teamName !== playerInfo.teamName) {
-                        errorMessage = `❌ You are the GM of ${teamName} and can only manage IR for players on your own team. ${player.username} is on ${playerInfo.teamName}.`;
+                        errorMessage = `❌ You are the GM/AGM of ${teamName} and can only manage IR for players on your own team. ${player.username} is on ${playerInfo.teamName}.`;
                         break;
                     }
                 }
@@ -356,8 +358,8 @@ module.exports = {
                 if (userCaptainDivisions.length > 0) {
                     const captainTeamName = getUserTeamNameAllDivisions(interaction.member);
                     if (!userCaptainDivisions.includes(playerInfo.division)) {
-                        const divisionsText = userCaptainDivisions.join(', ');
-                        errorMessage = `❌ You are a Captain for ${divisionsText} and can only manage IR in those divisions. ${player.username} is in ${playerInfo.division}.`;
+                        const divisionsText = userCaptainDivisions.map(divisionLabel).join(', ');
+                        errorMessage = `❌ You are a Captain for ${divisionsText} and can only manage IR in those divisions. ${player.username} is in ${divisionLabel(playerInfo.division)}.`;
                     } else if (!captainTeamName) {
                         errorMessage = `❌ You do not have a team role in any division.`;
                     } else if (captainTeamName !== playerInfo.teamName) {
@@ -415,7 +417,7 @@ module.exports = {
                     .addFields(
                         { name: 'Player', value: player.username, inline: true },
                         { name: 'Team', value: playerInfo.teamName, inline: true },
-                        { name: 'Division', value: playerInfo.division, inline: true },
+                        { name: 'Division', value: divisionLabel(playerInfo.division), inline: true },
                         { name: 'Requested By', value: interaction.user.username, inline: true },
                         { name: 'IR Expiry Date', value: formattedExpiryDate, inline: false }
                     )
@@ -474,7 +476,7 @@ module.exports = {
                 
                 if (currentRosterSize >= rosterLimit) {
                     await interaction.editReply({
-                        content: `❌ **Cannot remove from IR:** ${playerInfo.teamName} roster in ${playerInfo.division} is at full capacity (${currentRosterSize}/${rosterLimit} players). The roster must have space before removing a player from IR.`,
+                        content: `❌ **Cannot remove from IR:** ${playerInfo.teamName} roster in ${divisionLabel(playerInfo.division)} is at full capacity (${currentRosterSize}/${rosterLimit} players). The roster must have space before removing a player from IR.`,
                     });
                     return;
                 }
@@ -483,7 +485,7 @@ module.exports = {
                 const teamRoleId = TEAM_ROLES[playerInfo.division][playerInfo.teamName];
                 if (!teamRoleId) {
                     await interaction.editReply({
-                        content: `❌ Could not find team role for ${playerInfo.teamName} in ${playerInfo.division}.`,
+                        content: `❌ Could not find team role for ${playerInfo.teamName} in ${divisionLabel(playerInfo.division)}.`,
                     });
                     return;
                 }
@@ -497,7 +499,7 @@ module.exports = {
                     .addFields(
                         { name: 'Player', value: player.username, inline: true },
                         { name: 'Team', value: playerInfo.teamName, inline: true },
-                        { name: 'Division', value: playerInfo.division, inline: true },
+                        { name: 'Division', value: divisionLabel(playerInfo.division), inline: true },
                         { name: 'Requested By', value: interaction.user.username, inline: true },
                         { name: 'Current Roster Size', value: `${currentRosterSize}/${rosterLimit}`, inline: false }
                     )
@@ -607,7 +609,7 @@ module.exports = {
                     .setDescription(`<@${irTransaction.playerId}> has been placed on **In Reserve (IR)** status.`)
                     .addFields(
                         { name: 'Team', value: irTransaction.teamName, inline: true },
-                        { name: 'Division', value: irTransaction.division, inline: true },
+                        { name: 'Division', value: divisionLabel(irTransaction.division), inline: true },
                         { name: 'Placed By', value: irTransaction.requestedByUsername, inline: true },
                         { name: 'IR Expiry Date', value: formattedExpiryDate, inline: false }
                     )
@@ -673,7 +675,7 @@ module.exports = {
                     .setDescription(`<@${irTransaction.playerId}> has been removed from **In Reserve (IR)** status and is now active.`)
                     .addFields(
                         { name: 'Team', value: irTransaction.teamName, inline: true },
-                        { name: 'Division', value: irTransaction.division, inline: true },
+                        { name: 'Division', value: divisionLabel(irTransaction.division), inline: true },
                         { name: 'Removed By', value: irTransaction.requestedByUsername, inline: true }
                     )
                     .setColor(0x00FF00)

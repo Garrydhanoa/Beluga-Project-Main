@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import TeamLogo from '../components/TeamLogo'
 import SeasonPicker from '../components/SeasonPicker'
 import { useSeason, seasonQuerySuffix } from '../components/SeasonContext'
+import { DIVISION_LABELS } from '../../lib/divisionLabels'
 
 // ====================================================================
 // Config — divisions only. ALL standings data is live from /api/standings
@@ -13,9 +14,9 @@ import { useSeason, seasonQuerySuffix } from '../components/SeasonContext'
 // ====================================================================
 
 const DIVISIONS = [
-  { key: 'majors', label: 'Majors' },
-  { key: 'aaa', label: 'AAA' },
-  { key: 'aa', label: 'AA' },
+  { key: 'majors', label: DIVISION_LABELS.Majors },
+  { key: 'aaa', label: DIVISION_LABELS.AAA },
+  { key: 'aa', label: DIVISION_LABELS.AA },
 ]
 
 const PLAYOFF_CUTOFF = 8 // top N qualify for playoffs

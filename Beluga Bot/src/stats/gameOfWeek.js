@@ -20,12 +20,14 @@ const { getConfig } = require('../utils/appConfig');
 const { buildResultCard } = require('./report/resultCard');
 const { logEdge } = require('./report/logChannel');
 const Logger = require('../utils/logger');
+const { divisionLabel } = require('../utils/divisionLabels');
 
 function db() {
     return typeof isDatabaseAvailable === 'function' ? isDatabaseAvailable() : isDatabaseAvailable;
 }
 
-async function pickGameOfWeek(seasonId, division, week) {
+// `asOf` limits a pick to series confirmed by then, so the Insider can replay a past week.
+async function pickGameOfWeek(seasonId, division, week, asOf = null) {
     const r = await pool.query(
         `SELECT s.id, s.home_score, s.away_score, s.is_forfeit,
             ht.name AS home, at.name AS away,
@@ -36,8 +38,9 @@ async function pickGameOfWeek(seasonId, division, week) {
          LEFT JOIN teams ht ON ht.id = s.home_team_id
          LEFT JOIN teams at ON at.id = s.away_team_id
          WHERE s.season_id=$1 AND s.division=$2 AND s.week=$3 AND s.status='confirmed' AND s.is_forfeit=FALSE
+           AND ($4::timestamptz IS NULL OR s.confirmed_at <= $4)
          GROUP BY s.id, ht.name, at.name`,
-        [seasonId, division, week]
+        [seasonId, division, week, asOf]
     );
     if (!r.rows.length) return null;
     let best = null;
@@ -50,7 +53,7 @@ async function pickGameOfWeek(seasonId, division, week) {
     return best;
 }
 
-async function pickPlayerOfWeek(seasonId, division, week) {
+async function pickPlayerOfWeek(seasonId, division, week, asOf = null) {
     const r = await pool.query(
         `SELECT gp.discord_id, t.name AS team,
             COUNT(*)::int AS games,
@@ -62,8 +65,9 @@ async function pickPlayerOfWeek(seasonId, division, week) {
          JOIN stats_series s ON s.id = gp.series_id
          LEFT JOIN teams t ON t.id = gp.team_id
          WHERE s.season_id=$1 AND s.division=$2 AND s.week=$3 AND s.status='confirmed' AND gp.discord_id IS NOT NULL
+           AND ($4::timestamptz IS NULL OR s.confirmed_at <= $4)
          GROUP BY gp.discord_id, t.name`,
-        [seasonId, division, week]
+        [seasonId, division, week, asOf]
     );
     if (!r.rows.length) return null;
     let best = null;
@@ -85,7 +89,7 @@ async function postWeekHighlights(client, seasonId, division, week) {
         Logger.warning('GotW skipped: stats_channel_id not set in app_config (set it in the website admin Settings).');
         // Surface it where staff actually look (log channel + Admin → Logs).
         await logEdge(client, {
-            summary: `Week ${week} ${division} highlights SKIPPED — no stats channel configured. Set it in website Admin → Site Content.`,
+            summary: `Week ${week} ${divisionLabel(division)} highlights SKIPPED — no stats channel configured. Set it in website Admin → Site Content.`,
             division, pingSalaryCrew: false, pingInThread: false,
         });
         return;
@@ -95,7 +99,7 @@ async function postWeekHighlights(client, seasonId, division, week) {
 
     const gotw = await pickGameOfWeek(seasonId, division, week);
     if (!gotw) {
-        await channel.send(`📭 **${division} — Week ${week}:** no games reported.`).catch(() => {});
+        await channel.send(`📭 **${divisionLabel(division)} — Week ${week}:** no games reported.`).catch(() => {});
         return;
     }
     const potw = await pickPlayerOfWeek(seasonId, division, week);
@@ -110,7 +114,7 @@ async function postWeekHighlights(client, seasonId, division, week) {
     });
     const embed = new EmbedBuilder()
         .setColor(0xA78BFA)
-        .setTitle(`🌊 ${division} — Week ${week} Highlights`)
+        .setTitle(`🌊 ${divisionLabel(division)} — Week ${week} Highlights`)
         .addFields({ name: '🎮 Game of the Week', value: `**${gotw.home} ${gotw.home_score}–${gotw.away_score} ${gotw.away}** (${gotw.hg}-${gotw.ag} goals${gotw.ot ? `, ${gotw.ot} OT` : ''})` })
         .setTimestamp();
     if (potw) {
@@ -154,7 +158,7 @@ async function checkClosedWeeks(client) {
                 } catch (err) {
                     Logger.error(`GotW failed for ${division} W${w.week_number}`, err);
                     // eslint-disable-next-line no-await-in-loop
-                    await logEdge(client, { summary: `Game-of-the-Week failed for ${division} Week ${w.week_number}.`, error: err, division, pingInThread: false });
+                    await logEdge(client, { summary: `Game-of-the-Week failed for ${divisionLabel(division)} Week ${w.week_number}.`, error: err, division, pingInThread: false });
                 }
                 try {
                     const { refreshPowerRankings } = require('./powerRankings');

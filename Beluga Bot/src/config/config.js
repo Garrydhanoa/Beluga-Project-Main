@@ -148,9 +148,9 @@ const config = {
 
   // Divisions configuration
   divisions: [
-    { name: 'AA', value: 'aa', displayName: 'AA Division', teamCount: 14 },
-    { name: 'AAA', value: 'aaa', displayName: 'AAA Division', teamCount: 14 },
-    { name: 'Majors', value: 'majors', displayName: 'Majors Division', teamCount: 10 },
+    { name: 'AA', value: 'aa', displayName: 'Academy Division', teamCount: 10 },
+    { name: 'AAA', value: 'aaa', displayName: 'Contenders Division', teamCount: 10 },
+    { name: 'Majors', value: 'majors', displayName: 'Premier Division', teamCount: 8 },
   ],
 
   // Bot configuration

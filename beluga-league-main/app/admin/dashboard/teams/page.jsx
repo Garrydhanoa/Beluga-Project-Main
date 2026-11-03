@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef } from 'react'
+import { divisionLabel } from '../../../../lib/divisionLabels'
 
 const DIVISIONS = ['Majors', 'AAA', 'AA']
 
@@ -184,7 +185,7 @@ function ActiveSeasonTeamsView({ activeSeason, teamsByDivision, suggestions, onC
           <div key={d} className="mb-6 p-5 rounded-2xl bg-white/[0.03] border border-white/10">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-black text-white">
-                {d}
+                {divisionLabel(d)}
                 <span className="text-blue-300/60 text-xs font-medium ml-2">({list.length} team{list.length === 1 ? '' : 's'})</span>
               </h2>
               <button
@@ -196,7 +197,7 @@ function ActiveSeasonTeamsView({ activeSeason, teamsByDivision, suggestions, onC
             </div>
 
             {list.length === 0 ? (
-              <div className="text-white/40 text-sm italic">No teams in {d}.</div>
+              <div className="text-white/40 text-sm italic">No teams in {divisionLabel(d)}.</div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {list.map((t) => (
@@ -493,7 +494,7 @@ function SuggestionsStrip({ suggestions, division, activeSeasonId, onAdded }) {
             className="px-3 py-1.5 text-xs font-semibold text-white/80 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 hover:border-blue-400/40 rounded-lg transition disabled:opacity-50"
           >
             + {f.name}
-            {f.defaultDivision && <span className="ml-1 text-blue-200/60">[{f.defaultDivision}]</span>}
+            {f.defaultDivision && <span className="ml-1 text-blue-200/60">[{divisionLabel(f.defaultDivision)}]</span>}
             {f.lastSeasonNumber && <span className="ml-1 text-blue-300/60">(S{f.lastSeasonNumber})</span>}
           </button>
         ))}
@@ -618,9 +619,9 @@ function FranchiseRow({ franchise, expanded, onToggle, onChanged }) {
                 className="px-2 py-1 bg-black/40 border border-white/10 rounded text-white text-xs"
               >
                 <option value="">— Any —</option>
-                <option value="Majors">Majors</option>
-                <option value="AAA">AAA</option>
-                <option value="AA">AA</option>
+                <option value="Majors">{divisionLabel('Majors')}</option>
+                <option value="AAA">{divisionLabel('AAA')}</option>
+                <option value="AA">{divisionLabel('AA')}</option>
               </select>
               <button onClick={saveEdits} disabled={busy} className="px-2 py-1 text-xs font-bold text-white bg-blue-500 hover:bg-blue-400 disabled:opacity-50 rounded">Save</button>
               <button onClick={() => { setName(franchise.name); setDefaultDivision(franchise.defaultDivision || ''); setEditing(false) }} className="px-2 py-1 text-xs font-semibold text-white/60 hover:text-white">Cancel</button>
@@ -630,7 +631,7 @@ function FranchiseRow({ franchise, expanded, onToggle, onChanged }) {
               <div className="text-sm font-bold text-white truncate hover:text-blue-200">{franchise.name}</div>
               <div className="text-[11px] text-blue-200/50">
                 {(franchise.currentDivisions && franchise.currentDivisions.length)
-                  ? `Fielding: ${['Majors', 'AAA', 'AA'].filter((d) => franchise.currentDivisions.includes(d)).join(' · ')}`
+                  ? `Fielding: ${['Majors', 'AAA', 'AA'].filter((d) => franchise.currentDivisions.includes(d)).map(divisionLabel).join(' · ')}`
                   : 'Not fielding this season'}
                 {` · ${franchise.seasonCount || 0} season${franchise.seasonCount === 1 ? '' : 's'}`}
                 {franchise.lastSeasonNumber ? ` · last S${franchise.lastSeasonNumber}` : ''}
@@ -645,7 +646,12 @@ function FranchiseRow({ franchise, expanded, onToggle, onChanged }) {
             <button onClick={() => setEditing(true)} className="px-2 py-1 text-[10px] font-bold uppercase text-blue-200 hover:text-white bg-blue-500/10 hover:bg-blue-500/20 border border-blue-400/30 rounded">Edit</button>
           )}
           <button
-            onClick={() => patch({ isActive: !franchise.isActive })}
+            onClick={() => {
+              const n = (franchise.currentDivisions || []).length
+              if (franchise.isActive && n && !confirm(`Disable ${franchise.name}? Its ${n} team${n === 1 ? '' : 's'} in the active season will be disabled too (hidden from the bot, website and schedule maker).`)) return
+              if (!franchise.isActive && !confirm(`Enable ${franchise.name}? Its teams in the active season will be re-enabled too.`)) return
+              patch({ isActive: !franchise.isActive })
+            }}
             disabled={busy}
             className={`px-2 py-1 text-[10px] font-bold uppercase rounded ${
               franchise.isActive
@@ -723,7 +729,7 @@ function FranchiseSeasonTeams({ franchise, onChanged }) {
         <div className="flex flex-wrap gap-1.5 mb-2">
           {data.teams.map((t) => (
             <span key={t.teamId} className="inline-flex items-center gap-1.5 pl-2 pr-1 py-1 rounded bg-white/5 border border-white/10 text-[11px] text-white/80">
-              <b className="text-blue-200">{t.division}</b> · {t.name}
+              <b className="text-blue-200">{divisionLabel(t.division)}</b> · {t.name}
               <button
                 onClick={() => act({ action: 'unlink', teamId: t.teamId })}
                 disabled={busy}
@@ -745,7 +751,7 @@ function FranchiseSeasonTeams({ franchise, onChanged }) {
             className="px-2 py-1 bg-black/40 border border-white/10 rounded text-white text-[11px]"
           >
             <option value="">Add to division…</option>
-            {data.availableDivisions.map((d) => <option key={d} value={d}>{d}</option>)}
+            {data.availableDivisions.map((d) => <option key={d} value={d}>{divisionLabel(d)}</option>)}
           </select>
           {addDiv && orphansForDiv.length > 0 && (
             <select
@@ -774,13 +780,16 @@ function FranchiseSeasonTeams({ franchise, onChanged }) {
 }
 
 function FranchiseDiscordRow({ franchise, onChanged }) {
-  // One GM role + one NP role per franchise (covers all its division teams),
-  // plus the franchise's Discord invite link (used by the bot's /franchise).
+  // One GM role + one AGM role + one NP role per franchise (covers all its
+  // division teams), plus the franchise's Discord invite link (used by /franchise).
   const [form, setForm] = useState({
     gmRoleId: franchise.gmRoleId || '',
+    agmRoleId: franchise.agmRoleId || '',
     npRoleId: franchise.npRoleId || '',
     discordInviteUrl: franchise.discordInviteUrl || '',
-    color: franchise.color || '#3498DB',
+    // Empty = no colour. Never default to the picker's blue — saving the Discord
+    // settings used to write #3498DB onto franchises that had no colour.
+    color: franchise.color || '',
   })
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -788,11 +797,12 @@ function FranchiseDiscordRow({ franchise, onChanged }) {
   useEffect(() => {
     setForm({
       gmRoleId: franchise.gmRoleId || '',
+      agmRoleId: franchise.agmRoleId || '',
       npRoleId: franchise.npRoleId || '',
       discordInviteUrl: franchise.discordInviteUrl || '',
-      color: franchise.color || '#3498DB',
+      color: franchise.color || '',
     })
-  }, [franchise.id, franchise.gmRoleId, franchise.npRoleId, franchise.discordInviteUrl, franchise.color])
+  }, [franchise.id, franchise.gmRoleId, franchise.agmRoleId, franchise.npRoleId, franchise.discordInviteUrl, franchise.color])
 
   async function save() {
     setBusy(true)
@@ -800,6 +810,7 @@ function FranchiseDiscordRow({ franchise, onChanged }) {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
       body: JSON.stringify({
         gmRoleId: form.gmRoleId.trim() || null,
+        agmRoleId: form.agmRoleId.trim() || null,
         npRoleId: form.npRoleId.trim() || null,
         discordInviteUrl: form.discordInviteUrl.trim() || null,
         color: form.color || null,
@@ -820,6 +831,7 @@ function FranchiseDiscordRow({ franchise, onChanged }) {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
         {[
           { key: 'gmRoleId', label: 'GM role ID', ph: 'role snowflake' },
+          { key: 'agmRoleId', label: 'Assistant GM role ID', ph: 'role snowflake' },
           { key: 'npRoleId', label: 'NP (non-playing) role ID', ph: 'role snowflake' },
           { key: 'discordInviteUrl', label: 'Discord invite link', ph: 'https://discord.gg/…' },
         ].map(({ key, label, ph }) => (
@@ -843,7 +855,10 @@ function FranchiseDiscordRow({ franchise, onChanged }) {
               onChange={(e) => setForm({ ...form, color: e.target.value })}
               className="w-10 h-7 bg-black/40 border border-white/10 rounded cursor-pointer"
             />
-            <span className="text-[11px] font-mono text-white/70">{form.color}</span>
+            <span className="text-[11px] font-mono text-white/70">{form.color || 'none'}</span>
+            {form.color && (
+              <button type="button" onClick={() => setForm({ ...form, color: '' })} className="text-[10px] text-white/40 hover:text-red-300">clear</button>
+            )}
           </div>
         </div>
       </div>
@@ -881,7 +896,7 @@ function FranchiseHistory({ franchiseId }) {
           <div className="flex flex-wrap gap-1.5">
             {championships.map((c, i) => (
               <span key={i} className="text-[11px] px-2 py-0.5 rounded bg-yellow-500/10 border border-yellow-400/30 text-yellow-200">
-                S{c.seasonNumber} {c.division}
+                S{c.seasonNumber} {divisionLabel(c.division)}
               </span>
             ))}
           </div>
@@ -896,7 +911,7 @@ function FranchiseHistory({ franchiseId }) {
           <div className="flex flex-wrap gap-1.5">
             {seasonsPlayed.map((s) => (
               <span key={s.teamId} className="text-[11px] px-2 py-0.5 rounded bg-white/5 border border-white/10 text-white/80">
-                S{s.seasonNumber} {s.division} · "{s.teamName}"
+                S{s.seasonNumber} {divisionLabel(s.division)} · "{s.teamName}"
                 {!s.isActive && <span className="text-white/40"> · disabled</span>}
               </span>
             ))}
@@ -984,9 +999,9 @@ function CreateFranchiseModal({ onClose, onCreated }) {
             className="w-full px-3 py-2 bg-black/40 border border-white/10 rounded-lg text-white"
           >
             <option value="">— Any —</option>
-            <option value="Majors">Majors</option>
-            <option value="AAA">AAA</option>
-            <option value="AA">AA</option>
+            <option value="Majors">{divisionLabel('Majors')}</option>
+            <option value="AAA">{divisionLabel('AAA')}</option>
+            <option value="AA">{divisionLabel('AA')}</option>
           </select>
         </div>
         <div className="flex justify-end gap-2 pt-2">
@@ -1032,7 +1047,7 @@ function AddTeamModal({ division, activeSeasonId, suggestions, onClose, onAdded 
   }
 
   return (
-    <Modal onClose={onClose} title={`Add Team to ${division}`}>
+    <Modal onClose={onClose} title={`Add Team to ${divisionLabel(division)}`}>
       <div className="space-y-4">
         {err && <div className="p-3 rounded bg-red-500/10 border border-red-500/30 text-red-200 text-sm">{err}</div>}
         <div className="flex gap-2">

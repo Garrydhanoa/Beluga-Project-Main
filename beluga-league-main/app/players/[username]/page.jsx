@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { motion } from 'framer-motion'
 import Avatar from '../../components/Avatar'
+import { divisionLabel } from '../../../lib/divisionLabels'
 
 // ====================================================================
 // Color palette — matches the reference design
@@ -214,7 +215,7 @@ export default function PlayerProfilePage() {
       displayName: apiData.player.displayName,
       team: apiData.player.currentTeam || null,
       teamId: apiData.player.currentTeamId ?? null,
-      divisionLabel: divKey ? (divKey === 'major' ? 'Majors' : divKey.toUpperCase()) : null,
+      divisionLabel: divKey ? divisionLabel(divKey) : null,
       isCaptain: apiData.player.role === 'captain',
       isFreeAgent: apiData.player.isFreeAgent ?? !apiData.player.currentTeam,
       role: apiData.player.role || null,
@@ -228,6 +229,7 @@ export default function PlayerProfilePage() {
       belugaScore: totals.belugaScore,
       salary: apiData.player.salary ?? 0,
       eligible: apiData.player.eligible,
+      suspension: apiData.player.suspension || null,
       shootingPct: totals.shots > 0 ? Math.round((totals.goals / totals.shots) * 100) : 0,
       ranks: { goals: 0, assists: 0, saves: 0, shots: 0, mvps: 0 },
       // Championships (from season_champions × roster) render as gold badges.
@@ -235,7 +237,7 @@ export default function PlayerProfilePage() {
       achievements: [
         ...(apiData.championships || []).map((c) => ({
           key: `champ-s${c.seasonNumber}-${c.division}`,
-          label: `🏆 S${c.seasonNumber} ${c.division} Champion`,
+          label: `🏆 S${c.seasonNumber} ${divisionLabel(c.division)} Champion`,
         })),
         ...(apiData.awards || []).map((a) => ({
           key: `award-${a.roleId}`,
@@ -569,6 +571,11 @@ export default function PlayerProfilePage() {
                   {player.team || 'Free Agent'}
                 </span>
               </div>
+              {player.suspension && (
+                <div style={{ marginTop: '8px', fontSize: '12px', fontWeight: 700, color: '#fca5a5' }}>
+                  {player.suspension}
+                </div>
+              )}
             </div>
 
             {/* DIVISION */}
@@ -782,7 +789,7 @@ export default function PlayerProfilePage() {
               {rosterHistory.map((r, i) => (
                 <div key={i} className="flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-white/[0.02]">
                   <span className="text-blue-300/90 font-bold w-14 text-xs">S{r.seasonNumber ?? '—'}</span>
-                  <span className="text-blue-200/70 w-14 text-xs uppercase">{r.division}</span>
+                  <span className="text-blue-200/70 w-24 shrink-0 text-xs uppercase">{divisionLabel(r.division)}</span>
                   <span className="text-white flex-1 truncate">{r.teamName || '—'}</span>
                   {r.role && r.role !== 'player' && (
                     <span className="text-[9px] uppercase font-bold tracking-wider text-blue-300 px-1.5 py-0.5 rounded bg-blue-500/15 border border-blue-400/30">{r.role}</span>

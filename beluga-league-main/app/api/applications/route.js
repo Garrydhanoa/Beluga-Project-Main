@@ -5,6 +5,7 @@ import { ensureLeagueSchema } from '../../../lib/leagueSchema'
 import { query } from '../../../lib/db'
 import { rateLimit, getClientIp } from '../../../lib/rateLimit'
 import { BAN_MESSAGE, isAccessBlocked, logSecurityEvent } from '../../../lib/security'
+import { hasAppealItems } from '../../../lib/modStore'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,6 +31,8 @@ export async function GET(request) {
     forms: forms.rows,
     signedIn: Boolean(session?.discordUserId),
     username: session?.discordUsername || null,
+    // Scoped to the signed-in person, so only they ever see the appeal card.
+    appeal: session?.discordUserId ? await hasAppealItems(session.discordUserId) : false,
   })
 }
 

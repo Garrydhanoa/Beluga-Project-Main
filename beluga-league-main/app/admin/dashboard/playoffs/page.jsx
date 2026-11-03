@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import TeamLogo from '../../../components/TeamLogo'
+import { divisionLabel } from '../../../../lib/divisionLabels'
 
 /**
  * Playoffs control room.
@@ -479,7 +480,7 @@ export default function PlayoffsAdminPage() {
         return
       }
       if (data.note) setBanner({ tone: 'ok', text: data.note })
-      else if (data.seeded) setBanner({ tone: 'ok', text: `Seeded ${division}: ${data.seeded.join(', ')}` })
+      else if (data.seeded) setBanner({ tone: 'ok', text: `Seeded ${divisionLabel(division)}: ${data.seeded.join(', ')}` })
       else setBanner({ tone: 'ok', text: 'Done.' })
       if (Array.isArray(data.skipped) && data.skipped.length) {
         setBanner({ tone: 'warn', text: `${data.note || 'Done.'}\nSkipped: ${data.skipped.join('; ')}` })
@@ -586,7 +587,7 @@ export default function PlayoffsAdminPage() {
             <Toggle
               checked={Boolean(bracket.isPublished)}
               onChange={(v) => post('set-published', { bracketId: bracket.id, isPublished: v })}
-              label={`Publish the ${division} bracket`}
+              label={`Publish the ${divisionLabel(division)} bracket`}
               hint="Reveal one division at a time while the others are still being seeded."
               disabled={!settings.enabled}
             />
@@ -608,7 +609,7 @@ export default function PlayoffsAdminPage() {
                   : 'bg-white/5 border-white/10 text-white/60 hover:text-blue-200'
               }`}
             >
-              {d}
+              {divisionLabel(d)}
             </button>
           ))}
         </div>
@@ -627,10 +628,10 @@ export default function PlayoffsAdminPage() {
             disabled={busy}
             onClick={() => {
               const existing = bracket
-                ? `\n\nThis REPLACES the existing ${division} bracket — every result and thread link in it is discarded.`
+                ? `\n\nThis REPLACES the existing ${divisionLabel(division)} bracket — every result and thread link in it is discarded.`
                 : ''
               if (!confirm(
-                `Seed the ${division} bracket from the current standings?\n\n` +
+                `Seed the ${divisionLabel(division)} bracket from the current standings?\n\n` +
                 `Top ${qualifierCount} by the live standings, paired 1v${qualifierCount}, 2v${qualifierCount - 1} and so on.` +
                 existing +
                 '\n\nOther divisions are not touched.'
@@ -649,7 +650,7 @@ export default function PlayoffsAdminPage() {
         <div className="text-blue-200/60 py-20 text-center">Loading…</div>
       ) : !bracket ? (
         <div className="p-12 rounded-2xl border border-dashed border-white/15 text-center">
-          <div className="text-white/50 text-sm mb-1">No {division} bracket yet.</div>
+          <div className="text-white/50 text-sm mb-1">No {divisionLabel(division)} bracket yet.</div>
           <div className="text-white/30 text-xs">Use “Seed from standings” above to draw it.</div>
         </div>
       ) : (

@@ -37,8 +37,8 @@ class Logger {
     console.log(`${colors.green}✅ ${new Date().toISOString()} [SUCCESS]${colors.reset} ${message}`);
   }
 
-  static warning(message) {
-    console.log(`${colors.yellow}⚠️  ${new Date().toISOString()} [WARNING]${colors.reset} ${message}`);
+  static warning(message, detail = null) {
+    console.log(`${colors.yellow}⚠️  ${new Date().toISOString()} [WARNING]${colors.reset} ${message}${detail ? ` ${detail}` : ''}`);
   }
 
   static error(message, error = null) {

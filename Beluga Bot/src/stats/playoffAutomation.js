@@ -22,6 +22,7 @@
 
 const { pool, isDatabaseAvailable } = require('../utils/database');
 const Logger = require('../utils/logger');
+const { divisionLabel } = require('../utils/divisionLabels');
 const {
     recomputeBracket, ensureBracketGraph, loadBracket, getPlayoffSettings,
     weekForRound, roundNameFor,
@@ -147,7 +148,7 @@ async function onPlayoffSeriesConfirmed(client, series) {
                     Logger.success(`${division}: round ${highest} complete — queued ${made.created} ${made.round} thread(s)`);
                     if (settings.autoAnnounce) {
                         await announceBracket(client, seasonId, division, {
-                            headline: `**${division} ${roundNameFor(highest, result.totalRounds)} are complete.** `
+                            headline: `**${divisionLabel(division)} ${roundNameFor(highest, result.totalRounds)} are complete.** `
                                 + `${made.round} threads are being created now.`,
                         });
                     }
@@ -163,7 +164,7 @@ async function onPlayoffSeriesConfirmed(client, series) {
                 Logger.success(`${division}: champion recorded — team ${result.champion}`);
                 if (settings.autoAnnounce) {
                     await announceBracket(client, seasonId, division, {
-                        headline: `**${name} are the ${division} champions.**`,
+                        headline: `**${name} are the ${divisionLabel(division)} champions.**`,
                     });
                 }
             }

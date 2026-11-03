@@ -2,6 +2,7 @@
 
 import { motion } from 'framer-motion'
 import TeamLogo from './TeamLogo'
+import { divisionLabel } from '../../lib/divisionLabels'
 
 /**
  * The public playoff bracket.
@@ -246,7 +247,7 @@ export default function PlayoffBracket({ bracket }) {
           <div className="w-[240px] shrink-0 flex flex-col">
             <div className="mb-3 px-1">
               <div className={theme.roundLabel}>Champion</div>
-              <div className={theme.roundMeta}>{bracket.division}</div>
+              <div className={theme.roundMeta}>{divisionLabel(bracket.division)}</div>
             </div>
             <div className="flex-1 flex items-center relative">
               <span className={`absolute right-full top-1/2 w-5 h-px ${theme.line}`} aria-hidden="true" />

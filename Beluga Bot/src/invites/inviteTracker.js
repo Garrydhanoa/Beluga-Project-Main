@@ -45,7 +45,8 @@ async function loadCodeInfo(codes) {
     const map = new Map();
     if (!list.length || !db()) return map;
     const { rows } = await pool.query(
-        `SELECT code, is_general, is_vanity, inviter_is_bot, label FROM invite_codes WHERE code = ANY($1::text[])`,
+        `SELECT code, is_general, is_vanity, inviter_is_bot, label, to_jsonb(invite_codes) ->> 'is_moderation' AS is_moderation
+           FROM invite_codes WHERE code = ANY($1::text[])`,
         [list]
     );
     for (const r of rows) map.set(r.code, r);
@@ -64,6 +65,7 @@ function isBotUser(client, id) {
  */
 function resolveDiscord(client, rec, codeInfo) {
     const info = rec.code ? codeInfo.get(rec.code) : null;
+    if (info?.is_moderation === 'true') return { sourceType: 'moderation', inviterId: null };
     if (rec.source === 'vanity' || info?.is_vanity) return { sourceType: 'vanity', inviterId: null };
     if (rec.code && rec.inviterId) {
         if (info?.is_general) return { sourceType: 'general', inviterId: null };
@@ -78,6 +80,7 @@ function resolveDiff(client, diff, codeInfo) {
     if (!diff || diff.result !== 'match') return null;
     if (diff.vanity) return { sourceType: 'vanity', inviterId: null, code: diff.code };
     const info = codeInfo.get(diff.code);
+    if (info?.is_moderation === 'true') return { sourceType: 'moderation', inviterId: null, code: diff.code };
     if (info?.is_general) return { sourceType: 'general', inviterId: null, code: diff.code };
     if (diff.inviterBot || info?.inviter_is_bot || isBotUser(client, diff.inviterId)) return { sourceType: 'bot_invite', inviterId: null, code: diff.code };
     return { sourceType: diff.inviterId ? 'invite' : 'unknown', inviterId: diff.inviterId || null, code: diff.code };
@@ -297,6 +300,13 @@ async function evaluateRegistration(client, inviteeId, { via = 'hook' } = {}) {
         // Discord's join data still loading → verifyMember calls back here when done.
         if (!row.verified_at) return;
 
+        // Someone coming back through the moderation return invite isn't an invite
+        // anyone earned, so it's closed quietly rather than offered as a claim.
+        if (row.source_type === 'moderation') {
+            await pool.query(`UPDATE invites SET status = 'unattributed', updated_at = NOW() WHERE invitee_id = $1 AND status = 'tracked'`, [id]);
+            return;
+        }
+
         const settings = await getSettings();
         const guild = notify.getGuild(client);
         const campaign = await getActiveCampaign();
@@ -365,6 +375,7 @@ async function evaluateRegistration(client, inviteeId, { via = 'hook' } = {}) {
 
 /** Called from the very end of /register (fire-and-forget). */
 async function onRegistrationComplete(client, discordId) {
+    require('../moderation/banEvasion').checkRegistration(client, discordId).catch(() => {});
     return evaluateRegistration(client, discordId, { via: 'hook' });
 }
 

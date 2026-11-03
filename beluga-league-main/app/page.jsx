@@ -9,6 +9,7 @@ import LatestResults from './components/LatestResults';
 import InviteLeadersPreview from './components/InviteLeadersPreview';
 import { useSiteContent, MontageSection, QuoteStrip, HallOfFame } from './components/SiteExtras';
 import { SOCIALS } from '../lib/socials';
+import { divisionLabel } from '../lib/divisionLabels';
 
 const FALLBACK_TEAMS = [
   { name: "6 Speed" }, { name: "Archangels" }, { name: "Aviators" },
@@ -351,7 +352,7 @@ export default function Home() {
                   },
                   {
                     title: "Open to All Ranks",
-                    desc: "Three divisions — AA, AAA, and Majors.",
+                    desc: "Three divisions — Academy, Contenders, and Premier.",
                     icon: (
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
                     ),
@@ -542,7 +543,7 @@ export default function Home() {
                               />
                             </div>
                             <div className="text-left min-w-0">
-                              <div className="text-[9px] tracking-[0.2em] uppercase text-blue-300/70">{c.division}</div>
+                              <div className="text-[9px] tracking-[0.2em] uppercase text-blue-300/70">{divisionLabel(c.division)}</div>
                               <div className="text-base font-black text-white truncate group-hover/champ:text-blue-200 transition-colors">{c.teamName}</div>
                             </div>
                           </Link>
@@ -639,7 +640,7 @@ export default function Home() {
                         />
                       </div>
                       <div className="text-left min-w-0">
-                        <div className="text-[8px] tracking-[0.2em] uppercase text-blue-300/70">{c.division}</div>
+                        <div className="text-[8px] tracking-[0.2em] uppercase text-blue-300/70">{divisionLabel(c.division)}</div>
                         <div className="text-sm font-black text-white truncate">{c.teamName}</div>
                       </div>
                     </Link>

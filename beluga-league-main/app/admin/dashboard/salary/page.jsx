@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import Avatar from '../../../components/Avatar'
 import PlayerPicker from '../../../components/PlayerPicker'
+import { divisionLabel } from '../../../../lib/divisionLabels'
 
 async function api(path, method = 'GET', body) {
   const res = await fetch(path, {
@@ -34,7 +35,7 @@ function StateBadge({ state, delta }) {
 function DivPill({ division }) {
   if (!division) return null
   const map = { Majors: 'bg-yellow-500/15 text-yellow-200 border-yellow-400/30', AAA: 'bg-cyan-500/15 text-cyan-200 border-cyan-400/30', AA: 'bg-white/10 text-white/60 border-white/20' }
-  return <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${map[division] || map.AA}`}>{division}</span>
+  return <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${map[division] || map.AA}`}>{divisionLabel(division)}</span>
 }
 
 function LockedRow({ p, member, onAdjust, onUnlock, busy }) {

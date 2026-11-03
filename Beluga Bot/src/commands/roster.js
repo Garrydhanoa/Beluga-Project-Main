@@ -1,9 +1,11 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { getTeamRoster, createRosterEmbed, getLogoAttachment } = require('../utils/rosterManager');
-const { findTeam, teamAutocomplete } = require('../utils/teamRoles');
+const { findTeam, teamAutocomplete, getTeamColorInt } = require('../utils/teamRoles');
+const { LeagueDB } = require('../utils/database');
 const { getTeamChoices, getDivisionChoices } = require('../constants/roles');
 const { siteFooter } = require('../utils/siteFooter');
 const Logger = require('../utils/logger');
+const { divisionLabel } = require('../utils/divisionLabels');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -38,21 +40,26 @@ module.exports = {
 
             Logger.info(`${interaction.user.username} requested roster for ${teamName} ${division}`);
 
-            // Get roster data
-            const rosterData = await getTeamRoster(interaction.guild, teamName, division);
-            
+            // Get roster data — getTeamRoster needs the DB team row, not just its
+            // name (passing the name made every lookup fail).
+            const dbTeam = await findTeam(teamName, division).catch(() => null);
+            const rosterData = dbTeam ? await getTeamRoster(interaction.guild, dbTeam, division) : null;
+
             if (!rosterData) {
                 return await interaction.editReply({
-                    content: `❌ Could not find roster for ${teamName} ${division}. This team may not exist in this division.`,
+                    content: `❌ Could not find roster for ${teamName} ${divisionLabel(division)}. This team may not exist in this division.`,
                 });
             }
 
             // Create embed
-            const embed = createRosterEmbed(rosterData);
+            const activeSeason = await LeagueDB.getActiveSeason().catch(() => null);
+            const embed = createRosterEmbed(rosterData, {
+                colorInt: await getTeamColorInt(dbTeam.id),
+                seasonNumber: activeSeason?.season_number ?? null,
+            });
 
             // Get team logo from the DB (team logo → franchise logo).
-            const dbTeam = await findTeam(teamName, division).catch(() => null);
-            const logoAttachment = await getLogoAttachment(dbTeam?.id, teamName);
+            const logoAttachment = await getLogoAttachment(dbTeam.id, dbTeam.name);
 
             // Send roster. The footer goes in the message CONTENT (not the embed)
             // so createRosterEmbed stays untouched — it's shared with the

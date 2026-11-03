@@ -5,6 +5,8 @@ const path = require('path');
 const { config } = require('../config/config');
 const Logger = require('../utils/logger');
 const { ROLES } = require('../constants/roles');
+const { divisionLabel } = require('../utils/divisionLabels');
+const { managerRoleIds } = require('../utils/franchiseManagers');
 
 // Command-specific constants
 const SPREADSHEET_ID = '1cnrCOiAX5PfcxqpTX16YvbPVYnBxZiCk_zSCDqoeDGs';
@@ -16,8 +18,8 @@ function hasPermission(member) {
         return true;
     }
     
-    // Check GM roles
-    for (const gmRoleId of Object.values(ROLES.GM_ROLES)) {
+    // Check GM + Assistant GM roles
+    for (const gmRoleId of managerRoleIds()) {
         if (member.roles.cache.has(gmRoleId)) {
             return true;
         }
@@ -184,7 +186,7 @@ module.exports = {
             const embed = new EmbedBuilder()
                 .setTitle(`Free Agent Search - ${searchSalary} Salary`)
                 .setColor(0x00B563) // Green color
-                .setDescription(`**Division:** ${division || 'Not specified'}`)
+                .setDescription(`**Division:** ${division ? divisionLabel(division) : 'Not specified'}`)
                 .setTimestamp()
                 .setFooter({ text: `${matchingFreeAgents.length} player${matchingFreeAgents.length !== 1 ? 's' : ''} found` });
 

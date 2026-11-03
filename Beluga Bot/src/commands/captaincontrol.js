@@ -7,6 +7,8 @@ const Logger = require('../utils/logger');
 const { ROLES, TEAM_ROLES, NP_ROLES } = require('../constants/roles');
 const { TransactionDB } = require('../utils/database');
 const { attachTeamLogo } = require('../utils/teamRoles');
+const { divisionLabel } = require('../utils/divisionLabels');
+const { managerRoleEntries, managerRoleIds } = require('../utils/franchiseManagers');
 
 // Command-specific constants
 const TRANSACTION_REQUEST_CHANNEL_ID = '1178913188750823544';
@@ -43,9 +45,9 @@ module.exports = {
                         .setDescription('Division for captain role')
                         .setRequired(true)
                         .addChoices(
-                            { name: 'AA', value: 'AA' },
-                            { name: 'AAA', value: 'AAA' },
-                            { name: 'MAJORS', value: 'MAJORS' }
+                            { name: 'Academy', value: 'AA' },
+                            { name: 'Contenders', value: 'AAA' },
+                            { name: 'Premier', value: 'MAJORS' }
                         )
                 )
         )
@@ -65,9 +67,9 @@ module.exports = {
                         .setDescription('Division of captain role to remove')
                         .setRequired(true)
                         .addChoices(
-                            { name: 'AA', value: 'AA' },
-                            { name: 'AAA', value: 'AAA' },
-                            { name: 'MAJORS', value: 'MAJORS' }
+                            { name: 'Academy', value: 'AA' },
+                            { name: 'Contenders', value: 'AAA' },
+                            { name: 'Premier', value: 'MAJORS' }
                         )
                 )
         ),
@@ -83,19 +85,20 @@ module.exports = {
             const gmMember = await interaction.guild.members.fetch(interaction.user.id);
 
             // Check if user is a GM
-            const isGM = Object.values(ROLES.GM_ROLES).some(roleId => 
+            // GM or Assistant GM (same powers)
+            const isGM = managerRoleIds().some(roleId => 
                 gmMember.roles.cache.has(roleId)
             );
 
             if (!isGM) {
                 return await interaction.editReply({
-                    content: '❌ Only General Managers can use this command.',
+                    content: '❌ Only General Managers and Assistant GMs can use this command.',
                 });
             }
 
             // Get GM's team
             let gmTeam = null;
-            for (const [teamName, roleId] of Object.entries(ROLES.GM_ROLES)) {
+            for (const [teamName, roleId] of managerRoleEntries()) {
                 if (gmMember.roles.cache.has(roleId)) {
                     gmTeam = teamName;
                     break;
@@ -144,7 +147,7 @@ module.exports = {
                 const captainRoleId = ROLES.CAPTAINS[division];
                 if (member.roles.cache.has(captainRoleId)) {
                     return await interaction.editReply({
-                        content: `❌ ${player.username} is already a ${division} captain.`,
+                        content: `❌ ${player.username} is already a ${divisionLabel(division)} captain.`,
                     });
                 }
 
@@ -160,7 +163,7 @@ module.exports = {
                         for (const [memberId, guildMember] of membersWithCaptainRole) {
                             if (guildMember.roles.cache.has(teamRoleId)) {
                                 return await interaction.editReply({
-                                    content: `❌ ${gmTeam} already has a ${division} captain: ${guildMember.user.username}. Each team can only have one captain per division.`,
+                                    content: `❌ ${gmTeam} already has a ${divisionLabel(division)} captain: ${guildMember.user.username}. Each team can only have one captain per division.`,
                                 });
                             }
                         }
@@ -175,7 +178,7 @@ module.exports = {
                         { name: 'Player', value: `<@${player.id}>`, inline: true },
                         { name: 'Team', value: gmTeam, inline: true },
                         { name: 'Current Status', value: isOnNP ? 'NP (Non-Playing)' : `${playerDivision} Roster`, inline: true },
-                        { name: 'Captain Role', value: `${division} Captain`, inline: true },
+                        { name: 'Captain Role', value: `${divisionLabel(division)} Captain`, inline: true },
                         { name: 'Requested By', value: gmMember.user.username, inline: true },
                         { name: 'Required Approvals', value: '✅ Salary Crew\n✅ Player', inline: false }
                     )
@@ -234,7 +237,7 @@ module.exports = {
                 const captainRoleId = ROLES.CAPTAINS[division];
                 if (!member.roles.cache.has(captainRoleId)) {
                     return await interaction.editReply({
-                        content: `❌ ${player.username} is not a ${division} captain.`,
+                        content: `❌ ${player.username} is not a ${divisionLabel(division)} captain.`,
                     });
                 }
 
@@ -246,7 +249,7 @@ module.exports = {
                         { name: 'Player', value: `<@${player.id}>`, inline: true },
                         { name: 'Team', value: gmTeam, inline: true },
                         { name: 'Current Status', value: isOnNP ? 'NP (Non-Playing)' : `${playerDivision} Roster`, inline: true },
-                        { name: 'Removing Role', value: `${division} Captain`, inline: true },
+                        { name: 'Removing Role', value: `${divisionLabel(division)} Captain`, inline: true },
                         { name: 'Requested By', value: gmMember.user.username, inline: true },
                         { name: 'Required Approval', value: '✅ Salary Crew only', inline: false }
                     )
@@ -340,7 +343,7 @@ module.exports = {
                     .setDescription(`<@${transaction.playerId}> has been promoted to **${transaction.captainDivision} Captain**.`)
                     .addFields(
                         { name: 'Team', value: transaction.teamName, inline: true },
-                        { name: 'Player Division', value: transaction.playerDivision, inline: true },
+                        { name: 'Player Division', value: divisionLabel(transaction.playerDivision), inline: true },
                         { name: 'Captain Role', value: `${transaction.captainDivision} Captain`, inline: true },
                         { name: 'Promoted By', value: transaction.requestedByUsername, inline: true }
                     )
@@ -393,7 +396,7 @@ module.exports = {
                     .setDescription(`<@${transaction.playerId}> has been demoted from **${transaction.captainDivision} Captain**.`)
                     .addFields(
                         { name: 'Team', value: transaction.teamName, inline: true },
-                        { name: 'Player Division', value: transaction.playerDivision, inline: true },
+                        { name: 'Player Division', value: divisionLabel(transaction.playerDivision), inline: true },
                         { name: 'Removed Role', value: `${transaction.captainDivision} Captain`, inline: true },
                         { name: 'Demoted By', value: transaction.requestedByUsername, inline: true }
                     )

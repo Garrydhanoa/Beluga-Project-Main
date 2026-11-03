@@ -17,11 +17,12 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
+import { divisionLabel } from '../../../../lib/divisionLabels'
 
 const DIVS = [
-  { key: 'wins_min_aa', label: 'AA', q: 'aa' },
-  { key: 'wins_min_aaa', label: 'AAA', q: 'aaa' },
-  { key: 'wins_min_majors', label: 'Majors', q: 'majors' },
+  { key: 'wins_min_aa', label: divisionLabel('AA'), q: 'aa' },
+  { key: 'wins_min_aaa', label: divisionLabel('AAA'), q: 'aaa' },
+  { key: 'wins_min_majors', label: divisionLabel('Majors'), q: 'majors' },
 ]
 
 const fmt = (n) => (n == null || n === '' ? '—' : Number(n).toLocaleString())
@@ -54,7 +55,7 @@ function PreviewList({ title, items, tone = 'red', note }) {
           <div key={x.row} className="px-2 py-1 text-[11px] text-white/75 flex gap-2 flex-wrap">
             <span className="text-white/40">row {x.row}</span>
             <span className="font-bold text-white/90">{x.name}</span>
-            {x.division && <span>{x.division}{x.source === 'N' ? ' (projected)' : ''}</span>}
+            {x.division && <span>{divisionLabel(x.division)}{x.source === 'N' ? ' (projected)' : ''}</span>}
             {x.wins != null && <span>wins {fmt(x.wins)}{x.min ? ` / ${fmt(x.min)}` : ''}</span>}
             {x.need ? <span className="text-red-300">needs {fmt(x.need)} more</span> : null}
             {x.detail && <span className="text-amber-200/80">{x.detail}</span>}

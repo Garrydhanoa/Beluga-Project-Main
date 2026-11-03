@@ -10,6 +10,7 @@
 require('../utils/fontManager');
 const { createCanvas, loadImage } = require('canvas');
 const { config } = require('../../src/config/config');
+const { divisionLabel } = require('../utils/divisionLabels');
 
 const FONT = (config && config.images && config.images.fontFamily) ? config.images.fontFamily : 'sans-serif';
 
@@ -159,7 +160,7 @@ async function buildPlayerStatCard(p) {
     ctx.fillStyle = '#FFFFFF'; ctx.font = `bold 44px ${FONT}`;
     ctx.fillText(String(p.name || 'Unknown').slice(0, 22), 162, 112);
     ctx.fillStyle = CYAN; ctx.font = `21px ${FONT}`;
-    const sub = [p.teamName, p.division].filter(Boolean).join('  ·  ');
+    const sub = [p.teamName, divisionLabel(p.division)].filter(Boolean).join('  ·  ');
     if (sub) ctx.fillText(sub, 164, 144);
 
     // Beluga Score hero (top-right glowing tile).
@@ -218,7 +219,7 @@ async function buildTeamStatCard(tm) {
     ctx.fillStyle = '#FFFFFF'; ctx.font = `bold 46px ${FONT}`;
     ctx.fillText(String(tm.teamName || 'Team').slice(0, 22), 176, 116);
     ctx.fillStyle = CYAN; ctx.font = `21px ${FONT}`;
-    ctx.fillText([tm.division, tm.seasonLabel].filter(Boolean).join('  ·  '), 178, 148);
+    ctx.fillText([divisionLabel(tm.division), tm.seasonLabel].filter(Boolean).join('  ·  '), 178, 148);
 
     // Beluga team score hero tile (top-right) — matches the player card layout
     // so the team's headline number is prominent instead of cramped at the bottom.
@@ -381,7 +382,7 @@ async function buildWhoisCard(w) {
     if (w.teamLogoBuffer) { await drawCircleImage(ctx, w.teamLogoBuffer, tx + 13, 142, 13, null); tx += 34; }
     ctx.fillStyle = teamColor; ctx.font = `21px ${FONT}`;
     ctx.textAlign = 'left';
-    ctx.fillText([w.teamName || 'Free Agent', w.division].filter(Boolean).join('  ·  '), tx, 149);
+    ctx.fillText([w.teamName || 'Free Agent', divisionLabel(w.division)].filter(Boolean).join('  ·  '), tx, 149);
 
     // Salary tile (top-right)
     if (w.salary) {
@@ -460,7 +461,7 @@ async function buildWhoisCard(w) {
     kvLine(ctx, col3, kvY, 'Joined server', d.joinedAt || '—');
     kvLine(ctx, col1, kvY + 54, 'Account made', d.createdAt || '—');
     kvLine(ctx, col2, kvY + 54, 'Team', w.teamName || 'Free Agent');
-    kvLine(ctx, col3, kvY + 54, 'Division', w.division || '—');
+    kvLine(ctx, col3, kvY + 54, 'Division', w.division ? divisionLabel(w.division) : '—');
 
     // role chips (server roles relevant to the league)
     if ((d.roleNames || []).length) {

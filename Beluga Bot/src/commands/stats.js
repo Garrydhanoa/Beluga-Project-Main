@@ -4,6 +4,7 @@ const { getTeamLogoBuffer, teamAutocomplete } = require('../utils/teamRoles');
 const { buildPlayerStatCard, buildTeamStatCard } = require('../stats/statCard');
 const { appendFooter, siteUrl } = require('../utils/siteFooter');
 const Logger = require('../utils/logger');
+const { divisionLabel } = require('../utils/divisionLabels');
 
 /**
  * /stats — public stat lookup for a player or a team.
@@ -93,7 +94,7 @@ module.exports = {
             .addStringOption((o) => o.setName('team').setDescription('Team').setRequired(true)
                 .setAutocomplete(true))
             .addStringOption((o) => o.setName('division').setDescription('Division').setRequired(true)
-                .addChoices({ name: 'Majors', value: 'Majors' }, { name: 'AAA', value: 'AAA' }, { name: 'AA', value: 'AA' }))
+                .addChoices({ name: 'Premier', value: 'Majors' }, { name: 'Contenders', value: 'AAA' }, { name: 'Academy', value: 'AA' }))
             .addIntegerOption((o) => o.setName('season').setDescription('Season number (default: current)').setRequired(false).setMinValue(1))),
 
     // Live team list from the current season (DB) for the `team` subcommand's team option.
@@ -192,13 +193,13 @@ module.exports = {
                 lifetime: lifeRows.rows[0] || {},
             });
             const file = new AttachmentBuilder(buf, { name: 'player-stats.png' });
-            const extra = seasonRows.rows.length > 1 ? ` _(showing ${primary.division}; full splits on the site)_` : '';
+            const extra = seasonRows.rows.length > 1 ? ` _(showing ${divisionLabel(primary.division)}; full splits on the site)_` : '';
             const content = appendFooter(`📊 Stats for <@${discordId}>${extra}`, interaction.guild);
             await interaction.editReply({ content, files: [file], allowedMentions: { parse: [] } });
         } catch (error) {
             Logger.error('player stat card render failed, falling back to embed', error);
             const embed = new EmbedBuilder().setColor(0x3498DB).setTitle('📊 Player Stats').setDescription(`<@${discordId}>`).setTimestamp();
-            for (const row of seasonRows.rows) embed.addFields(statBlock(`S${seasonNo} · ${row.division}`, row));
+            for (const row of seasonRows.rows) embed.addFields(statBlock(`S${seasonNo} · ${divisionLabel(row.division)}`, row));
             if (lifeRows.rows.length) { const lt = lifeRows.rows[0]; embed.addFields(statBlock(`Lifetime (${lt.seasons_played} season${lt.seasons_played === 1 ? '' : 's'})`, lt)); }
             if (url) embed.addFields({ name: 'Full breakdown', value: url, inline: false });
             await interaction.editReply({ embeds: [embed], allowedMentions: { parse: [] } });
@@ -219,7 +220,7 @@ module.exports = {
             [season.id, division, teamName]
         );
         if (!teamRes.rows.length) {
-            await interaction.editReply(`❌ **${teamName}** isn't an active ${division} team this season.`);
+            await interaction.editReply(`❌ **${teamName}** isn't an active ${divisionLabel(division)} team this season.`);
             return;
         }
         const team = teamRes.rows[0];
@@ -229,7 +230,7 @@ module.exports = {
             [season.id, division, team.id]
         );
         if (!ts.rows.length) {
-            await interaction.editReply(`📭 **${team.name}** (${division}) has no recorded stats yet this season.`);
+            await interaction.editReply(`📭 **${team.name}** (${divisionLabel(division)}) has no recorded stats yet this season.`);
             return;
         }
         const t = ts.rows[0];
@@ -251,13 +252,13 @@ module.exports = {
                 totals: t,
             });
             const file = new AttachmentBuilder(buf, { name: 'team-stats.png' });
-            const content = appendFooter(`📊 ${team.name} (${division})`, interaction.guild);
+            const content = appendFooter(`📊 ${team.name} (${divisionLabel(division)})`, interaction.guild);
             await interaction.editReply({ content, files: [file] });
         } catch (error) {
             Logger.error('team stat card render failed, falling back to embed', error);
             const embed = new EmbedBuilder()
                 .setColor(0x3498DB)
-                .setTitle(`📊 ${team.name} — ${division}`)
+                .setTitle(`📊 ${team.name} — ${divisionLabel(division)}`)
                 .addFields(
                     { name: 'Record', value: `Series **${t.series_wins}-${t.series_losses}** · Games **${t.game_wins}-${t.game_losses}**\nGoals **${t.goals_for}-${t.goals_against}** (${t.goals_for - t.goals_against >= 0 ? '+' : ''}${t.goals_for - t.goals_against})`, inline: true },
                     statBlock('Team totals', { ...t, games: t.games_played, mvps: 0 }),

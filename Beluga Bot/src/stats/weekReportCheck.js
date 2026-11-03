@@ -14,6 +14,7 @@ const { pool, isDatabaseAvailable } = require('../utils/database');
 const { ROLES } = require('../constants/roles');
 const { weekLabel } = require('./playoffBracket');
 const Logger = require('../utils/logger');
+const { divisionLabel } = require('../utils/divisionLabels');
 
 function db() {
     return typeof isDatabaseAvailable === 'function' ? isDatabaseAvailable() : isDatabaseAvailable;
@@ -78,7 +79,7 @@ async function countWeekThreads(weekNumber, seasonId = null) {
 /** `**Majors** — Aviators vs Fallen Angels` lines, grouped in division order. */
 function formatUnreportedList(rows, limit = 40) {
     const shown = rows.slice(0, limit);
-    const lines = shown.map((r) => `• **${r.division}** — ${r.team1} vs ${r.team2}`);
+    const lines = shown.map((r) => `• **${divisionLabel(r.division)}** — ${r.team1} vs ${r.team2}`);
     if (rows.length > shown.length) lines.push(`…and ${rows.length - shown.length} more`);
     return lines.join('\n');
 }
@@ -110,7 +111,7 @@ async function pingUnreportedThreads(client, rows, weekNumber, requestedBy = nul
             await thread.send({
                 content:
                     `<@&${ROLES.SALARY_CREW}> **${weekLabel(weekNumber)} series not reported.**\n` +
-                    `${row.division} — **${row.team1}** vs **${row.team2}**\n` +
+                    `${divisionLabel(row.division)} — **${row.team1}** vs **${row.team2}**\n` +
                     `This thread was going to be deleted${requestedBy ? ` (requested by ${requestedBy})` : ''}, ` +
                     'but the series has no confirmed report yet. Report it here before the week is closed.',
                 allowedMentions: { roles: [ROLES.SALARY_CREW] },

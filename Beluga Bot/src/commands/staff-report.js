@@ -4,6 +4,7 @@ const { teamAutocomplete } = require('../utils/teamRoles');
 const { isSalaryCrew } = require('../stats/report/threadContext');
 const flow = require('../stats/report/flow');
 const { weekForRound } = require('../stats/playoffBracket');
+const { divisionLabel } = require('../utils/divisionLabels');
 
 /**
  * /staff-report — salary-crew-only "missed week" report, usable in ANY channel.
@@ -23,7 +24,7 @@ module.exports = {
         .setDescription('Salary crew: report a series for any matchup (missed weeks, playoffs).')
         .setDMPermission(false)
         .addStringOption((o) => o.setName('division').setDescription('Division').setRequired(true)
-            .addChoices({ name: 'Majors', value: 'Majors' }, { name: 'AAA', value: 'AAA' }, { name: 'AA', value: 'AA' }))
+            .addChoices({ name: 'Premier', value: 'Majors' }, { name: 'Contenders', value: 'AAA' }, { name: 'Academy', value: 'AA' }))
         .addStringOption((o) => o.setName('home_team').setDescription('Home team').setRequired(true)
             .setAutocomplete(true))
         .addStringOption((o) => o.setName('away_team').setDescription('Away team').setRequired(true)
@@ -82,7 +83,7 @@ module.exports = {
         const home = byName.get(homeName.toLowerCase());
         const away = byName.get(awayName.toLowerCase());
         if (!home || !away) {
-            await interaction.reply({ content: `❌ Both teams must be active in ${division} this season.`, flags: 64 });
+            await interaction.reply({ content: `❌ Both teams must be active in ${divisionLabel(division)} this season.`, flags: 64 });
             return;
         }
 

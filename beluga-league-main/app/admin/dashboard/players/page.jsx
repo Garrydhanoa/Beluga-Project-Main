@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import Avatar from '../../../components/Avatar'
 import PlayerPicker from '../../../components/PlayerPicker'
+import { divisionLabel } from '../../../../lib/divisionLabels'
 
 const DIVISIONS = ['all', 'Majors', 'AAA', 'AA']
 const TX_LABELS = {
@@ -74,7 +75,7 @@ export default function PlayersAdminPage() {
         </select>
         <select value={filters.division} onChange={(e) => setFilters({ ...filters, division: e.target.value })}
           className="px-3 py-2 bg-black/40 border border-white/10 rounded-lg text-white text-sm">
-          {DIVISIONS.map((d) => <option key={d} value={d}>{d === 'all' ? 'All divisions' : d}</option>)}
+          {DIVISIONS.map((d) => <option key={d} value={d}>{d === 'all' ? 'All divisions' : divisionLabel(d)}</option>)}
         </select>
         <span className="text-xs text-white/50 ml-auto">{players.length} player{players.length === 1 ? '' : 's'}</span>
       </div>
@@ -382,7 +383,7 @@ function IdentityStatsPanel({ discordId, data, onChanged }) {
             {seasons.map((row) => (
               <tr key={`${row.season_id}-${row.division}-${row.is_playoff}`} className="border-t border-white/5">
                 <td className="py-1 text-white">
-                  S{row.season_number} {row.division}{row.is_playoff ? ' (PO)' : ''}
+                  S{row.season_number} {divisionLabel(row.division)}{row.is_playoff ? ' (PO)' : ''}
                   {row.manual_override && <span className="ml-1 text-[8px] text-yellow-300" title="Manually overridden — recompute keeps these numbers">🔒</span>}
                 </td>
                 {COLS.map(([k]) => (
@@ -609,7 +610,7 @@ function PlayerDetailModal({ discordId, onClose }) {
                 {data.rosterHistory.map((r, i) => (
                   <li key={i} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-white/[0.03] text-xs">
                     <span className="text-blue-200/80 font-bold w-12">S{r.seasonNumber}</span>
-                    <span className="text-white/60 w-12">{r.division}</span>
+                    <span className="text-white/60 w-20 shrink-0">{divisionLabel(r.division)}</span>
                     <span className="text-white truncate flex-1">{r.teamName}</span>
                     {r.role && r.role !== 'player' && (
                       <span className="text-[9px] uppercase font-bold tracking-wider text-blue-300">{r.role}</span>
@@ -644,7 +645,7 @@ function PlayerDetailModal({ discordId, onClose }) {
                   {data.stats.map((s) => (
                     <tr key={s.id} className="border-t border-white/5">
                       <td className="py-0.5 text-blue-200/80">S{s.seasonNumber}</td>
-                      <td className="py-0.5 text-white/60">{s.division}</td>
+                      <td className="py-0.5 text-white/60">{divisionLabel(s.division)}</td>
                       <td className="py-0.5 text-white truncate max-w-[120px]">{s.teamName || '—'}</td>
                       <td className="py-0.5 text-right text-white/80">{s.gamesPlayed}</td>
                       <td className="py-0.5 text-right text-white/80">{s.goals}</td>

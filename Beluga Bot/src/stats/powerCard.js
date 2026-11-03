@@ -13,6 +13,7 @@ require('../utils/fontManager');
 const { createCanvas, loadImage } = require('canvas');
 const { getTeamLogoBuffer, getTeamColorInt } = require('../utils/teamRoles');
 const { config } = require('../config/config');
+const { divisionLabelUpper } = require('../utils/divisionLabels');
 
 const FONT = (config && config.images && config.images.fontFamily) ? config.images.fontFamily : 'sans-serif';
 
@@ -109,7 +110,7 @@ async function buildPowerRankingsImage({ division, seasonNumber, week, teams, pl
     ctx.fillStyle = '#c4b5fd'; ctx.font = `bold 22px ${FONT}`;
     ctx.fillText('🐳 BELUGA LEAGUE', W / 2, 48);
     ctx.fillStyle = '#FFFFFF'; ctx.font = `bold 42px ${FONT}`;
-    ctx.fillText(`${String(division).toUpperCase()} POWER RANKINGS`, W / 2, 96);
+    ctx.fillText(`${divisionLabelUpper(division)} POWER RANKINGS`, W / 2, 96);
     // "Season 10 · Week 6" — either half may be missing; render whichever exists.
     const stamp = [
         seasonNumber != null ? `Season ${seasonNumber}` : null,

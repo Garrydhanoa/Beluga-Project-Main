@@ -7,6 +7,8 @@ const Logger = require('./logger');
 const { ManualSalaryDB, SalaryLockNotificationDB, isDatabaseAvailable, pool } = require('./database');
 const { updateAllRosters } = require('./rosterManager');
 const { ROLES, TEAM_ROLES, NP_ROLES } = require('../constants/roles');
+const { divisionLabel } = require('./divisionLabels');
+const { MIN_SALARY, salaryBelowMinimum } = require('./salaryMinimum');
 
 // Channel IDs (roleSync-specific)
 const TRANSACTION_CHANNEL_ID = '1156814622322602104';
@@ -417,6 +419,9 @@ class RoleSyncManager {
             if (isNewSalary) {
                 // New salary assignment
                 message = `${playerMention} you are a **${newVal}** salary`;
+                if (salaryBelowMinimum(newVal) !== null) {
+                    message += `. That is under the ${MIN_SALARY} minimum, so you can't be signed until Salary Crew moves you up.`;
+                }
             } else {
                 // Salary increase
                 message = `<@&${ROLES.SALARY_CREW}>\n${playerMention} is being moved up from a **${oldVal}** to **${newVal}**`;
@@ -598,6 +603,9 @@ async function performRoleSync(client) {
             return;
         }
 
+        // Before any role changes, so a running suspension is never stripped.
+        await loadModerationSuspensions();
+
         // Set of all Discord IDs present in the sal sheet (used by the verification gate)
         const sheetIdSet = new Set(players.map(p => p.discordId));
 
@@ -607,6 +615,8 @@ async function performRoleSync(client) {
         try {
             const { sweepRegistrations } = require('../invites/inviteTracker');
             sweepRegistrations(client, sheetIdSet).catch((err) => Logger.error('Invite registration sweep failed', err));
+            // Ban evasion backstop, for anyone added to the sheet by hand.
+            require('../moderation/banEvasion').sweep(client).catch((err) => Logger.error('Ban evasion sweep failed', err));
         } catch (inviteError) {
             Logger.error('Invite registration sweep failed to start', inviteError);
         }
@@ -786,7 +796,7 @@ async function performRoleSync(client) {
                         // Send notification to IR release channel
                         const irReleaseChannel = await client.channels.fetch(INRESERVE_RELEASE_CHANNEL_ID);
                         await irReleaseChannel.send({
-                            content: `📋 **IR Release to Free Agent**\n\n${member} has been released from **In Reserve (IR)** to **Free Agent**.\n\n**Former Team:** ${currentTeam || 'Unknown'}\n**Division:** ${playerData.division}\n**Released On:** ${todayString}`
+                            content: `📋 **IR Release to Free Agent**\n\n${member} has been released from **In Reserve (IR)** to **Free Agent**.\n\n**Former Team:** ${currentTeam || 'Unknown'}\n**Division:** ${divisionLabel(playerData.division)}\n**Released On:** ${todayString}`
                         });
                         
                         Logger.success(`IR release completed for ${member.user.username} from ${currentTeam || 'Unknown'}`);
@@ -848,7 +858,7 @@ async function performRoleSync(client) {
                         }) + ' EST';
                         
                         await rfaChannel.send({
-                            content: `🔓 **RFA Released to FA**\n\n${member} has been released from **Restricted Free Agent (RFA)** status and is now a **Free Agent**.\n\n**Division:** ${playerData.division}\n**RFA Expired At:** ${playerData.rfaExpiry}\n**Released On:** ${releaseTimeEST}`
+                            content: `🔓 **RFA Released to FA**\n\n${member} has been released from **Restricted Free Agent (RFA)** status and is now a **Free Agent**.\n\n**Division:** ${divisionLabel(playerData.division)}\n**RFA Expired At:** ${playerData.rfaExpiry}\n**Released On:** ${releaseTimeEST}`
                         });
                     }
                 }
@@ -979,14 +989,35 @@ async function syncDivisionRole(member, playerData) {
     }
 }
 
+// Who has a running moderation suspension, refreshed at the start of each sync. When
+// that read fails `known` is false and nobody's Suspended role is removed: a suspension
+// must never be lifted because the database blipped.
+let moderationSuspensions = { known: false, ids: new Set() };
+
+async function loadModerationSuspensions() {
+    try {
+        const { activeSuspendedIds } = require('../moderation/suspensions');
+        moderationSuspensions = { known: true, ids: await activeSuspendedIds() };
+    } catch (err) {
+        moderationSuspensions = { known: false, ids: new Set() };
+        // The table simply not existing yet is the one safe failure.
+        if (/does not exist/.test(String(err.message))) moderationSuspensions.known = true;
+        else Logger.warning(`Role sync could not read active suspensions: ${err.message}`);
+    }
+}
+
+function mayRemoveSuspended(member) {
+    return moderationSuspensions.known && !moderationSuspensions.ids.has(member.id);
+}
+
 async function syncSuspendedRole(member, playerData) {
-    const shouldBeSuspended = playerData.suspended === 'YES';
+    const shouldBeSuspended = playerData.suspended === 'YES' || moderationSuspensions.ids.has(member.id);
     const hasSuspended = member.roles.cache.has(ROLES.SUSPENDED);
 
     if (shouldBeSuspended && !hasSuspended) {
         await member.roles.add(ROLES.SUSPENDED);
         Logger.info(`Added Suspended role to ${member.user.username}`);
-    } else if (!shouldBeSuspended && hasSuspended) {
+    } else if (!shouldBeSuspended && hasSuspended && mayRemoveSuspended(member)) {
         await member.roles.remove(ROLES.SUSPENDED);
         Logger.info(`Removed Suspended role from ${member.user.username}`);
     }
@@ -1025,7 +1056,7 @@ async function stripBotAutoRoles(member) {
         await member.roles.remove(ROLES.NO_SALARY);
         removed.push('No Salary');
     }
-    if (member.roles.cache.has(ROLES.SUSPENDED)) {
+    if (member.roles.cache.has(ROLES.SUSPENDED) && mayRemoveSuspended(member)) {
         await member.roles.remove(ROLES.SUSPENDED);
         removed.push('Suspended');
     }
@@ -1036,13 +1067,13 @@ async function stripBotAutoRoles(member) {
     for (const [division, divisionRoleId] of Object.entries(ROLES.DIVISIONS)) {
         if (member.roles.cache.has(divisionRoleId)) {
             await member.roles.remove(divisionRoleId);
-            removed.push(`${division} Division`);
+            removed.push(`${divisionLabel(division)} Division`);
         }
     }
     for (const [division, faRoleId] of Object.entries(ROLES.FREE_AGENTS)) {
         if (member.roles.cache.has(faRoleId)) {
             await member.roles.remove(faRoleId);
-            removed.push(`${division} FA`);
+            removed.push(`${divisionLabel(division)} FA`);
         }
     }
 
@@ -1077,8 +1108,8 @@ async function cleanupNoSalaryPlayer(member) {
         }
     }
 
-    // Remove suspended role if present
-    if (member.roles.cache.has(ROLES.SUSPENDED)) {
+    // Remove suspended role if present, unless a moderation suspension is running
+    if (member.roles.cache.has(ROLES.SUSPENDED) && mayRemoveSuspended(member)) {
         await member.roles.remove(ROLES.SUSPENDED);
         changesMade = true;
     }
@@ -1116,7 +1147,7 @@ function getPlayerCurrentTeam(member) {
     for (const [division, teams] of Object.entries(TEAM_ROLES)) {
         for (const [teamName, roleId] of Object.entries(teams)) {
             if (member.roles.cache.has(roleId)) {
-                return `${teamName} (${division})`;
+                return `${teamName} (${divisionLabel(division)})`;
             }
         }
     }
@@ -1127,7 +1158,7 @@ function getPlayerCurrentTeam(member) {
             // Get division from league role
             for (const [division, divisionRoleId] of Object.entries(ROLES.DIVISIONS)) {
                 if (member.roles.cache.has(divisionRoleId)) {
-                    return `${teamName} (${division})`;
+                    return `${teamName} (${divisionLabel(division)})`;
                 }
             }
         }

@@ -7,6 +7,10 @@ const Logger = require('../utils/logger');
 const { ROLES, TEAM_ROLES, NP_ROLES, DIVISIONS } = require('../constants/roles');
 const { TransactionDB } = require('../utils/database');
 const { attachTeamLogo } = require('../utils/teamRoles');
+const { divisionLabel } = require('../utils/divisionLabels');
+const { managerRoleEntries } = require('../utils/franchiseManagers');
+const { addSuspensionWarning } = require('../moderation/suspensions');
+const { salaryBelowMinimum, belowMinimumMessage } = require('../utils/salaryMinimum');
 
 // Command-specific channel IDs
 const TRANSACTION_REQUEST_CHANNEL_ID = '1178913188750823544';
@@ -81,7 +85,9 @@ class GoogleSheetsManager {
                         eligible: row[9], // Column J
                         inReserve: row[10], // Column K
                         suspended: row[11], // Column L
-                        playing: row[12] // Column M
+                        playing: row[12], // Column M
+                        calculated: row[13], // Column N
+                        salary: row[14] // Column O
                     };
                 }
             }
@@ -163,9 +169,9 @@ class GoogleSheetsManager {
 
 const sheetsManager = new GoogleSheetsManager();
 
-// Helper function to check if user is a GM
+// Helper function to check if user is a GM (or Assistant GM — same powers)
 function isGM(member) {
-    for (const [teamName, gmRoleId] of Object.entries(ROLES.GM_ROLES)) {
+    for (const [teamName, gmRoleId] of managerRoleEntries()) {
         if (member.roles.cache.has(gmRoleId)) {
             return { isGM: true, teamName: teamName };
         }
@@ -193,10 +199,13 @@ function validateEligibility(userData) {
         errors.push('Player is in Reserve (IR)');
     }
     
-    if (userData.suspended === 'YES') {
-        errors.push('Player is Suspended');
+    // Suspended players can sign (rule 6.1.3); the request carries a warning instead.
+
+    const lowSalary = salaryBelowMinimum(userData.salary, userData.calculated);
+    if (lowSalary !== null) {
+        errors.push(belowMinimumMessage(lowSalary));
     }
-    
+
     return {
         valid: errors.length === 0,
         errors
@@ -222,9 +231,9 @@ module.exports = {
                 .setDescription('Division for captain role')
                 .setRequired(true)
                 .addChoices(
-                    { name: 'AA', value: 'AA' },
-                    { name: 'AAA', value: 'AAA' },
-                    { name: 'MAJORS', value: 'MAJORS' }
+                    { name: 'Academy', value: 'AA' },
+                    { name: 'Contenders', value: 'AAA' },
+                    { name: 'Premier', value: 'MAJORS' }
                 )),
 
     async execute(interaction) {
@@ -255,7 +264,7 @@ module.exports = {
             // Check if team exists in the specified division
             if (!TEAM_ROLES[division] || !TEAM_ROLES[division][teamName]) {
                 await interaction.editReply({
-                    content: `❌ ${teamName} does not exist in the ${division} division. You cannot sign a non-playing captain for a division your team is not in.`,
+                    content: `❌ ${teamName} does not exist in the ${divisionLabel(division)} division. You cannot sign a non-playing captain for a division your team is not in.`,
                 });
                 return;
             }
@@ -273,7 +282,7 @@ module.exports = {
             const captainRoleId = ROLES.CAPTAINS[division];
             if (!captainRoleId) {
                 await interaction.editReply({
-                    content: `❌ No captain role found for ${division} division.`,
+                    content: `❌ No captain role found for ${divisionLabel(division)} division.`,
                 });
                 return;
             }
@@ -290,7 +299,7 @@ module.exports = {
                     for (const [memberId, guildMember] of membersWithCaptainRole) {
                         if (guildMember.roles.cache.has(teamRoleId) || guildMember.roles.cache.has(npRoleId)) {
                             await interaction.editReply({
-                                content: `❌ ${teamName} already has a ${division} captain: ${guildMember.user.username}. Each team can only have one captain per division.`,
+                                content: `❌ ${teamName} already has a ${divisionLabel(division)} captain: ${guildMember.user.username}. Each team can only have one captain per division.`,
                             });
                             return;
                         }
@@ -301,7 +310,7 @@ module.exports = {
             // Check if player already has captain role
             if (playerMember.roles.cache.has(captainRoleId)) {
                 await interaction.editReply({
-                    content: `❌ ${player.username} is already a ${division} captain.`,
+                    content: `❌ ${player.username} is already a ${divisionLabel(division)} captain.`,
                 });
                 return;
             }
@@ -324,10 +333,10 @@ module.exports = {
 
             const transactionEmbed = new EmbedBuilder()
                 .setTitle('⭐ Non-Playing Captain Sign Request')
-                .setDescription(`${player}, **${teamName}** wants to sign you as a **non-playing ${division} captain**!\n\n⚠️ **Note:** You will receive:\n• ${teamName} NP role\n• ${division} Captain role\n\nYou will be marked as NOT playing.`)
+                .setDescription(`${player}, **${teamName}** wants to sign you as a **non-playing ${divisionLabel(division)} captain**!\n\n⚠️ **Note:** You will receive:\n• ${teamName} NP role\n• ${divisionLabel(division)} Captain role\n\nYou will be marked as NOT playing.`)
                 .addFields(
                     { name: 'Team', value: teamName, inline: true },
-                    { name: 'Division', value: division, inline: true },
+                    { name: 'Division', value: divisionLabel(division), inline: true },
                     { name: 'Player', value: player.username, inline: true },
                     { name: 'Offered By', value: interaction.user.username, inline: true },
                     { name: 'Required Approvals', value: '✅ Salary Crew\n✅ Player', inline: false }
@@ -335,6 +344,9 @@ module.exports = {
                 .setColor(0x9B59B6)
                 .setTimestamp()
                 .setFooter({ text: '✅ to accept or ❌ to decline.' });
+
+            // Rule 6.1.3: a suspended free agent can sign, but everyone approving should know.
+            await addSuspensionWarning(transactionEmbed, player.id);
 
             const transactionMessage = await transactionChannel.send({
                 content: `${player}`,
@@ -576,10 +588,10 @@ async function processNonPlayingCaptainSignCompletion(transaction, message, clie
         const transactionChannel = await client.channels.fetch(TRANSACTION_CONFIRMATION_CHANNEL_ID);
         
         const confirmationEmbed = new EmbedBuilder()
-            .setTitle(`${transaction.teamName} signs ${transaction.playerUsername} as Non-Playing ${transaction.division} Captain`)
-            .setDescription(`${player} has been signed as a **non-playing ${transaction.division} captain** of **${transaction.teamName}**.`)
+            .setTitle(`${transaction.teamName} signs ${transaction.playerUsername} as Non-Playing ${divisionLabel(transaction.division)} Captain`)
+            .setDescription(`${player} has been signed as a **non-playing ${divisionLabel(transaction.division)} captain** of **${transaction.teamName}**.`)
             .addFields(
-                { name: 'Roles Given', value: `• ${transaction.teamName} NP\n• ${transaction.division} Captain`, inline: true },
+                { name: 'Roles Given', value: `• ${transaction.teamName} NP\n• ${divisionLabel(transaction.division)} Captain`, inline: true },
                 { name: 'Offered By', value: transaction.offeredByUsername, inline: true },
                 { name: 'Approved By (Salary Crew)', value: transaction.approvedBy, inline: true }
             )

@@ -55,7 +55,7 @@ function validateWinsSettings(body, current) {
   if (enabled) {
     const missing = WINS_MIN_KEYS.filter((k) => !(Number(body[k] ?? current[k]) > 0))
     if (missing.length) {
-      const err = new Error('Set and save a minimum for AA, AAA and Majors before turning the lifetime-wins check on.')
+      const err = new Error('Set and save a minimum for Academy, Contenders and Premier before turning the lifetime-wins check on.')
       err.status = 400
       throw err
     }

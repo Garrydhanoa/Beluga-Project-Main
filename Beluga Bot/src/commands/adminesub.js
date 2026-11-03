@@ -4,6 +4,9 @@ const { ROLES } = require('../constants/roles');
 const { TransactionDB } = require('../utils/database');
 const { attachTeamLogo, teamAutocomplete, findTeam, getActiveSeasonId } = require('../utils/teamRoles');
 const { getEsubLimit, getEsubUsed, consumeEsub, refundEsub } = require('../utils/esubStore');
+const { divisionLabel } = require('../utils/divisionLabels');
+const { getFreshSalSheetRow } = require('../utils/salSheetLookup');
+const { salaryBelowMinimum, belowMinimumMessage } = require('../utils/salaryMinimum');
 
 // Command-specific constants
 const TRANSACTION_REQUEST_CHANNEL_ID = '1178913188750823544';
@@ -48,9 +51,9 @@ module.exports = {
                 .setDescription('Division')
                 .setRequired(true)
                 .addChoices(
-                    { name: 'AA', value: 'AA' },
-                    { name: 'AAA', value: 'AAA' },
-                    { name: 'MAJORS', value: 'MAJORS' }
+                    { name: 'Academy', value: 'AA' },
+                    { name: 'Contenders', value: 'AAA' },
+                    { name: 'Premier', value: 'MAJORS' }
                 )
         )
         .addUserOption(option =>
@@ -96,7 +99,7 @@ module.exports = {
             const team = await findTeam(teamName, division);
             if (!team) {
                 return await interaction.editReply({
-                    content: `❌ **${teamName}** does not exist in the ${division} division.`,
+                    content: `❌ **${teamName}** does not exist in the ${divisionLabel(division)} division.`,
                 });
             }
             const esubLimit = await getEsubLimit(seasonId);
@@ -108,7 +111,16 @@ module.exports = {
                 const freeAgentRoleId = ROLES.FREE_AGENTS[division];
                 if (!freeAgentRoleId || !playerMember.roles.cache.has(freeAgentRoleId)) {
                     return await interaction.editReply({
-                        content: `❌ ${player.username} is not a ${division} free agent.`,
+                        content: `❌ ${player.username} is not a ${divisionLabel(division)} free agent.`,
+                    });
+                }
+
+                // A one-day sub is still a signing, so the salary minimum applies.
+                const sheetRow = await getFreshSalSheetRow(player.id);
+                const lowSalary = salaryBelowMinimum(sheetRow?.salary, sheetRow?.calculated);
+                if (lowSalary !== null) {
+                    return await interaction.editReply({
+                        content: `❌ ${belowMinimumMessage(lowSalary)}`,
                     });
                 }
 
@@ -116,7 +128,7 @@ module.exports = {
                 const currentEsubCount = await getEsubUsed(seasonId, team.id);
                 if (currentEsubCount >= esubLimit) {
                     return await interaction.editReply({
-                        content: `❌ ${teamName} has already used all ${esubLimit} one-day subs for ${division} this season (${currentEsubCount}/${esubLimit}).`,
+                        content: `❌ ${teamName} has already used all ${esubLimit} one-day subs for ${divisionLabel(division)} this season (${currentEsubCount}/${esubLimit}).`,
                     });
                 }
 
@@ -135,7 +147,7 @@ module.exports = {
                     .addFields(
                         { name: 'Player', value: `<@${player.id}>`, inline: true },
                         { name: 'Team', value: teamName, inline: true },
-                        { name: 'Division', value: division, inline: true },
+                        { name: 'Division', value: divisionLabel(division), inline: true },
                         { name: 'E-Subs Used', value: `${currentEsubCount}/${esubLimit} (will be ${currentEsubCount + 1}/${esubLimit})`, inline: true },
                         { name: 'Requested By', value: `${interaction.user.username} (Salary Crew)`, inline: false },
                         { name: 'Required Approvals', value: '⏳ One other Salary Crew member', inline: false }
@@ -188,7 +200,7 @@ module.exports = {
                 }, 12 * 60 * 60 * 1000);
 
                 await interaction.editReply({
-                    content: `✅ Admin one-day sub request sent! Waiting for another Salary Crew member to approve. ${teamName} has used ${currentEsubCount}/${esubLimit} e-subs for ${division}.`,
+                    content: `✅ Admin one-day sub request sent! Waiting for another Salary Crew member to approve. ${teamName} has used ${currentEsubCount}/${esubLimit} e-subs for ${divisionLabel(division)}.`,
                 });
 
             } else if (action === 'CANCEL') {
@@ -199,7 +211,7 @@ module.exports = {
 
                 if (currentEsubCount <= 0) {
                     return await interaction.editReply({
-                        content: `❌ ${teamName} has no recorded one-day subs to cancel for ${division} (${currentEsubCount}/${esubLimit}).`,
+                        content: `❌ ${teamName} has no recorded one-day subs to cancel for ${divisionLabel(division)} (${currentEsubCount}/${esubLimit}).`,
                     });
                 }
 
@@ -216,7 +228,7 @@ module.exports = {
                         .setDescription(`<@${player.id}>'s one-day sub contract with **${teamName}** has been cancelled.`)
                         .addFields(
                             { name: 'Team', value: teamName, inline: true },
-                            { name: 'Division', value: division, inline: true },
+                            { name: 'Division', value: divisionLabel(division), inline: true },
                             { name: 'E-Subs Used', value: `${newCount}/${esubLimit}`, inline: true },
                             { name: 'Cancelled By', value: `${interaction.user.username} (Salary Crew)`, inline: true }
                         )
@@ -240,7 +252,7 @@ module.exports = {
                 const esubChannel = await interaction.guild.channels.fetch(ESUB_TRACKING_CHANNEL_ID);
                 if (esubChannel) {
                     const trackingEmbed = new EmbedBuilder()
-                        .setDescription(`**${teamName}** cancelled <@${player.id}>'s one-day sub for **${division}** (${newCount}/${esubLimit} used)`)
+                        .setDescription(`**${teamName}** cancelled <@${player.id}>'s one-day sub for **${divisionLabel(division)}** (${newCount}/${esubLimit} used)`)
                         .setColor(0xFF0000)
                         .setTimestamp();
 
@@ -257,7 +269,7 @@ module.exports = {
                 }
 
                 await interaction.editReply({
-                    content: `✅ One-day sub cancelled! ${teamName} now has ${newCount}/${esubLimit} e-subs used for ${division}.`,
+                    content: `✅ One-day sub cancelled! ${teamName} now has ${newCount}/${esubLimit} e-subs used for ${divisionLabel(division)}.`,
                 });
 
                 Logger.success(`One-day sub cancelled: ${player.username} from ${teamName} ${division} by ${interaction.user.username}`);
@@ -306,7 +318,7 @@ module.exports = {
             );
             if (newCount === null) {
                 await message.channel.send({
-                    content: `❌ **${transaction.teamName}** has already used all ${esubLimit} ${transaction.division} one-day subs this season — this request was not applied.`
+                    content: `❌ **${transaction.teamName}** has already used all ${esubLimit} ${divisionLabel(transaction.division)} one-day subs this season — this request was not applied.`
                 });
                 return;
             }
@@ -319,7 +331,7 @@ module.exports = {
                 .setDescription(`<@${transaction.playerId}> has been signed as a one-day substitute for **${transaction.teamName}** by Salary Crew.`)
                 .addFields(
                     { name: 'Team', value: transaction.teamName, inline: true },
-                    { name: 'Division', value: transaction.division, inline: true },
+                    { name: 'Division', value: divisionLabel(transaction.division), inline: true },
                     { name: 'E-Subs Used', value: `${newCount}/${esubLimit}`, inline: true },
                     { name: 'Processed By', value: transaction.requestedByUsername, inline: true }
                 )
@@ -343,7 +355,7 @@ module.exports = {
             const esubChannel = await client.channels.fetch(ESUB_TRACKING_CHANNEL_ID);
             if (esubChannel) {
                 const trackingEmbed = new EmbedBuilder()
-                    .setDescription(`**${transaction.teamName}** signed <@${transaction.playerId}> as a one-day sub for **${transaction.division}** via admin (${newCount}/${esubLimit} used)`)
+                    .setDescription(`**${transaction.teamName}** signed <@${transaction.playerId}> as a one-day sub for **${divisionLabel(transaction.division)}** via admin (${newCount}/${esubLimit} used)`)
                     .setColor(0x0099FF)
                     .setTimestamp();
 

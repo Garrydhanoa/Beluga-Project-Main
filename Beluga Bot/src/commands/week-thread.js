@@ -13,6 +13,7 @@ const { pool, isDatabaseAvailable, LeagueDB } = require('../utils/database');
 const transcriptStore = require('../utils/transcriptStore');
 // Week rollover is 9:00 AM Monday US Eastern, not UTC midnight.
 const { currentLeagueWeek, weekOpensAt, formatEastern } = require('../utils/leagueWeek');
+const { divisionLabel } = require('../utils/divisionLabels');
 // Playoff rounds live at week 90 + round. Those integers stay (threadContext and
 // the ranking/game-of-week filters key off `week >= 90`), but every string a
 // human reads goes through weekLabel so nobody is shown "Week 91" again.
@@ -364,7 +365,8 @@ async function createMatchThread(channel, weekNumber, matchNumber, team1, team2,
             const r = await pool.query(
                 `SELECT t.name, t.discord_role_id,
                     COALESCE(f.gm_role_id, t.discord_gm_role_id) AS gm_role_id,
-                    COALESCE(f.np_role_id, t.discord_np_role_id) AS np_role_id
+                    COALESCE(f.np_role_id, t.discord_np_role_id) AS np_role_id,
+                    (to_jsonb(f) ->> 'agm_role_id') AS agm_role_id
                  FROM teams t
                  LEFT JOIN team_franchises f ON f.id = t.franchise_id
                  WHERE t.division = $1 AND t.is_active = TRUE AND t.name = ANY($2::text[])`,
@@ -375,6 +377,7 @@ async function createMatchThread(channel, weekNumber, matchNumber, team1, team2,
                     team: row.discord_role_id || null,
                     gm: row.gm_role_id || null,
                     np: row.np_role_id || null,
+                    agm: row.agm_role_id || null,
                 };
             }
         }
@@ -394,8 +397,8 @@ async function createMatchThread(channel, weekNumber, matchNumber, team1, team2,
         // The round names come from the shared bracket helper so a thread, an
         // embed and a slash reply can never disagree about what week 92 is.
         const threadName = isPlayoffWeek(weekNumber)
-            ? `Playoffs ${shortRoundName(roundNameFor(roundFromWeek(weekNumber), 3))}: ${division}: ${team1} vs ${team2}`
-            : `Week ${weekNumber}: ${division}: ${team1} vs ${team2}`;
+            ? `Playoffs ${shortRoundName(roundNameFor(roundFromWeek(weekNumber), 3))}: ${divisionLabel(division)}: ${team1} vs ${team2}`
+            : `Week ${weekNumber}: ${divisionLabel(division)}: ${team1} vs ${team2}`;
         
         // Create private thread with invites disabled
         const thread = await channel.threads.create({
@@ -432,6 +435,13 @@ async function createMatchThread(channel, weekNumber, matchNumber, team1, team2,
             }
         }
         
+        // Assistant GMs (S11) have the same powers as GMs, so they join the same threads.
+        for (const agmRoleId of [roleFor(team1, 'agm'), roleFor(team2, 'agm')]) {
+            if (!agmRoleId) continue;
+            const agmRole = await guild.roles.fetch(agmRoleId).catch(() => null);
+            if (agmRole) agmRole.members.forEach(member => gmsToAdd.add(member.id));
+        }
+
         // Add all GMs to thread
         for (const gmId of gmsToAdd) {
             try {
@@ -506,7 +516,7 @@ async function createMatchThread(channel, weekNumber, matchNumber, team1, team2,
         const openingEmbed = new EmbedBuilder()
             .setTitle(isPlayoffWeek(weekNumber) ? `${weekLabel(weekNumber)} Match Thread` : `Week ${weekNumber} Match Thread`)
             .setDescription(
-                `**${team1}** vs **${team2}**\n\n**Division:** ${division}\n` +
+                `**${team1}** vs **${team2}**\n\n**Division:** ${divisionLabel(division)}\n` +
                 `**${isPlayoffWeek(weekNumber) ? 'Round' : 'Week'}:** ${isPlayoffWeek(weekNumber) ? roundNameFor(roundFromWeek(weekNumber), 3) : weekNumber}\n` +
                 `**Match:** ${matchNumber}`
             )
@@ -519,7 +529,7 @@ async function createMatchThread(channel, weekNumber, matchNumber, team1, team2,
             )
             .setColor(0x3498DB)
             .setTimestamp()
-            .setFooter({ text: `${division} Division` });
+            .setFooter({ text: `${divisionLabel(division)} Division` });
 
         await thread.send({
             content: `<@&${team1RoleId}> vs <@&${team2RoleId}>\n\n**This is your private match scheduling thread.** Anything related to scheduling should be discussed here. In case of an FF, this thread will be examined.`,
@@ -682,10 +692,10 @@ async function deleteWeekThreads(guild, weekNumber, client, closedByUsername = '
                 // Post a pointer to the website transcript (no more dpaste link).
                 if (transcriptChannel) {
                     const transcriptEmbed = new EmbedBuilder()
-                        .setTitle(`🧵 ${weekLabel(weekNumber)} Thread Closed: ${record.division}`)
+                        .setTitle(`🧵 ${weekLabel(weekNumber)} Thread Closed: ${divisionLabel(record.division)}`)
                         .setDescription(`**${record.team1}** vs **${record.team2}**\n\n${weekThreadTranscriptPointer()}`)
                         .addFields(
-                            { name: 'Division', value: record.division, inline: true },
+                            { name: 'Division', value: divisionLabel(record.division), inline: true },
                             { name: 'Week', value: `${weekNumber}`, inline: true },
                             { name: 'Archived', value: new Date().toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'short', timeStyle: 'short' }), inline: true }
                         )
@@ -961,7 +971,7 @@ async function deleteSingleWeekThread(guild, weekThreadId, client, closedByUsern
                 if (transcriptChannel?.isTextBased?.()) {
                     const embed = new EmbedBuilder()
                         .setColor(0x3498DB)
-                        .setTitle(`🧵 ${weekLabel(record.week_number)} Thread Closed: ${record.division}`)
+                        .setTitle(`🧵 ${weekLabel(record.week_number)} Thread Closed: ${divisionLabel(record.division)}`)
                         .setDescription(`**${record.team1}** vs **${record.team2}**\n\n${weekThreadTranscriptPointer()}`)
                         .setFooter({ text: `Closed by ${closedByUsername}` })
                         .setTimestamp();

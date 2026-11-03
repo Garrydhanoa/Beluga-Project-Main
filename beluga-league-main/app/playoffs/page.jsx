@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { useSeason, seasonQuerySuffix } from '../components/SeasonContext'
 import SeasonPicker from '../components/SeasonPicker'
 import PlayoffBracket from '../components/PlayoffBracket'
+import { DIVISION_LABELS, divisionLabel } from '../../lib/divisionLabels'
 
 /**
  * The public playoff bracket page.
@@ -19,9 +20,9 @@ import PlayoffBracket from '../components/PlayoffBracket'
  */
 
 const DIVISIONS = [
-  { key: 'Majors', label: 'Majors' },
-  { key: 'AAA', label: 'AAA' },
-  { key: 'AA', label: 'AA' },
+  { key: 'Majors', label: DIVISION_LABELS.Majors },
+  { key: 'AAA', label: DIVISION_LABELS.AAA },
+  { key: 'AA', label: DIVISION_LABELS.AA },
 ]
 
 // Copied locally, exactly as every other public page does.
@@ -121,7 +122,7 @@ export default function PlayoffsPage() {
           <div className="text-center py-20 text-sm text-blue-200/60">Loading…</div>
         ) : !bracket ? (
           <div className="text-center py-20 text-sm text-white/40 rounded-2xl bg-white/[0.02] border border-dashed border-white/10">
-            No {activeDivision} bracket published yet.
+            No {divisionLabel(activeDivision)} bracket published yet.
           </div>
         ) : (
           <FadeIn>

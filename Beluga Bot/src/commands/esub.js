@@ -4,6 +4,9 @@ const { ROLES } = require('../constants/roles');
 const { TransactionDB } = require('../utils/database');
 const { attachTeamLogo, getActiveSeasonId, resolveMemberTeamInDivision } = require('../utils/teamRoles');
 const { getEsubLimit, getEsubUsed, consumeEsub } = require('../utils/esubStore');
+const { divisionLabel } = require('../utils/divisionLabels');
+const { getFreshSalSheetRow } = require('../utils/salSheetLookup');
+const { salaryBelowMinimum, belowMinimumMessage } = require('../utils/salaryMinimum');
 
 // Command-specific constants
 const TRANSACTION_REQUEST_CHANNEL_ID = '1178913188750823544';
@@ -37,9 +40,9 @@ module.exports = {
                 .setDescription('Division to sign the player to')
                 .setRequired(true)
                 .addChoices(
-                    { name: 'AA', value: 'AA' },
-                    { name: 'AAA', value: 'AAA' },
-                    { name: 'MAJORS', value: 'MAJORS' }
+                    { name: 'Academy', value: 'AA' },
+                    { name: 'Contenders', value: 'AAA' },
+                    { name: 'Premier', value: 'MAJORS' }
                 )
         ),
 
@@ -64,7 +67,7 @@ module.exports = {
             const link = await resolveMemberTeamInDivision(initiatorMember, division);
             if (!link) {
                 return await interaction.editReply({
-                    content: `❌ Could not determine your ${division} team.`,
+                    content: `❌ Could not determine your ${divisionLabel(division)} team.`,
                 });
             }
 
@@ -77,7 +80,7 @@ module.exports = {
             const userIsGM = link.isGM;
             if (!userIsGM && !link.hasCaptainRole) {
                 return await interaction.editReply({
-                    content: `❌ Only General Managers and ${division} Captains can sign one-day subs for ${division}.`,
+                    content: `❌ Only General Managers, Assistant GMs and ${divisionLabel(division)} Captains can sign one-day subs for ${divisionLabel(division)}.`,
                 });
             }
 
@@ -85,7 +88,16 @@ module.exports = {
             const freeAgentRoleId = ROLES.FREE_AGENTS[division];
             if (!freeAgentRoleId || !playerMember.roles.cache.has(freeAgentRoleId)) {
                 return await interaction.editReply({
-                    content: `❌ ${player.username} is not a ${division} free agent.`,
+                    content: `❌ ${player.username} is not a ${divisionLabel(division)} free agent.`,
+                });
+            }
+
+            // A one-day sub is still a signing, so the salary minimum applies.
+            const sheetRow = await getFreshSalSheetRow(player.id);
+            const lowSalary = salaryBelowMinimum(sheetRow?.salary, sheetRow?.calculated);
+            if (lowSalary !== null) {
+                return await interaction.editReply({
+                    content: `❌ ${belowMinimumMessage(lowSalary)}`,
                 });
             }
 
@@ -94,7 +106,7 @@ module.exports = {
             const currentEsubCount = await getEsubUsed(seasonId, initiatorTeamId);
             if (currentEsubCount >= esubLimit) {
                 return await interaction.editReply({
-                    content: `❌ Your team has already used all ${esubLimit} one-day subs for ${division} this season (${currentEsubCount}/${esubLimit}).`,
+                    content: `❌ Your team has already used all ${esubLimit} one-day subs for ${divisionLabel(division)} this season (${currentEsubCount}/${esubLimit}).`,
                 });
             }
 
@@ -113,9 +125,9 @@ module.exports = {
                 .addFields(
                     { name: 'Player', value: `<@${player.id}>`, inline: true },
                     { name: 'Team', value: initiatorTeam, inline: true },
-                    { name: 'Division', value: division, inline: true },
+                    { name: 'Division', value: divisionLabel(division), inline: true },
                     { name: 'E-Subs Used', value: `${currentEsubCount}/${esubLimit} (will be ${currentEsubCount + 1}/${esubLimit})`, inline: true },
-                    { name: 'Requested By', value: `${interaction.user.username} (${userIsGM ? 'GM' : `${division} Captain`})`, inline: false },
+                    { name: 'Requested By', value: `${interaction.user.username} (${userIsGM ? (link.isAGM ? 'AGM' : 'GM') : `${divisionLabel(division)} Captain`})`, inline: false },
                     { name: 'Required Approvals', value: '✅ Salary Crew\n✅ Player', inline: false }
                 )
                 .setColor(0xFF9900)
@@ -170,7 +182,7 @@ module.exports = {
             }, 12 * 60 * 60 * 1000);
 
             await interaction.editReply({
-                content: `✅ One-day sub request sent! Your team has used ${currentEsubCount}/${esubLimit} e-subs for ${division}. Waiting for Salary Crew and player approval.`,
+                content: `✅ One-day sub request sent! Your team has used ${currentEsubCount}/${esubLimit} e-subs for ${divisionLabel(division)}. Waiting for Salary Crew and player approval.`,
             });
 
         } catch (error) {
@@ -216,7 +228,7 @@ module.exports = {
             );
             if (newCount === null) {
                 await message.channel.send({
-                    content: `❌ **${transaction.teamName}** has already used all ${esubLimit} ${transaction.division} one-day subs this season — this request was not applied.`
+                    content: `❌ **${transaction.teamName}** has already used all ${esubLimit} ${divisionLabel(transaction.division)} one-day subs this season — this request was not applied.`
                 });
                 return;
             }
@@ -229,7 +241,7 @@ module.exports = {
                 .setDescription(`<@${transaction.playerId}> has been signed as a one-day substitute for **${transaction.teamName}**.`)
                 .addFields(
                     { name: 'Team', value: transaction.teamName, inline: true },
-                    { name: 'Division', value: transaction.division, inline: true },
+                    { name: 'Division', value: divisionLabel(transaction.division), inline: true },
                     { name: 'E-Subs Used', value: `${newCount}/${esubLimit}`, inline: true },
                     { name: 'Requested By', value: transaction.requestedByUsername, inline: true }
                 )
@@ -255,7 +267,7 @@ module.exports = {
             const esubChannel = await client.channels.fetch(ESUB_TRACKING_CHANNEL_ID);
             if (esubChannel) {
                 const trackingEmbed = new EmbedBuilder()
-                    .setDescription(`**${transaction.teamName}** signed <@${transaction.playerId}> as a one-day sub for **${transaction.division}** (${newCount}/${esubLimit} used)`)
+                    .setDescription(`**${transaction.teamName}** signed <@${transaction.playerId}> as a one-day sub for **${divisionLabel(transaction.division)}** (${newCount}/${esubLimit} used)`)
                     .setColor(0xFF9900)
                     .setTimestamp();
 

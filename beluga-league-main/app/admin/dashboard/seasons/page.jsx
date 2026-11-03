@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { divisionLabel } from '../../../../lib/divisionLabels'
 
 const DIVISIONS = ['Majors', 'AAA', 'AA']
 const DEFAULT_ROSTER_SIZE = 4
@@ -604,7 +605,7 @@ function OnFieldCapsPanel({ seasonId }) {
         <>
           <div className="grid grid-cols-3 gap-3">
             {DIVISIONS.map((d) => (
-              <Field key={d} label={`${d} cap`}>
+              <Field key={d} label={`${divisionLabel(d)} cap`}>
                 <input type="number" min={0} step="0.01" value={caps[d]}
                   onChange={(e) => setCaps({ ...caps, [d]: e.target.value })}
                   placeholder="—"
@@ -754,7 +755,7 @@ function ChampionCard({ division, champion, teams, suggestion, saving, onSave, o
   return (
     <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10">
       <div className="flex items-center justify-between mb-3">
-        <span className="text-sm font-black text-white tracking-wider uppercase">{division}</span>
+        <span className="text-sm font-black text-white tracking-wider uppercase">{divisionLabel(division)}</span>
         {champion ? (
           <span className="text-[10px] uppercase font-bold tracking-wider text-yellow-300 bg-yellow-500/10 border border-yellow-400/30 px-2 py-0.5 rounded">Champion set</span>
         ) : (
@@ -942,7 +943,7 @@ function NewSeasonWizard({ onClose, onCreated }) {
       if (!bulkRes.ok) {
         // Show partial results so the user knows what was attempted.
         const lines = (bulkData.results || []).map((r) => {
-          if (r.status === 'created' || r.status === 'updated') return `✓ ${r.division}: ${r.name} (${r.status})`
+          if (r.status === 'created' || r.status === 'updated') return `✓ ${divisionLabel(r.division)}: ${r.name} (${r.status})`
           if (r.status === 'skipped') return `– ${r.division || '?'}: skipped (${r.error})`
           return `✗ ${r.division || '?'}: ${r.error || 'unknown'}`
         })
@@ -955,7 +956,7 @@ function NewSeasonWizard({ onClose, onCreated }) {
       const expected = Object.entries(teamsPerDivision).filter(([_, n]) => n > 0)
       const unmet = expected.filter(([d, n]) => (summary[d] || 0) < n)
       if (unmet.length > 0) {
-        const detail = unmet.map(([d, n]) => `${d}: expected ${n}, got ${summary[d] || 0}`).join(', ')
+        const detail = unmet.map(([d, n]) => `${divisionLabel(d)}: expected ${n}, got ${summary[d] || 0}`).join(', ')
         const skipDetail = (bulkData.results || [])
           .filter((r) => r.status === 'skipped')
           .map((r) => `${r.division || '?'}: ${r.error}`)
@@ -1031,7 +1032,7 @@ function NewSeasonWizard({ onClose, onCreated }) {
           <p className="text-sm text-blue-100/60">How many teams per division? Drives standings layout and the schedule generator.</p>
           <div className="grid grid-cols-3 gap-3">
             {DIVISIONS.map((d) => (
-              <Field key={d} label={d}>
+              <Field key={d} label={divisionLabel(d)}>
                 <input type="number" min={0} max={32} value={counts[d]}
                   onChange={(e) => setCounts({ ...counts, [d]: parseInt(e.target.value, 10) || 0 })}
                   className="w-full px-3 py-2 bg-black/40 border border-white/10 rounded-lg text-white text-lg font-bold" />
@@ -1083,7 +1084,7 @@ function NewSeasonWizard({ onClose, onCreated }) {
             })
             return (
               <div key={d} className="p-4 rounded-xl bg-white/[0.03] border border-white/10">
-                <div className="text-sm font-bold text-white mb-3 uppercase tracking-wider">{d} <span className="text-blue-300/70 text-xs">({slots} slots)</span></div>
+                <div className="text-sm font-bold text-white mb-3 uppercase tracking-wider">{divisionLabel(d)} <span className="text-blue-300/70 text-xs">({slots} slots)</span></div>
                 <div className="space-y-2">
                   {Array.from({ length: slots }).map((_, i) => {
                     const pick = picks[d]?.[i]
@@ -1105,7 +1106,7 @@ function NewSeasonWizard({ onClose, onCreated }) {
                           <option value="">— Select —</option>
                           {ranked.map((s) => (
                             <option key={s.id} value={s.id}>
-                              {s.name}{s.defaultDivision ? ` [${s.defaultDivision}]` : ''}{s.lastSeasonNumber ? ` · last S${s.lastSeasonNumber}` : ' · new'}
+                              {s.name}{s.defaultDivision ? ` [${divisionLabel(s.defaultDivision)}]` : ''}{s.lastSeasonNumber ? ` · last S${s.lastSeasonNumber}` : ' · new'}
                             </option>
                           ))}
                           <option value="__new__">+ Add new team…</option>

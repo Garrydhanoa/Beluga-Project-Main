@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { DiscordTranscriptModal } from '../../../components/DiscordTranscript'
+import { divisionLabel } from '../../../../lib/divisionLabels'
 
 const DIVISIONS = ['Majors', 'AAA', 'AA']
 
@@ -298,7 +299,7 @@ function ArchivedThreadsSection({ archives, onViewTranscript, onDeleteOne, onDel
               <ul className="space-y-1">
                 {byWeek[w].map((a) => (
                   <li key={a.threadId} className="flex items-center gap-2 px-2 py-1.5 rounded text-xs bg-white/[0.02] border border-white/5">
-                    <span className="text-blue-200/80 w-14 text-[10px] uppercase font-bold">{a.division}</span>
+                    <span className="text-blue-200/80 w-20 shrink-0 text-[10px] uppercase font-bold">{divisionLabel(a.division)}</span>
                     <span className="text-white truncate flex-1">{a.team1} <span className="text-white/40 mx-1">vs</span> {a.team2}</span>
                     <span className="text-white/40 text-[10px]">{a.messageCount ?? 0} msg{a.messageCount === 1 ? '' : 's'}</span>
                     {a.closedAt && <span className="text-white/30 text-[10px]">{new Date(a.closedAt).toLocaleDateString()}</span>}
@@ -341,7 +342,7 @@ function OpenCrossSeasonPanel({ threads, currentSeasonId, onViewTranscript }) {
           }`}>
             <span className="text-blue-300/70 font-bold w-12 text-[10px]">S{t.seasonNumber || '?'}</span>
             <span className="text-white/60 w-12 text-[10px]">W{t.weekNumber}</span>
-            <span className="text-blue-200/80 w-14 text-[10px] uppercase font-bold">{t.division}</span>
+            <span className="text-blue-200/80 w-20 shrink-0 text-[10px] uppercase font-bold">{divisionLabel(t.division)}</span>
             <span className="text-white truncate flex-1">{t.team1} <span className="text-white/40 mx-1">vs</span> {t.team2}</span>
             {t.threadId && <span className="text-[9px] font-mono text-blue-300/70 truncate max-w-[80px]">{t.threadId.slice(-8)}</span>}
             {t.threadId && <button onClick={() => onViewTranscript({ threadId: t.threadId, label: `${t.team1} vs ${t.team2}` })} className="px-2 py-0.5 text-[9px] uppercase font-bold rounded bg-blue-500/15 text-blue-200 border border-blue-400/30">Transcript</button>}
@@ -444,7 +445,7 @@ function WeekSection({ week, threads, currentWeek, onDeleteWeek, onDeleteTranscr
       <div className="p-3 space-y-3">
         {DIVISIONS.filter((d) => byDivision[d]).map((d) => (
           <div key={d}>
-            <div className="text-[10px] uppercase tracking-wider text-blue-300/70 font-bold mb-1.5">{d}</div>
+            <div className="text-[10px] uppercase tracking-wider text-blue-300/70 font-bold mb-1.5">{divisionLabel(d)}</div>
             <ul className="space-y-1">
               {(byDivision[d] || []).map((t) => (
                 <li key={t.id} className="flex items-center gap-2 px-2 py-1.5 rounded text-xs bg-white/[0.02] border border-white/5">
@@ -490,7 +491,7 @@ function CreateOneModal({ seasonId, defaultWeek, onClose, onCreated }) {
           <Field label="Week"><input type="number" min={1} value={form.weekNumber} onChange={(e) => setForm({ ...form, weekNumber: e.target.value })} className="w-full px-3 py-2 bg-black/40 border border-white/10 rounded text-white" /></Field>
           <Field label="Division">
             <select value={form.division} onChange={(e) => setForm({ ...form, division: e.target.value })} className="w-full px-3 py-2 bg-black/40 border border-white/10 rounded text-white">
-              {DIVISIONS.map((d) => <option key={d} value={d}>{d}</option>)}
+              {DIVISIONS.map((d) => <option key={d} value={d}>{divisionLabel(d)}</option>)}
             </select>
           </Field>
         </div>
@@ -593,7 +594,7 @@ function UnreportedWeekModal({ info, busy, onCancel, onForce }) {
           <div className="rounded-lg border border-red-500/30 bg-black/40 max-h-56 overflow-y-auto">
             {info.unreported.map((u) => (
               <div key={u.id} className="flex items-center gap-2 px-3 py-1.5 border-b border-white/5 last:border-0">
-                <span className="text-[10px] font-black uppercase text-red-300/80 w-14 shrink-0">{u.division}</span>
+                <span className="text-[10px] font-black uppercase text-red-300/80 w-20 shrink-0">{divisionLabel(u.division)}</span>
                 <span className="text-xs text-white/85 truncate">{u.team1} vs {u.team2}</span>
                 {!u.hasThread && <span className="text-[10px] text-white/35 ml-auto shrink-0">no thread</span>}
               </div>

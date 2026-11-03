@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Avatar from '../../../components/Avatar'
 import WinsRulePanel from './WinsRulePanel'
+import { divisionLabel } from '../../../../lib/divisionLabels'
 
 const API = '/api/admin/mmr'        // proxy → scraper (ACTIONS + sheet-backed reads)
 const DB_API = '/api/admin/mmr-db'  // DB-direct (status/players/config/queue/events — works offline)
@@ -211,7 +212,7 @@ function PlayerCard({ p, member }) {
           <div className="text-[11px] text-amber-200/80">lifetime wins not checked — {ch.wins.fallback} (decided on games)</div>
         ) : (
           <div className={`text-[11px] ${ch.wins.ok ? 'text-white/50' : 'text-red-300/90'}`}>
-            main lifetime wins {Number(ch.wins.wins).toLocaleString()} — {ch.wins.division}{ch.wins.source === 'N' ? ' (projected from column N)' : ''} minimum {Number(ch.wins.min).toLocaleString()}
+            main lifetime wins {Number(ch.wins.wins).toLocaleString()} — {divisionLabel(ch.wins.division)}{ch.wins.source === 'N' ? ' (projected from column N)' : ''} minimum {Number(ch.wins.min).toLocaleString()}
             {ch.wins.ok ? ' ✓' : ` · needs ${Number(ch.wins.need).toLocaleString()} more`}
           </div>
         )

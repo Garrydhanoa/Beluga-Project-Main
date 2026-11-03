@@ -38,6 +38,10 @@ const ROLES = {
         'MNML': '1191140483859234837'
     },
 
+    // Assistant GM Roles (one per team) — same bot powers as GM_ROLES. Filled at
+    // runtime from team_franchises.agm_role_id by utils/agmRoleSync.js.
+    AGM_ROLES: {},
+
     // Captain Roles (one per division)
     CAPTAINS: {
         MAJORS: '1241953484144771163',
@@ -186,9 +190,9 @@ function getTeamChoices() {
 // Helper function to get division choices for slash commands
 function getDivisionChoices() {
     return [
-        { name: 'Majors', value: 'MAJORS' },
-        { name: 'AAA', value: 'AAA' },
-        { name: 'AA', value: 'AA' }
+        { name: 'Premier', value: 'MAJORS' },
+        { name: 'Contenders', value: 'AAA' },
+        { name: 'Academy', value: 'AA' }
     ];
 }
 

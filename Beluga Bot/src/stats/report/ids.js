@@ -12,6 +12,8 @@
  *   rs:reject:<sessionId>:<side>      reject at final confirm
  *   rs:cancel:<sessionId>             cancel the whole report
  *   rs:scconfirm:<sessionId>          salary-crew instant finalize
+ *   rs:holdok:<sessionId>             staff release a report held for a suspended player
+ *   rs:holdno:<sessionId>             staff send a held report back to the captains
  *   rs:ff                             panel "Report Forfeit" button (salary crew)
  *   rs:ffpick:<winnerCode>            forfeit outcome: h | a | double
  */

@@ -7,6 +7,7 @@ const Logger = require('../utils/logger');
 const { LeagueDB, TransactionDB, isDatabaseAvailable } = require('../utils/database');
 const { ROLES, TEAM_ROLES, TEAM_NAMES, getTeamChoices } = require('../constants/roles');
 const { teamAutocomplete } = require('../utils/teamRoles');
+const { divisionLabel } = require('../utils/divisionLabels');
 
 // Command-specific constants
 const TRANSACTION_REQUEST_CHANNEL_ID = '1178913188750823544';
@@ -286,7 +287,7 @@ module.exports = {
                     
                     if (newCount > limit) {
                         return await interaction.editReply({
-                            content: `❌ This trade would exceed the roster limit for ${team}'s ${division} division (${newCount}/${limit}).`,
+                            content: `❌ This trade would exceed the roster limit for ${team}'s ${divisionLabel(division)} division (${newCount}/${limit}).`,
                         });
                     }
                 }
@@ -326,8 +327,8 @@ module.exports = {
             // Send confirmation to transaction channel
             const transactionChannel = await interaction.guild.channels.fetch(TRANSACTION_CONFIRMATION_CHANNEL_ID);
 
-            const team1PlayersText = team1PlayerData.map(p => `<@${p.id}> (${p.division})`).join('\n');
-            const team2PlayersText = team2PlayerData.map(p => `<@${p.id}> (${p.division})`).join('\n');
+            const team1PlayersText = team1PlayerData.map(p => `<@${p.id}> (${divisionLabel(p.division)})`).join('\n');
+            const team2PlayersText = team2PlayerData.map(p => `<@${p.id}> (${divisionLabel(p.division)})`).join('\n');
             
             // Build player pings for content (all traded players)
             const allPlayerPings = [...team1PlayerData, ...team2PlayerData].map(p => `<@${p.id}>`).join(' ');

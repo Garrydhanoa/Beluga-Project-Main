@@ -13,6 +13,7 @@
 // player stats can be filled in afterwards from the series modal.
 
 import { useEffect, useState } from 'react'
+import { divisionLabel } from '../../../../lib/divisionLabels'
 
 const DIVISIONS = ['Majors', 'AAA', 'AA']
 
@@ -206,7 +207,7 @@ export default function ReportSeriesWizard({ onClose, onCreated }) {
             <Field label="Division">
               <select value={form.division} onChange={(e) => set({ division: e.target.value, homeTeamId: '', awayTeamId: '', scheduleMatchId: '' })}
                 className={INPUT} aria-label="Division">
-                {DIVISIONS.map((d) => <option key={d} value={d}>{d}</option>)}
+                {DIVISIONS.map((d) => <option key={d} value={d}>{divisionLabel(d)}</option>)}
               </select>
             </Field>
             <Field label="Week">
@@ -233,7 +234,7 @@ export default function ReportSeriesWizard({ onClose, onCreated }) {
           </p>
 
           {schedule.length > 0 && (
-            <Field label={`Scheduled matches in ${form.division} week ${form.week}`}>
+            <Field label={`Scheduled matches in ${divisionLabel(form.division)} week ${form.week}`}>
               <select value={form.scheduleMatchId} onChange={(e) => applyFixture(e.target.value)} className={INPUT} aria-label="Pick a scheduled match">
                 <option value="">— pick teams manually —</option>
                 {schedule.map((m) => (
@@ -353,7 +354,7 @@ export default function ReportSeriesWizard({ onClose, onCreated }) {
         <div className="space-y-4">
           <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 space-y-2 text-sm">
             <Row k="Matchup" v={`${teamName(form.homeTeamId)} vs ${teamName(form.awayTeamId)}`} />
-            <Row k="Where" v={`${form.division} · Week ${form.week}${form.isPlayoff ? ' · Playoff' : ''} · ${form.isPlayoff ? 'BO7' : form.format.toUpperCase()}`} />
+            <Row k="Where" v={`${divisionLabel(form.division)} · Week ${form.week}${form.isPlayoff ? ' · Playoff' : ''} · ${form.isPlayoff ? 'BO7' : form.format.toUpperCase()}`} />
             <Row k="Result" v={
               form.resultType === 'double' ? 'Double forfeit — both teams charged a 0–1 loss, no winner'
                 : form.resultType === 'full' ? `Full forfeit — ${teamName(form.homeTeamId)} wins 1–0`

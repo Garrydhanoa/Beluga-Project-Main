@@ -13,7 +13,7 @@
  *    rulebook context are all left exactly as they were.
  *
  * Two personas, chosen per conversation from the DM Center:
- *  - `professional` (default) — the same voice the bot uses in the server.
+ *  - `professional` (default) — the assistant voice. Server chat is casual, DMs aren't.
  *  - `unhinged` — a savage roast persona.
  *
  * The bot only ever speaks here when staff switched AI on for that specific
@@ -123,11 +123,12 @@ async function ruleContextFor(aiChat, userMessage) {
  * `mode` is optional — when omitted the person's persona is looked up, which is
  * the same persona they get in the server.
  */
-async function generateDmReply({ aiChat, discordId, displayName, userMessage, mode, excludeMessageId = null }) {
+async function generateDmReply({ aiChat, discordId, displayName, userMessage, mode, excludeMessageId = null, media = [] }) {
     if (!aiChat || typeof aiChat.callText !== 'function') return null;
     if (!db()) return null;
 
-    const text = String(userMessage || '').trim();
+    // Only Claude can answer a DM that is just a picture or a GIF.
+    const text = String(userMessage || '').trim() || (media.length ? 'Take a look at this.' : '');
     if (!text) return null;
 
     const id = String(discordId);
@@ -174,7 +175,7 @@ async function generateDmReply({ aiChat, discordId, displayName, userMessage, mo
         }
         // NOTE: callText takes history as an argument and mutates nothing, so
         // the server bot's shared history is untouched by this call.
-        const reply = await aiChat.callText(provider, history, composed, who, systemPrompt);
+        const reply = await aiChat.callText(provider, history, composed, who, systemPrompt, { media });
         if (reply) {
             cooldowns.set(id, Date.now());
             await aiChat.log(`💬 [DM AI · ${persona}] ${tried.length ? `${tried.join(' → ')} → ` : ''}${provider}✓ · ${who}`);

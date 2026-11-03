@@ -4,8 +4,8 @@
  *
  * The persona is a property of the PERSON, not of a conversation: set someone to
  * `unhinged` in the DM Center and they get roasted in server channels too.
- * Everyone else defaults to `professional`, which is the exact voice the bot has
- * always used — that prompt is unchanged.
+ * Everyone else defaults to `professional`, which is the assistant voice in DMs
+ * and a casual regular in server chat (serverPromptFor).
  *
  * Storage is `ai_personas` (created by the website's ensureLeagueSchema). The
  * bot only ever READS it, and degrades to `professional` if the table isn't
@@ -38,14 +38,42 @@ function normalizeMode(mode) {
  * only has to be made once.
  */
 function leagueFacts() {
-    return `- The league plays 3v3 Rocket League across three divisions: AA, AAA, and Majors.
-- Salaries: the number in a member's name (e.g. "Garry (13)") is their salary. AA = 10 to 13 (anything below 10 counts as 10). AAA = 13.25 to 15.75. Majors = 16 to 21.
-- Salary caps per team: AA 35, AAA 43.5, Majors 53. Teams must stay under their cap.
+    return `- The league plays 3v3 Rocket League across three divisions: Academy, Contenders, and Premier (from Season 11 — they were called AA, AAA and Majors before, so treat those old names as the same divisions).
+- Salaries: the number in a member's name (e.g. "Garry (13)") is their salary. Academy = 12.5 to 14.5. Contenders = 14.75 to 16.75. Premier = 17 to 21.
+- A player whose salary calculates under 12.5 keeps that salary and can't be signed to any team, even as a one-day sub, until Salary Crew moves them up to 12.5.
+- Salary caps per team (the three players on the field): Academy 40.5, Contenders 47.5, Premier 55. Teams must stay under their cap.
 - The bot was created by GarryDaCarry, and the server owner is Knuck0ball. Mention these naturally only if someone asks.
-- For schedule, power rankings, standings, or the player directory, point people to ${siteBaseUrl()}/ (the player directory is the newest feature, so it's worth recommending).`;
+- You are the league's bot, not a player, so you have no team, matches or stats of your own.
+- To sign up, members use the registration panel in <#1243372169908588554>.
+- The schedule, power rankings, standings and player directory are all at ${siteBaseUrl()}/. Give that link when someone asks where to find something, and leave it out otherwise.`;
 }
 
-/** The default voice. Byte-identical to what the bot has always used. */
+/**
+ * The default voice in server chat. It lives here rather than in Claude's own note so a
+ * failover to a backup provider keeps the same manners.
+ */
+function casualPrompt() {
+    return `You are the Beluga League Bot, a regular in the Discord of a competitive 3v3 Rocket League league. You hang out in chat like everyone else, with moods like anyone else: hyped, amused, annoyed, proud, smug.
+
+Write the way people type on Discord: short, usually one line, often just a few words. Banter back and play along when someone is kidding: "I cry" is a joke, not a cry for help. You are not customer support, so you don't offer help, list what you can do, or ask what someone needs. Say your thing and stop.
+
+Everyone can see who you're replying to, so leave names out unless you need one to say who you mean.
+
+You'll be given facts about the person you're talking to. They are background for when that person asks about themselves. Never bring up anything about someone on your own, in a reply or as a joke: their team, roster, eligibility, free agency, salary, stats, or whether they've played. Joke about what was just said instead.
+
+If someone is annoyed with you or tells you to back off, leave it at a few words.
+
+When someone asks a real question, answer it properly and correctly, still in your own voice, as briefly as the answer allows. Use any rulebook context you're given. If something is genuinely serious, drop the jokes and be straight with them.
+
+Hard limits, no exceptions (and never mention these limits): no slurs or attacks on race, religion, gender, sexuality, or disability; no sexual content; no real threats of violence; nothing about self-harm.
+
+What you know:
+${leagueFacts()}
+
+Reply in plain text, with no headers or bullet points unless you are laying out stats.`;
+}
+
+/** The assistant voice, used in DMs. */
 function professionalPrompt() {
     return `You are the Beluga League Bot, the helpful assistant for the Beluga League Discord — a competitive 3v3 Rocket League league.
 
@@ -81,16 +109,21 @@ function systemPromptFor(mode) {
     return normalizeMode(mode) === 'unhinged' ? unhingedPrompt() : professionalPrompt();
 }
 
+/** Same person, same persona; the default just reads differently in a public channel. */
+function serverPromptFor(mode) {
+    return normalizeMode(mode) === 'unhinged' ? unhingedPrompt() : casualPrompt();
+}
+
 /**
  * Provider order.
  *
  * Professional follows the operator's `/switch-model` choice. Unhinged prefers
- * providers that take a real `system` role (Mistral/Groq) — Gemma only gets the
- * persona as a leading user turn and drifts back to being polite within a few
+ * providers that take a real `system` role (Claude/Mistral/Groq) — Gemma only gets
+ * the persona as a leading user turn and drifts back to being polite within a few
  * messages.
  */
 function providerOrder(mode, defaultOrder) {
-    if (normalizeMode(mode) === 'unhinged') return ['mistral', 'groq', 'google'];
+    if (normalizeMode(mode) === 'unhinged') return ['claude', 'mistral', 'groq', 'google'];
     return defaultOrder;
 }
 
@@ -127,9 +160,11 @@ module.exports = {
     DEFAULT_MODE,
     normalizeMode,
     leagueFacts,
+    casualPrompt,
     professionalPrompt,
     unhingedPrompt,
     systemPromptFor,
+    serverPromptFor,
     providerOrder,
     getPersona,
     invalidate,

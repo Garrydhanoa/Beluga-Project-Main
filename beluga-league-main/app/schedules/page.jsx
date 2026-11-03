@@ -6,11 +6,12 @@ import { motion } from "framer-motion"
 import TeamLogo from "../components/TeamLogo"
 import SeasonPicker from "../components/SeasonPicker"
 import { useSeason, seasonQuerySuffix } from "../components/SeasonContext"
+import { divisionLabel, divisionLabelUpper } from "../../lib/divisionLabels"
 
 const DIVISIONS = [
-  { key: 'aa', label: 'AA', tagline: 'AA Division', teams: 14 },
-  { key: 'aaa', label: 'AAA', tagline: 'AAA Division', teams: 14 },
-  { key: 'majors', label: 'MAJORS', tagline: 'Majors Division', teams: 10 },
+  { key: 'aa', label: divisionLabelUpper('AA'), tagline: `${divisionLabel('AA')} Division` },
+  { key: 'aaa', label: divisionLabelUpper('AAA'), tagline: `${divisionLabel('AAA')} Division` },
+  { key: 'majors', label: divisionLabelUpper('Majors'), tagline: `${divisionLabel('Majors')} Division` },
 ]
 
 function FadeIn({ children, delay = 0, y = 30, className = "" }) {
@@ -117,6 +118,11 @@ export default function SchedulesPage() {
 
   const currentSchedule = regular[activeTab] || {}
   const currentDivision = DIVISIONS.find((d) => d.key === activeTab)
+  // Counted from the published schedule (was hardcoded 14/14/10). Each match is
+  // [homeName, awayName, homeTeamId, awayTeamId].
+  const teamCount = new Set(
+    Object.values(currentSchedule).flat().flatMap((m) => [m[2] ?? m[0], m[3] ?? m[1]]),
+  ).size
 
   return (
     <div className="relative text-white overflow-hidden">
@@ -184,7 +190,7 @@ export default function SchedulesPage() {
                 <span className="text-[10px] uppercase tracking-[0.2em] text-blue-300/60 font-bold">
                   Teams
                 </span>
-                <span className="text-sm font-black text-white">{currentDivision.teams}</span>
+                <span className="text-sm font-black text-white">{teamCount || '—'}</span>
               </div>
               <span className="hidden sm:block w-px h-5 bg-white/10" />
               <div className="flex items-center gap-2">

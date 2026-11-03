@@ -6,6 +6,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { divisionLabel } from '../../lib/divisionLabels'
 
 export default function LatestResults() {
   const [results, setResults] = useState([])
@@ -28,7 +29,7 @@ export default function LatestResults() {
       <div className="max-w-3xl mx-auto space-y-2">
         {results.map((r) => (
           <div key={r.id} className="flex items-center gap-3 px-4 py-3 rounded-xl bg-white/[0.03] border border-white/10 hover:border-blue-400/30 transition">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-blue-300/70 w-14">{r.division}</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-blue-300/70 w-20 shrink-0 truncate">{divisionLabel(r.division)}</span>
             <span className="text-white/40 text-xs w-10">{r.isPlayoff ? 'PO' : `W${r.week ?? '—'}`}</span>
             <span className="flex-1 text-sm truncate">
               <Link href={`/teams/${encodeURIComponent(r.winner || '')}`} className={r.isDoubleForfeit ? 'text-white/70 hover:text-blue-200' : 'font-bold text-white hover:text-blue-200'}>{r.winner}</Link>

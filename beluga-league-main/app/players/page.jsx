@@ -4,13 +4,14 @@ import { useState, useMemo, useEffect } from 'react'
 import Link from 'next/link'
 import { motion } from 'framer-motion'
 import Avatar from '../components/Avatar'
+import { DIVISION_LABELS, divisionLabel } from '../../lib/divisionLabels'
 // Team list and division labels are derived from API data at runtime.
 
 const DIVISION_OPTIONS = [
   { key: 'all', label: 'All Divisions' },
-  { key: 'major', label: 'Majors' },
-  { key: 'aaa', label: 'AAA' },
-  { key: 'aa', label: 'AA' },
+  { key: 'major', label: DIVISION_LABELS.Majors },
+  { key: 'aaa', label: DIVISION_LABELS.AAA },
+  { key: 'aa', label: DIVISION_LABELS.AA },
 ]
 
 const SORT_OPTIONS = [
@@ -55,7 +56,7 @@ function adaptApiPlayer(p) {
     team: p.currentTeam || 'Free Agent',
     teamId: p.currentTeamId || null,
     division: divKey,
-    divisionLabel: divKey === 'major' ? 'Majors' : divKey.toUpperCase(),
+    divisionLabel: divisionLabel(divKey),
     isCaptain: p.role === 'captain',
     isFreeAgent: !!p.isFreeAgent,
     role: p.role || null,

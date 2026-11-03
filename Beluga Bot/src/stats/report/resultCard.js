@@ -20,6 +20,7 @@ const { getTeamLogoBufferByName } = require('../../utils/teamRoles');
 const { config } = require('../../config/config');
 const Logger = require('../../utils/logger');
 const { weekLabel } = require('../playoffBracket');
+const { divisionLabel } = require('../../utils/divisionLabels');
 
 const FONT = (config && config.images && config.images.fontFamily) ? config.images.fontFamily : 'sans-serif';
 
@@ -128,7 +129,7 @@ async function buildResultCard(o) {
         ctx.fillStyle = '#8aa8cc';
         ctx.font = `22px ${FONT}`;
         const ffLabel = isDouble ? '  ·  DOUBLE FORFEIT' : o.isForfeit ? '  ·  FORFEIT' : '';
-        ctx.fillText(`${o.division} · ${o.week != null ? weekLabel(o.week) : 'Series'}${ffLabel}`, W / 2, 66);
+        ctx.fillText(`${divisionLabel(o.division)} · ${o.week != null ? weekLabel(o.week) : 'Series'}${ffLabel}`, W / 2, 66);
 
         // Main: winner left, loser right.
         const logoSize = 170;

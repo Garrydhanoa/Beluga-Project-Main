@@ -21,13 +21,18 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import SecurityPanel from './SecurityPanel'
+import { divisionLabel } from '../../../../lib/divisionLabels'
+import TestsPanel from './TestsPanel'
 
 const SOURCES = [
   { value: 'bot', label: 'Bot' },
   { value: 'website', label: 'Website' },
-  // Not a log source: live sessions, IP blocks and failed logins (SecurityPanel).
+  // Not log sources: live sessions, IP blocks and failed logins (SecurityPanel);
+  // the GM / AGM rulebook tests — questions, attempts, approvals (TestsPanel).
   { value: 'security', label: 'Security' },
+  { value: 'tests', label: 'Tests' },
 ]
+const PANEL_SOURCES = new Set(['security', 'tests'])
 
 const STREAM_LABELS = {
   bot: [{ value: 'interaction', label: 'Interactions' }, { value: 'error', label: 'Fails' }],
@@ -155,7 +160,7 @@ function Entry({ log, expanded, onToggle }) {
             {log.outcome === 'success' ? 'Succeeded' : log.outcome === 'failed' ? 'Failed' : (log.outcome || 'unknown')}
             {log.duration_ms != null ? ` — took ${(log.duration_ms / 1000).toFixed(2)} seconds` : ''}
           </Row>
-          {log.division && <Row label="Division">{log.division}</Row>}
+          {log.division && <Row label="Division">{divisionLabel(log.division)}</Row>}
           {log.ip && <Row label="From IP">{log.ip}</Row>}
 
           {details.length > 0 && (
@@ -238,7 +243,7 @@ export default function HiggenLogsPage() {
   }, [source, stream, search, actor, action, eventType, outcome, since, sort, limit, page])
 
   const reload = useCallback(async () => {
-    if (source === 'security') return
+    if (PANEL_SOURCES.has(source)) return
     if (firstLoad.current) setLoading(true)
     try {
       const r = await fetch(`/api/admin/higgenlogs?${params()}`, { cache: 'no-store' })
@@ -261,7 +266,7 @@ export default function HiggenLogsPage() {
 
   // Refresh the dropdown options whenever the tab changes.
   useEffect(() => {
-    if (source === 'security') return undefined
+    if (PANEL_SOURCES.has(source)) return undefined
     let cancelled = false
     fetch(`/api/admin/higgenlogs?facets=1&source=${source}&stream=${stream}`, { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
@@ -346,7 +351,7 @@ export default function HiggenLogsPage() {
         ))}
       </div>
 
-      {source === 'security' ? <SecurityPanel /> : (<>
+      {source === 'security' ? <SecurityPanel /> : source === 'tests' ? <TestsPanel /> : (<>
       {/* Stream sub-tabs */}
       <div className="flex gap-2 mb-4" data-log-section="Audit log tabs">
         {streams.map((s) => (

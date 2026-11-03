@@ -30,7 +30,7 @@ function when(value) {
   } catch { return String(value) }
 }
 
-const INTENT = { admin: 'Admin panel', applications: 'Applications', site: 'Website' }
+const INTENT = { admin: 'Admin panel', applications: 'Applications', 'gm-test': 'GM test', 'agm-test': 'AGM test', site: 'Website' }
 
 function Pill({ tone = 'slate', children }) {
   const tones = {

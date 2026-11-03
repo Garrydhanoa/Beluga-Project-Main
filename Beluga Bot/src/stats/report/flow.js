@@ -37,6 +37,7 @@ const bcClient = require('../ballchasingClient');
 const statsStore = require('../statsStore');
 const { pool, isDatabaseAvailable } = require('../../utils/database');
 const Logger = require('../../utils/logger');
+const { divisionLabel } = require('../../utils/divisionLabels');
 
 const EPHEMERAL = 64;
 const sideCode = (s) => (s === 'home' ? 'h' : 'a');
@@ -384,7 +385,7 @@ async function handleGroupModal(interaction, parts = []) {
             await postManualResult(interaction.client, ctx, result, manual.games);
             return safeReply(interaction,
                 `✅ Recorded **${ctx.homeTeam.name} ${result.homeScore}–${result.awayScore} ${ctx.awayTeam.name}** `
-                + `(${ctx.division}${ctx.week ? `, Week ${ctx.week}` : ''}) from the scores you gave. Series #${result.seriesId}.\n`
+                + `(${divisionLabel(ctx.division)}${ctx.week ? `, Week ${ctx.week}` : ''}) from the scores you gave. Series #${result.seriesId}.\n`
                 + '-# No player stats — add them on the website (Admin → Match Results), or attach a replay group there and import.');
         } catch (err) {
             // Handled here, so the router never sees it — tell the audit log directly
@@ -395,14 +396,14 @@ async function handleGroupModal(interaction, parts = []) {
                 error: err,
             });
             Logger.error('manual staff report failed', err);
-            await logEdge(interaction.client, { summary: `Manual staff report failed in ${ctx.division}.`, error: err, thread: channel, division: ctx.division });
+            await logEdge(interaction.client, { summary: `Manual staff report failed in ${divisionLabel(ctx.division)}.`, error: err, thread: channel, division: ctx.division });
             return safeReply(interaction, `❌ Could not record that series: ${err.message}`);
         }
     }
 
     if (!bcClient.isGroupUrl(groupUrl)) {
         await logEdge(interaction.client, {
-            summary: `Invalid report input (not a Ballchasing group link) by ${interaction.user.tag} in ${ctx.division}.`,
+            summary: `Invalid report input (not a Ballchasing group link) by ${interaction.user.tag} in ${divisionLabel(ctx.division)}.`,
             detail: `Provided: ${groupUrl}`, thread: channel, division: ctx.division, groupUrl,
         });
         return safeReply(interaction,
@@ -416,7 +417,7 @@ async function handleGroupModal(interaction, parts = []) {
     try {
         parsed = await parseSeries({ groupUrl, format: ctx.format });
     } catch (err) {
-        await logEdge(interaction.client, { summary: `Ballchasing parse threw for ${ctx.division}.`, error: err, thread: channel, division: ctx.division, groupUrl });
+        await logEdge(interaction.client, { summary: `Ballchasing parse threw for ${divisionLabel(ctx.division)}.`, error: err, thread: channel, division: ctx.division, groupUrl });
         return safeReply(interaction, '❌ Something went wrong reading that group. Salary crew has been notified.');
     }
 
@@ -428,7 +429,7 @@ async function handleGroupModal(interaction, parts = []) {
             || (parsed.issues || []).find((i) => i.code === 'TOO_MANY_GAMES');
         const reason = reject ? reject.message : 'The series could not be validated.';
         await logEdge(interaction.client, {
-            summary: `Report rejected (${reject?.code || 'unknown'}) in ${ctx.division}: ${reason}`,
+            summary: `Report rejected (${reject?.code || 'unknown'}) in ${divisionLabel(ctx.division)}: ${reason}`,
             detail: (parsed.issues || []).map((i) => `[${i.severity}] ${i.code}: ${i.message}`).join('\n'),
             thread: channel, division: ctx.division, groupUrl,
         });
@@ -479,6 +480,11 @@ async function authorize(interaction, session, side, { allowAnySide = false } = 
     // A disputed report is frozen for captains — only salary crew can act.
     if (session.state === 'disputed') {
         await safeReply(interaction, '⚠️ This report is **disputed** — only salary crew can act on it now.');
+        return { ok: false, isSC: false, authed: null };
+    }
+    // Same for a report held because a suspended player appears in it.
+    if (session.state === 'held_suspended') {
+        await safeReply(interaction, '⏸️ This report is paused for staff review because a suspended player appears in it.');
         return { ok: false, isSC: false, authed: null };
     }
     const b = bag(session);
@@ -746,7 +752,7 @@ async function handleDispute(interaction, parts) {
     await sessions.updateSession(session.id, { state: 'disputed' });
     await statsStore.logAudit({ action: 'report_disputed', actorDiscordId: interaction.user.id, detail: { sessionId: session.id } });
     await logEdge(interaction.client, {
-        summary: `Report DISPUTED in ${session.division} (Week ${session.week ?? '—'}) — captains disagree; salary crew must resolve.`,
+        summary: `Report DISPUTED in ${divisionLabel(session.division)} (Week ${session.week ?? '—'}) — captains disagree; salary crew must resolve.`,
         thread: interaction.channel, division: session.division, groupUrl: session.group_url,
     });
     await interaction.channel.send('⚠️ **This report is now disputed.** Captains are frozen — salary crew will resolve it.').catch(() => {});
@@ -827,7 +833,75 @@ function buildCommitPayload(session, homeRosterIds, awayRosterIds) {
     return { games };
 }
 
-async function commitFromSession(interaction, session, { via }) {
+/**
+ * A suspended player in the report freezes it for staff. If the check itself breaks,
+ * the report goes through with a warning: a league series must not get stuck on a
+ * moderation outage, and the clock still alerts staff afterwards.
+ *
+ * @returns {Promise<boolean>} true when the report was held
+ */
+async function holdIfSuspended(interaction, session, games, via) {
+    let found;
+    try {
+        found = await require('../../moderation/reportGuard').suspendedPlayers(games);
+    } catch (err) {
+        Logger.error('suspended player check failed (continuing, will warn)', err);
+        await logEdge(interaction.client, { summary: `Suspended player check errored in ${divisionLabel(session.division)} (report still recorded).`, error: err, thread: interaction.channel, division: session.division, pingInThread: false });
+        return false;
+    }
+    if (!found.length) return false;
+
+    const lines = found.map((p) => `• <@${p.discordId}>${p.name ? ` (${p.name})` : ''}: ${p.text}, case ${p.caseId}`);
+    await sessions.updateSession(session.id, {
+        state: 'held_suspended',
+        messageIds: { ...bag(session), hold: { via, by: interaction.user.id, players: found } },
+    });
+    await logEdge(interaction.client, {
+        summary: `Report paused in ${divisionLabel(session.division)}: a suspended player appears in it.`,
+        detail: lines.join('\n'),
+        thread: interaction.channel, division: session.division, groupUrl: session.group_url,
+        components: [new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(ids.build('holdok', session.id)).setLabel('Approve and record').setStyle(ButtonStyle.Danger),
+            new ButtonBuilder().setCustomId(ids.build('holdno', session.id)).setLabel('Send back').setStyle(ButtonStyle.Secondary),
+        )],
+    });
+    await safeReply(interaction, '⏸️ This report is paused: a suspended player appears in it. Salary crew have been told and will review it.');
+    return true;
+}
+
+/** Staff decide a held report from the buttons in the log channel. */
+async function handleHoldDecision(interaction, parts, approve) {
+    const sessionId = Number(parts[0]);
+    if (!tc.isSalaryCrew(interaction.member)) {
+        return safeReply(interaction, '❌ Only salary crew can review a paused report.');
+    }
+    await interaction.deferUpdate();
+    const claimed = await sessions.claimHold(sessionId, approve ? 'await_confirm' : 'matching');
+    if (!claimed) return interaction.followUp({ content: 'This report has already been reviewed.', flags: 64 });
+    const hold = bag(claimed).hold || {};
+    const who = interaction.member?.displayName || interaction.user.username;
+    await interaction.editReply({ content: `${approve ? 'Approved' : 'Sent back'} by ${who}.`, components: [] });
+    const thread = await interaction.client.channels.fetch(claimed.channel_id).catch(() => null);
+
+    if (approve) {
+        await commitFromSession(interaction, claimed, { via: hold.via || 'salary_crew', holdCleared: true, reporterId: hold.by, thread });
+        const done = await sessions.getSession(sessionId);
+        if (done?.series_id) await require('../../moderation/reportGuard').markHandled(done.series_id, hold.players);
+        return undefined;
+    }
+    const home = getMatches(claimed, 'home'); home.submitted = false; home.confirmed = false;
+    const away = getMatches(claimed, 'away'); away.submitted = false; away.confirmed = false;
+    await sessions.updateSession(sessionId, { homeMatches: home, awayMatches: away });
+    const updated = await sessions.getSession(sessionId);
+    const b = bag(updated);
+    if (b.homeMsgId) await editStored(interaction.client, updated.channel_id, b.homeMsgId, await renderSide(updated, 'home'));
+    if (b.awayMsgId) await editStored(interaction.client, updated.channel_id, b.awayMsgId, await renderSide(updated, 'away'));
+    if (thread) await thread.send('↩️ Staff sent this report back because a suspended player appears in it. Fix it or contact salary crew.').catch(() => {});
+    return undefined;
+}
+
+async function commitFromSession(interaction, session, { via, holdCleared = false, reporterId = null, thread = null }) {
+    const logThread = thread || interaction.channel;
     const b = bag(session);
     const homeRoster = await tc.getTeamRoster(session.season_id, session.home_team_id);
     const awayRoster = await tc.getTeamRoster(session.season_id, session.away_team_id);
@@ -854,7 +928,7 @@ async function commitFromSession(interaction, session, { via }) {
         if (!cap.canVerify) {
             // Salary source down or no cap configured — operator rule: warn, don't block.
             await logEdge(interaction.client, {
-                summary: `Salary cap NOT verified for this ${session.division} report (source ${sourceOk ? 'ok' : 'down'}, cap ${cap.cap ?? 'unset'}) — recorded anyway.`,
+                summary: `Salary cap NOT verified for this ${divisionLabel(session.division)} report (source ${sourceOk ? 'ok' : 'down'}, cap ${cap.cap ?? 'unset'}) — recorded anyway.`,
                 division: session.division, groupUrl: session.group_url, thread: interaction.channel, pingInThread: false,
             });
         }
@@ -863,7 +937,7 @@ async function commitFromSession(interaction, session, { via }) {
             for (const v of cap.violations) lines.push(`• ${v.team} game ${v.game}: $${v.total} (cap $${v.cap}, over by $${v.over})`);
             for (const ms of cap.missing) lines.push(`• ${ms.team} game ${ms.game}: ${ms.name} has no salary on file`);
             await logEdge(interaction.client, {
-                summary: `On-field salary cap block in ${session.division} — report NOT recorded.`,
+                summary: `On-field salary cap block in ${divisionLabel(session.division)} — report NOT recorded.`,
                 detail: lines.join('\n'), thread: interaction.channel, division: session.division, groupUrl: session.group_url,
             });
             await safeReply(interaction, `❌ Cannot report — on-field salary cap exceeded / missing salary:\n${lines.join('\n')}\nSalary crew notified.`);
@@ -871,8 +945,10 @@ async function commitFromSession(interaction, session, { via }) {
         }
     } catch (err) {
         Logger.error('cap check failed (continuing, will warn)', err);
-        await logEdge(interaction.client, { summary: `Salary cap check errored in ${session.division} (report still recorded).`, error: err, thread: interaction.channel, division: session.division, pingInThread: false });
+        await logEdge(interaction.client, { summary: `Salary cap check errored in ${divisionLabel(session.division)} (report still recorded).`, error: err, thread: logThread, division: session.division, pingInThread: false });
     }
+
+    if (!holdCleared && await holdIfSuspended(interaction, session, games, via)) return;
 
     let result;
     try {
@@ -882,11 +958,11 @@ async function commitFromSession(interaction, session, { via }) {
             homeTeamId: session.home_team_id, awayTeamId: session.away_team_id,
             scheduleMatchId: session.schedule_match_id, threadId: session.thread_id,
             group: { id: bcClient.parseGroupId(session.group_url), url: session.group_url, name: session.parsed.groupName },
-            reportedByDiscordId: interaction.user.id, reportedVia: via,
+            reportedByDiscordId: reporterId || interaction.user.id, reportedVia: via,
             games,
         });
     } catch (err) {
-        await logEdge(interaction.client, { summary: `Commit failed in ${session.division}.`, error: err, thread: interaction.channel, division: session.division, groupUrl: session.group_url });
+        await logEdge(interaction.client, { summary: `Commit failed in ${divisionLabel(session.division)}.`, error: err, thread: logThread, division: session.division, groupUrl: session.group_url });
         await safeReply(interaction, '❌ Failed to save the series. Salary crew notified.');
         return;
     }
@@ -953,7 +1029,7 @@ async function postManualResult(client, ctx, result, games) {
         const embed = new EmbedBuilder()
             .setColor(0x27AE60)
             .setTitle(`🏆 ${winName} ${winScore}–${loseScore} ${loseName}`)
-            .setDescription(`${ctx.division} · ${ctx.week == null ? 'Series' : weekLabel(ctx.week)} · reported by staff`)
+            .setDescription(`${divisionLabel(ctx.division)} · ${ctx.week == null ? 'Series' : weekLabel(ctx.week)} · reported by staff`)
             .addFields({ name: 'Player stats', value: 'Not recorded — this series had no replay group.' })
             .setTimestamp();
         if (card) embed.setImage('attachment://result.png');
@@ -1009,7 +1085,7 @@ async function postConfirmation(client, session, result) {
     const embed = new EmbedBuilder()
         .setColor(0x27AE60)
         .setTitle(`🏆 ${winName} ${winScore}–${loseScore} ${loseName}`)
-        .setDescription(`${session.division} · ${session.week == null ? 'Series' : weekLabel(session.week)}`)
+        .setDescription(`${divisionLabel(session.division)} · ${session.week == null ? 'Series' : weekLabel(session.week)}`)
         .addFields({ name: 'Replay group', value: session.group_url || '—' })
         .setTimestamp();
     if (card) embed.setImage('attachment://result.png');
@@ -1074,7 +1150,7 @@ async function handleForfeitStart(interaction) {
     return interaction.reply({
         content:
             `**Record a forfeit for ${ctx.homeTeam.name} vs ${ctx.awayTeam.name}** `
-            + `(${ctx.division} · ${weekLabel(ctx.week)}).\n`
+            + `(${divisionLabel(ctx.division)} · ${weekLabel(ctx.week)}).\n`
             + 'Pick the team that receives the win, or a double forfeit if neither showed. '
             + 'A full forfeit records as 1–0; a double forfeit charges both teams a 0–1 loss.',
         components: [row],
@@ -1113,7 +1189,7 @@ async function handleForfeitPick(interaction, parts) {
         });
     } catch (err) {
         await logEdge(interaction.client, {
-            summary: `In-thread forfeit failed in ${ctx.division}.`, error: err,
+            summary: `In-thread forfeit failed in ${divisionLabel(ctx.division)}.`, error: err,
             thread: interaction.channel, division: ctx.division,
         });
         return safeReply(interaction, '❌ Failed to record the forfeit. Salary crew notified.');
@@ -1133,7 +1209,7 @@ async function handleForfeitPick(interaction, parts) {
         : `🏳️ **Forfeit recorded** — ${winner.name} win 1–0 over ${loser.name}.`;
 
     await interaction.channel?.send({
-        content: `${line}\n${ctx.division} · ${weekLabel(ctx.week)} · recorded by ${interaction.user}. Series #${result.seriesId}.`,
+        content: `${line}\n${divisionLabel(ctx.division)} · ${weekLabel(ctx.week)} · recorded by ${interaction.user}. Series #${result.seriesId}.`,
     }).catch(() => {});
 
     return interaction.editReply({ content: `${line} Series #${result.seriesId}.`, components: [] }).catch(() => {});
@@ -1157,4 +1233,5 @@ module.exports = {
     handleCancel,
     handleDispute,
     handleSalaryFinalize,
+    handleHoldDecision,
 };

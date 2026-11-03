@@ -9,6 +9,7 @@ const statsStore = require('../stats/statsStore');
 const Logger = require('../utils/logger');
 const { weekForRound, weekLabel } = require('../stats/playoffBracket');
 const { onPlayoffSeriesConfirmed } = require('../stats/playoffAutomation');
+const { divisionLabel } = require('../utils/divisionLabels');
 
 /**
  * /report-ff — salary-crew-only forfeit entry (operator rules D3):
@@ -32,7 +33,7 @@ module.exports = {
         .setDescription('Salary crew: record a forfeited series (no player stats).')
         .setDMPermission(false)
         .addStringOption((o) => o.setName('division').setDescription('Division').setRequired(true)
-            .addChoices({ name: 'Majors', value: 'Majors' }, { name: 'AAA', value: 'AAA' }, { name: 'AA', value: 'AA' }))
+            .addChoices({ name: 'Premier', value: 'Majors' }, { name: 'Contenders', value: 'AAA' }, { name: 'Academy', value: 'AA' }))
         .addStringOption((o) => o.setName('winner').setDescription('Team receiving the win (double forfeit: just one of the two teams)').setRequired(true)
             .setAutocomplete(true))
         .addStringOption((o) => o.setName('loser').setDescription('Team that forfeited (double forfeit: the other team)').setRequired(true)
@@ -113,7 +114,7 @@ module.exports = {
             const winner = byName.get(winnerName.toLowerCase());
             const loser = byName.get(loserName.toLowerCase());
             if (!winner || !loser) {
-                await interaction.editReply(`❌ Both teams must be active in ${division} this season.`);
+                await interaction.editReply(`❌ Both teams must be active in ${divisionLabel(division)} this season.`);
                 return;
             }
 
@@ -183,9 +184,9 @@ module.exports = {
 
                 streakWarning += threeFFLossesInARow
                     ? `\n⚠️ **${team.name} has now forfeited 3 series in a row.**`
-                    : `\n⚠️ **${team.name} has reached ${total} total forfeits in ${division}.**`;
+                    : `\n⚠️ **${team.name} has reached ${total} total forfeits in ${divisionLabel(division)}.**`;
                 await logEdge(interaction.client, {
-                    summary: `${team.name} (${division}) FF strike: ${threeFFLossesInARow ? '3 in a row' : `${total} total this season`}.`,
+                    summary: `${team.name} (${divisionLabel(division)}) FF strike: ${threeFFLossesInARow ? '3 in a row' : `${total} total this season`}.`,
                     detail: 'Reported while recording this forfeit — review the team (no automatic punishment).',
                     division, pingInThread: false,
                 });
@@ -196,7 +197,7 @@ module.exports = {
                     if (statsChannelId) {
                         const ch = await interaction.client.channels.fetch(statsChannelId).catch(() => null);
                         if (ch?.isTextBased()) {
-                            await ch.send(`⚠️ **FF strike:** ${team.name} (${division}) — ${threeFFLossesInARow ? '3 forfeits in a row' : `${total} forfeits this season`}.`);
+                            await ch.send(`⚠️ **FF strike:** ${team.name} (${divisionLabel(division)}) — ${threeFFLossesInARow ? '3 forfeits in a row' : `${total} forfeits this season`}.`);
                         }
                     }
                 } catch { /* stats channel optional */ }
@@ -214,8 +215,8 @@ module.exports = {
                     ? `🏳️ ${winner.name} 0–0 ${loser.name} (Double FF)`
                     : `🏳️ ${winner.name} 1–0 ${loser.name} (FF)`)
                 .setDescription(isDouble
-                    ? `${division} · ${weekLabel(week)} · **Double forfeit** — both teams take a 0–1 loss.`
-                    : `${division} · ${weekLabel(week)} · **Forfeit**`)
+                    ? `${divisionLabel(division)} · ${weekLabel(week)} · **Double forfeit** — both teams take a 0–1 loss.`
+                    : `${divisionLabel(division)} · ${weekLabel(week)} · **Forfeit**`)
                 .setTimestamp();
             if (card) embed.setImage('attachment://result.png');
             const files = card ? [new AttachmentBuilder(card, { name: 'result.png' })] : [];
@@ -238,13 +239,13 @@ module.exports = {
             const tally = charged
                 .map((team) => {
                     const n = ffAfterThis.get(team.id);
-                    return `${team.name} now has ${n} forfeit${n === 1 ? '' : 's'} in ${division} this season.`;
+                    return `${team.name} now has ${n} forfeit${n === 1 ? '' : 's'} in ${divisionLabel(division)} this season.`;
                 })
                 .join('\n');
             await interaction.editReply(
                 (isDouble
-                    ? `✅ Double forfeit recorded: **${winner.name}** and **${loser.name}** each take a **0–1 loss** (${division}, ${weekLabel(week)}). Series #${result.seriesId}.`
-                    : `✅ Forfeit recorded: **${winner.name} 1–0 ${loser.name}** (${division}, ${weekLabel(week)}). Series #${result.seriesId}.`) +
+                    ? `✅ Double forfeit recorded: **${winner.name}** and **${loser.name}** each take a **0–1 loss** (${divisionLabel(division)}, ${weekLabel(week)}). Series #${result.seriesId}.`
+                    : `✅ Forfeit recorded: **${winner.name} 1–0 ${loser.name}** (${divisionLabel(division)}, ${weekLabel(week)}). Series #${result.seriesId}.`) +
                 `\n\n# ⚠️ ${tally}${streakWarning}`
             );
         } catch (error) {

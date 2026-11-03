@@ -5,6 +5,7 @@ import {
   cx, DIVISIONS, MAX_LEN, CONFIRM_THRESHOLD, TOKENS,
   renderPreview, Panel, Toggle, SearchPicker, MultiSelect,
 } from './dmUi'
+import { divisionLabel } from '../../../../lib/divisionLabels'
 
 /**
  * Compose tab — send one message to any slice of the server.
@@ -321,7 +322,7 @@ export default function ComposeTab() {
                         ? 'bg-blue-500/25 border-blue-400/60 text-blue-100'
                         : 'bg-white/[0.03] border-white/10 text-white/60 hover:border-white/25 hover:text-white')}
                   >
-                    {d}
+                    {divisionLabel(d)}
                   </button>
                 ))}
               </div>

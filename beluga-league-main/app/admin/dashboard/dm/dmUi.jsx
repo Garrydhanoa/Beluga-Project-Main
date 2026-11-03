@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { divisionLabel } from '../../../../lib/divisionLabels'
 
 /**
  * Shared building blocks for the DM Center's Inbox and Compose tabs.
@@ -239,7 +240,7 @@ export function MultiSelect({ options, selected, onToggle, labelKey = 'name', co
             )}
           >
             {o[labelKey]}
-            {o.division && <span className="opacity-50 ml-1">· {o.division}</span>}
+            {o.division && <span className="opacity-50 ml-1">· {divisionLabel(o.division)}</span>}
           </button>
         )
       })}

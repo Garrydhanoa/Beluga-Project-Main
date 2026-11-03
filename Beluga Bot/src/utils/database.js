@@ -144,6 +144,32 @@ async function initializeDatabase() {
             END $$;
         `);
 
+        // Per-season roster embeds (replaces roster_messages, which was keyed by
+        // team name and so kept editing last season's messages after a rollover).
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS roster_embeds (
+                season_id INTEGER NOT NULL,
+                team_id INTEGER NOT NULL,
+                team_name VARCHAR(255) NOT NULL,
+                division VARCHAR(50) NOT NULL,
+                channel_id VARCHAR(255) NOT NULL,
+                message_id VARCHAR(255) NOT NULL,
+                roster_hash TEXT,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (season_id, team_id)
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS roster_embed_headers (
+                season_id INTEGER NOT NULL,
+                division VARCHAR(50) NOT NULL,
+                channel_id VARCHAR(255) NOT NULL,
+                message_id VARCHAR(255) NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (season_id, division)
+            )
+        `);
+
         // League tables used by the website admin panel
         await pool.query(`
             CREATE TABLE IF NOT EXISTS seasons (
@@ -878,90 +904,97 @@ const SalaryLockNotificationDB = {
     }
 };
 
-// Roster message operations
+// Roster embed operations. Embeds are tracked PER SEASON: a new season starts
+// with no rows, so the bot posts fresh embeds and the old season's messages are
+// left alone as history. (`roster_messages` is the pre-S11 name-keyed table —
+// kept only as a record of those old messages; nothing writes it any more.)
 const RosterDB = {
-    // Get roster message ID for a team and division
-    async get(teamName, division) {
-        if (!isDatabaseAvailable) return null;
-        
+    // Every tracked embed for one season + division, keyed by team id.
+    async getSeasonEmbeds(seasonId, division) {
+        if (!isDatabaseAvailable) return new Map();
+
         try {
             const result = await pool.query(
-                'SELECT * FROM roster_messages WHERE team_name = $1 AND division = $2',
-                [teamName, division]
+                'SELECT * FROM roster_embeds WHERE season_id = $1 AND division = $2',
+                [seasonId, division]
             );
-            
-            if (result.rows.length === 0) return null;
-            
-            const row = result.rows[0];
-            return {
+            return new Map(result.rows.map((row) => [row.team_id, {
+                teamId: row.team_id,
                 teamName: row.team_name,
                 division: row.division,
                 channelId: row.channel_id,
                 messageId: row.message_id,
                 rosterHash: row.roster_hash,
                 updatedAt: row.updated_at
-            };
+            }]));
         } catch (error) {
-            Logger.error(`Failed to get roster message for ${teamName} ${division}`, error);
+            Logger.error(`Failed to load roster embeds for season ${seasonId} ${division}`, error);
             return null;
         }
     },
 
-    // Save or update roster message ID
-    async save(teamName, division, channelId, messageId, rosterHash = null) {
+    async saveEmbed(seasonId, teamId, teamName, division, channelId, messageId, rosterHash = null) {
         if (!isDatabaseAvailable) {
             Logger.warning('Database not available - roster message will not persist');
             return false;
         }
-        
+
         try {
             await pool.query(
-                `INSERT INTO roster_messages (team_name, division, channel_id, message_id, roster_hash, updated_at)
-                 VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
-                 ON CONFLICT (team_name, division)
-                 DO UPDATE SET channel_id = $3, message_id = $4, roster_hash = $5, updated_at = CURRENT_TIMESTAMP`,
-                [teamName, division, channelId, messageId, rosterHash]
+                `INSERT INTO roster_embeds (season_id, team_id, team_name, division, channel_id, message_id, roster_hash, updated_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)
+                 ON CONFLICT (season_id, team_id)
+                 DO UPDATE SET team_name = $3, division = $4, channel_id = $5, message_id = $6, roster_hash = $7, updated_at = CURRENT_TIMESTAMP`,
+                [seasonId, teamId, teamName, division, channelId, messageId, rosterHash]
             );
-            Logger.info(`Saved roster message for ${teamName} ${division}: ${messageId}`);
             return true;
         } catch (error) {
-            Logger.error(`Failed to save roster message for ${teamName} ${division}`, error);
+            Logger.error(`Failed to save roster embed for ${teamName} ${division}`, error);
             return false;
         }
     },
 
-    // Get all roster messages
-    async getAll() {
-        if (!isDatabaseAvailable) return [];
-        
+    async deleteEmbed(seasonId, teamId) {
+        if (!isDatabaseAvailable) return false;
+
         try {
-            const result = await pool.query('SELECT * FROM roster_messages ORDER BY team_name, division');
-            return result.rows.map(row => ({
-                teamName: row.team_name,
-                division: row.division,
-                channelId: row.channel_id,
-                messageId: row.message_id,
-                updatedAt: row.updated_at
-            }));
+            await pool.query('DELETE FROM roster_embeds WHERE season_id = $1 AND team_id = $2', [seasonId, teamId]);
+            return true;
         } catch (error) {
-            Logger.error('Failed to get all roster messages', error);
-            return [];
+            Logger.error(`Failed to delete roster embed record for team ${teamId}`, error);
+            return false;
         }
     },
 
-    // Delete roster message record
-    async delete(teamName, division) {
+    // The "Season N Rosters" divider posted once per season in each roster channel.
+    async getHeader(seasonId, division) {
+        if (!isDatabaseAvailable) return null;
+
+        try {
+            const result = await pool.query(
+                'SELECT * FROM roster_embed_headers WHERE season_id = $1 AND division = $2',
+                [seasonId, division]
+            );
+            return result.rows[0] || null;
+        } catch (error) {
+            Logger.error(`Failed to load roster header for season ${seasonId} ${division}`, error);
+            return null;
+        }
+    },
+
+    async saveHeader(seasonId, division, channelId, messageId) {
         if (!isDatabaseAvailable) return false;
-        
+
         try {
             await pool.query(
-                'DELETE FROM roster_messages WHERE team_name = $1 AND division = $2',
-                [teamName, division]
+                `INSERT INTO roster_embed_headers (season_id, division, channel_id, message_id)
+                 VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (season_id, division) DO UPDATE SET channel_id = $3, message_id = $4`,
+                [seasonId, division, channelId, messageId]
             );
-            Logger.info(`Deleted roster message for ${teamName} ${division}`);
             return true;
         } catch (error) {
-            Logger.error(`Failed to delete roster message for ${teamName} ${division}`, error);
+            Logger.error(`Failed to save roster header for season ${seasonId} ${division}`, error);
             return false;
         }
     }

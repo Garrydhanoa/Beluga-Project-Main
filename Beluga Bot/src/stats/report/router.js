@@ -22,6 +22,8 @@ const HANDLERS = {
     cancel: (i, p) => flow.handleCancel(i, p),
     dispute: (i, p) => flow.handleDispute(i, p),
     scfinal: (i, p) => flow.handleSalaryFinalize(i, p),
+    holdok: (i, p) => flow.handleHoldDecision(i, p, true),
+    holdno: (i, p) => flow.handleHoldDecision(i, p, false),
     // In-thread forfeit (salary crew). Routed through this same dispatcher on
     // purpose: the single interactionCreate choke point in bot.js is what puts
     // every interaction in the audit log, so a second listener or a component

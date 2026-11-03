@@ -15,7 +15,7 @@ function db() {
 
 // Every non-terminal state — used by the "one report at a time per thread"
 // guard and the panel provisioner. Must match the states flow.js actually sets.
-const ACTIVE_STATES = ['await_group', 'assign_sides', 'matching', 'await_confirm', 'disputed'];
+const ACTIVE_STATES = ['await_group', 'assign_sides', 'matching', 'await_confirm', 'disputed', 'held_suspended'];
 
 async function createSession(data) {
     if (!db()) throw new Error('Database not available.');
@@ -91,6 +91,17 @@ async function updateSession(id, patch) {
     return r.rows[0] || null;
 }
 
+/** Compare-and-set for a held report, so two staff can't both act on it. */
+async function claimHold(id, toState) {
+    if (!db() || !id) return null;
+    const r = await pool.query(
+        `UPDATE stats_report_sessions SET state = $2, updated_at = CURRENT_TIMESTAMP
+          WHERE id = $1 AND state = 'held_suspended' RETURNING *`,
+        [id, toState]
+    );
+    return r.rows[0] || null;
+}
+
 async function cancelSession(id, state = 'cancelled') {
     if (!db() || !id) return;
     await pool.query(
@@ -156,6 +167,7 @@ module.exports = {
     getActiveSessionByThread,
     updateSession,
     cancelSession,
+    claimHold,
     upsertPanel,
     getPanel,
     getActivePanels,

@@ -15,6 +15,7 @@ const { AttachmentBuilder } = require('discord.js');
 const { pool, isDatabaseAvailable } = require('./database');
 const { ROLES, TEAM_ROLES, NP_ROLES, TEAM_COLORS } = require('../constants/roles');
 const Logger = require('./logger');
+const { divisionLabel } = require('./divisionLabels');
 
 const ROLE_CACHE_TTL_MS = 60 * 1000;
 const LIST_CACHE_TTL_MS = 60 * 1000;
@@ -113,7 +114,7 @@ async function teamAutocomplete(interaction, { divisionOptionName = 'division', 
             }
         } else {
             choices = teams.slice(0, 25).map((t) => ({
-                name: division ? t.name : `${t.name} (${t.division})`,
+                name: division ? t.name : `${t.name} (${divisionLabel(t.division)})`,
                 value: String(t.id),
             }));
         }
@@ -152,6 +153,7 @@ async function getTeamDiscordRoles(teamId) {
                     t.discord_role_id, t.discord_gm_role_id, t.discord_np_role_id,
                     f.gm_role_id AS franchise_gm_role_id,
                     f.np_role_id AS franchise_np_role_id,
+                    (to_jsonb(f) ->> 'agm_role_id') AS franchise_agm_role_id,
                     f.discord_invite_url, f.color
                  FROM teams t
                  LEFT JOIN team_franchises f ON f.id = t.franchise_id
@@ -179,6 +181,9 @@ async function getTeamDiscordRoles(teamId) {
         gmRoleId: row?.franchise_gm_role_id
             || row?.discord_gm_role_id
             || (name && ROLES.GM_ROLES[name]) || null,
+        // Assistant GM (S11) — franchise-level only; same powers as the GM role.
+        agmRoleId: row?.franchise_agm_role_id
+            || (name && ROLES.AGM_ROLES?.[name]) || null,
         npRoleId: row?.franchise_np_role_id
             || row?.discord_np_role_id
             || (name && NP_ROLES[name]) || null,
@@ -304,16 +309,19 @@ async function resolveMemberTeamInDivision(member, division) {
     for (const team of teams) {
         // eslint-disable-next-line no-await-in-loop
         const roles = await getTeamDiscordRoles(team.id);
-        const isGM = hasRole(roles.gmRoleId);
+        // An Assistant GM has the same powers as the GM, so callers that gate on
+        // isGM accept either; isAGM is there for wording.
+        const isAGM = hasRole(roles.agmRoleId);
+        const isGM = hasRole(roles.gmRoleId) || isAGM;
         const hasTeamRole = hasRole(roles.teamRoleId);
         const rosterRole = rosterByTeam.get(team.id) || null;
         const isNP = hasRole(roles.npRoleId);
         if (isGM || hasTeamRole || rosterRole) {
-            return { team, isGM, isNP, hasTeamRole, rosterRole, hasCaptainRole };
+            return { team, isGM, isAGM, isNP, hasTeamRole, rosterRole, hasCaptainRole };
         }
         // NP is the weakest signal — keep looking for a playing/GM link first.
         if (isNP && !npMatch) {
-            npMatch = { team, isGM: false, isNP: true, hasTeamRole: false, rosterRole: null, hasCaptainRole };
+            npMatch = { team, isGM: false, isAGM: false, isNP: true, hasTeamRole: false, rosterRole: null, hasCaptainRole };
         }
     }
     return npMatch;

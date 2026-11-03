@@ -10,6 +10,7 @@ function mapFranchise(row) {
     isActive: row.is_active,
     hasLogo: Boolean(row.logo_mime && row.logo_data),
     gmRoleId: row.gm_role_id || null,
+    agmRoleId: row.agm_role_id || null,
     npRoleId: row.np_role_id || null,
     discordInviteUrl: row.discord_invite_url || null,
     color: row.color || null,
@@ -76,6 +77,7 @@ export async function updateFranchise(id, patch) {
   if (patch.defaultDivision !== undefined) { fields.push(`default_division = $${i++}`); values.push(patch.defaultDivision) }
   if (patch.isActive !== undefined) { fields.push(`is_active = $${i++}`); values.push(Boolean(patch.isActive)) }
   if (patch.gmRoleId !== undefined) { fields.push(`gm_role_id = $${i++}`); values.push(patch.gmRoleId || null) }
+  if (patch.agmRoleId !== undefined) { fields.push(`agm_role_id = $${i++}`); values.push(patch.agmRoleId || null) }
   if (patch.npRoleId !== undefined) { fields.push(`np_role_id = $${i++}`); values.push(patch.npRoleId || null) }
   if (patch.discordInviteUrl !== undefined) { fields.push(`discord_invite_url = $${i++}`); values.push(patch.discordInviteUrl || null) }
   if (patch.color !== undefined) { fields.push(`color = $${i++}`); values.push(patch.color || null) }
@@ -85,7 +87,21 @@ export async function updateFranchise(id, patch) {
     `UPDATE team_franchises SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = $${i} RETURNING *`,
     values
   )
-  return result.rows.length ? mapFranchise(result.rows[0]) : null
+  if (!result.rows.length) return null
+  const franchise = mapFranchise(result.rows[0])
+  // Disabling/enabling a franchise carries to its teams in the ACTIVE season, so
+  // a disabled franchise disappears from the bot, the website and the schedule
+  // maker (they all filter on teams.is_active). Archived seasons are untouched.
+  if (patch.isActive !== undefined) {
+    const t = await query(
+      `UPDATE teams SET is_active = $2, updated_at = CURRENT_TIMESTAMP
+       WHERE franchise_id = $1 AND is_active <> $2
+         AND season_id IN (SELECT id FROM seasons WHERE status = 'active')`,
+      [id, Boolean(patch.isActive)]
+    )
+    franchise.teamsChanged = t.rowCount || 0
+  }
+  return franchise
 }
 
 export async function setFranchiseLogo(id, { mime, data }) {

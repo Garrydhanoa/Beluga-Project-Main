@@ -14,8 +14,8 @@ const { pool, isDatabaseAvailable } = require('./database');
 const AI_LOG_CHANNEL_ID = '1403961461776060416';
 
 // Valid providers the bot can switch between.
-const VALID_PROVIDERS = ['google', 'groq', 'mistral'];
-const DEFAULT_PROVIDER = 'google';
+const VALID_PROVIDERS = ['claude', 'google', 'groq', 'mistral'];
+const DEFAULT_PROVIDER = 'claude';
 
 const SETTINGS_KEY = 'ai_active_provider';
 

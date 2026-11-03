@@ -19,9 +19,9 @@ module.exports = {
         .setDMPermission(false)
         .addStringOption((o) => o.setName('division').setDescription('Division (default: all three)').setRequired(false)
             .addChoices(
-                { name: 'Majors', value: 'Majors' },
-                { name: 'AAA', value: 'AAA' },
-                { name: 'AA', value: 'AA' },
+                { name: 'Premier', value: 'Majors' },
+                { name: 'Contenders', value: 'AAA' },
+                { name: 'Academy', value: 'AA' },
             )),
 
     async execute(interaction) {

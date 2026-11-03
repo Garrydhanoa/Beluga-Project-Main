@@ -7,6 +7,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import ReportSeriesWizard from './ReportSeriesWizard'
+import { divisionLabel } from '../../../../lib/divisionLabels'
 
 const DIVISIONS = ['all', 'Majors', 'AAA', 'AA']
 const STATUSES = ['all', 'confirmed', 'disputed', 'void']
@@ -77,7 +78,7 @@ export default function StatsMatchesPage() {
       <div className="mb-4 flex flex-wrap gap-2 items-center p-3 rounded-xl bg-white/[0.03] border border-white/10">
         <select value={filters.division} onChange={(e) => setFilters({ ...filters, division: e.target.value })}
           className="px-3 py-2 bg-black/40 border border-white/10 rounded-lg text-white text-sm">
-          {DIVISIONS.map((d) => <option key={d} value={d}>{d === 'all' ? 'All divisions' : d}</option>)}
+          {DIVISIONS.map((d) => <option key={d} value={d}>{d === 'all' ? 'All divisions' : divisionLabel(d)}</option>)}
         </select>
         <input type="number" min={1} placeholder="Week" value={filters.week}
           onChange={(e) => setFilters({ ...filters, week: e.target.value })}
@@ -112,7 +113,7 @@ export default function StatsMatchesPage() {
             <tbody>
               {series.map((m) => (
                 <tr key={m.id} onClick={() => setSelected(m.id)} className="border-t border-white/5 hover:bg-white/[0.04] cursor-pointer">
-                  <td className="px-3 py-2 text-blue-200/80 font-bold">{m.division}</td>
+                  <td className="px-3 py-2 text-blue-200/80 font-bold">{divisionLabel(m.division)}</td>
                   <td className="px-3 py-2 text-white/70">W{m.week ?? '—'}{m.isPlayoff && <span className="ml-1 text-yellow-300 text-[10px]">PO</span>}</td>
                   <td className="px-3 py-2 text-white">
                     <span className="font-medium">{m.homeTeam || '?'}</span>
@@ -261,7 +262,7 @@ function SeriesModal({ seriesId, onClose, onChanged }) {
               <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10">
                 <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
                   <div className="flex items-center gap-3">
-                    <span className="text-blue-200 font-bold text-sm uppercase">{s.division}</span>
+                    <span className="text-blue-200 font-bold text-sm uppercase">{divisionLabel(s.division)}</span>
                     <span className="text-white/50 text-sm">Week {s.week ?? '—'}</span>
                     {s.is_playoff && <span className="px-2 py-0.5 text-[10px] uppercase font-bold bg-yellow-500/15 text-yellow-300 border border-yellow-400/30 rounded">PLAYOFF</span>}
                     <StatusBadge status={s.status} isForfeit={s.is_forfeit} forfeitKind={s.forfeit_kind} />
@@ -369,7 +370,7 @@ function SeriesEditForm({ series, onCancel, onSave }) {
         <label className="block">
           <span className={lbl}>Division</span>
           <select value={division} onChange={(e) => setDivision(e.target.value)} className={cell} aria-label="Division">
-            {['Majors', 'AAA', 'AA'].map((x) => <option key={x} value={x}>{x}</option>)}
+            {['Majors', 'AAA', 'AA'].map((x) => <option key={x} value={x}>{divisionLabel(x)}</option>)}
           </select>
         </label>
         <label className="block">
